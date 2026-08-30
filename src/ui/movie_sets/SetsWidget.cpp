@@ -317,7 +317,9 @@ void SetsWidget::onAddMovie()
         if (movie->set().name == setName) {
             continue;
         }
-        MovieSet set = movie->set();
+        // The movie joins a different collection, so its previous set's overview and
+        // id must not travel with it.
+        MovieSet set;
         set.name = setName;
         movie->setSet(set);
         m_sets[setName].append(movie);
@@ -552,9 +554,13 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         return;
     }
 
+    // Renaming a set to the name of an existing one merges the two.  The movies then
+    // end up in a collection that is not the one their overview and id describe.
+    bool mergesIntoExistingSet = false;
     for (int i = 0, n = ui->sets->rowCount(); i < n; ++i) {
         if (i != item->row() && ui->sets->item(i, 0)->text() == newName) {
             ui->sets->removeRow(i);
+            mergesIntoExistingSet = true;
             break;
         }
     }
@@ -565,9 +571,13 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
 
     for (Movie* movie : m_sets[origSetName]) {
         m_moviesToSave[newName].append(movie);
-        MovieSet set;
-        set.name = newName;
-        movie->setSet(set);
+        if (mergesIntoExistingSet) {
+            MovieSet set;
+            set.name = newName;
+            movie->setSet(set);
+        } else {
+            movie->setSet(movie->set().renamedTo(newName));
+        }
     }
 
     m_moviesToSave[origSetName].clear();
