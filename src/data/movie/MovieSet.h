@@ -34,6 +34,11 @@ public:
     ELCH_NODISCARD MovieSetImages& images();
     ELCH_NODISCARD const MovieSetImages& constImages() const;
 
+    /// \brief Sets the set's name, its primary key (D-B).
+    /// \details Assigning the value the set already has does nothing at all: it
+    ///          neither dirties the set nor emits sigChanged.  That guarantee is
+    ///          scoped to these three scalar setters; MovieSetImages::setImage()
+    ///          and setChanged() below both fire unconditionally.
     void setName(QString name);
     void setTmdbId(TmdbId id);
     void setOverview(QString overview);
@@ -48,6 +53,15 @@ public:
     void setChanged(bool changed);
 
 signals:
+    /// \brief Emitted whenever anything about this set changed, including its
+    ///        membership.
+    /// \warning A membership change deliberately marks *nothing* dirty -- not
+    ///          this set (membership is not part of set.nfo, D-A) and not the
+    ///          movie (the model becomes the only writer in a later step).  So
+    ///          whoever calls addMovie()/removeMovie() -- MovieSetModel, once it
+    ///          exists -- has to mark the member movies changed itself.  Forget
+    ///          that and a membership edit is lost with no flag set anywhere,
+    ///          while this signal has already claimed otherwise.
     void sigChanged(MovieSet* set);
 
 private:

@@ -167,26 +167,65 @@ TEST_CASE("MovieSetImages", "[data][movie][set]")
         CHECK_FALSE(set.images().imageHasChanged(ImageType::MovieSetBackdrop));
     }
 
-    SECTION("removing an unloaded image schedules it for deletion")
+    SECTION("removing an image that only exists on disk schedules it for deletion")
     {
+        // The disk scan reports artwork with setHasImage() and loads no bytes.
         MovieSet set{"Alien Collection"};
+        set.images().setHasImage(ImageType::MovieSetBackdrop, true);
+        set.setChanged(false);
 
         set.images().removeImage(ImageType::MovieSetBackdrop);
 
         CHECK(set.images().imagesToRemove().contains(ImageType::MovieSetBackdrop));
         CHECK_FALSE(set.images().hasImage(ImageType::MovieSetBackdrop));
+        // Without this the saver skips the set and the file stays on disk.
+        CHECK(set.hasChanged());
     }
 
     SECTION("removing a downloaded image drops it without scheduling a deletion")
     {
         MovieSet set{"Alien Collection"};
         set.images().setImage(ImageType::MovieSetPoster, QByteArray("poster"));
+        set.setChanged(false);
 
         set.images().removeImage(ImageType::MovieSetPoster);
 
         CHECK(set.images().image(ImageType::MovieSetPoster).isEmpty());
+        CHECK_FALSE(set.images().hasImage(ImageType::MovieSetPoster));
         CHECK_FALSE(set.images().imageHasChanged(ImageType::MovieSetPoster));
         CHECK_FALSE(set.images().imagesToRemove().contains(ImageType::MovieSetPoster));
+        CHECK(set.hasChanged());
+    }
+
+    SECTION("re-adding a removed image cancels its pending deletion")
+    {
+        // Deliberately unlike MovieImages::setImage(), which does not clear the
+        // pending deletion: otherwise a writer honouring both would write the new
+        // poster and then delete it again, or lose the write, depending on order.
+        MovieSet set{"Alien Collection"};
+        set.images().setHasImage(ImageType::MovieSetPoster, true);
+        set.images().removeImage(ImageType::MovieSetPoster);
+        REQUIRE(set.images().imagesToRemove().contains(ImageType::MovieSetPoster));
+
+        set.images().setImage(ImageType::MovieSetPoster, QByteArray("new poster"));
+
+        CHECK_FALSE(set.images().imagesToRemove().contains(ImageType::MovieSetPoster));
+        CHECK(set.images().image(ImageType::MovieSetPoster) == QByteArray("new poster"));
+    }
+
+    SECTION("clearImages frees the bytes but keeps the knowledge that art exists")
+    {
+        MovieSet set{"Alien Collection"};
+        set.images().setImage(ImageType::MovieSetPoster, QByteArray("poster"));
+        set.images().setImage(ImageType::MovieSetBackdrop, QByteArray("backdrop"));
+
+        set.images().clearImages();
+
+        CHECK(set.images().image(ImageType::MovieSetPoster).isEmpty());
+        CHECK(set.images().image(ImageType::MovieSetBackdrop).isEmpty());
+        // The saver still has to know which artwork the set has.
+        CHECK(set.images().hasImage(ImageType::MovieSetPoster));
+        CHECK(set.images().hasImage(ImageType::MovieSetBackdrop));
     }
 
     SECTION("both existing set image types are supported")
