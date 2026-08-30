@@ -144,6 +144,8 @@ SOURCES += \
     src/data/movie/Movie.cpp \
     src/data/movie/MovieCrew.cpp \
     src/data/movie/MovieImages.cpp \
+    src/data/movie/MovieSet.cpp \
+    src/data/movie/MovieSetImages.cpp \
     src/data/movie/MovieSetInfo.cpp \
     src/data/music/AlbumController.cpp \
     src/data/music/Album.cpp \
@@ -565,6 +567,8 @@ HEADERS += Version.h \
     src/data/movie/MovieCrew.h \
     src/data/movie/Movie.h \
     src/data/movie/MovieImages.h \
+    src/data/movie/MovieSet.h \
+    src/data/movie/MovieSetImages.h \
     src/data/movie/MovieSetInfo.h \
     src/data/music/AlbumController.h \
     src/data/music/Album.h \

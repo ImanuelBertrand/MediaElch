@@ -13,6 +13,8 @@ add_library(
   movie/MovieController.cpp
   movie/MovieCrew.cpp
   movie/MovieImages.cpp
+  movie/MovieSet.cpp
+  movie/MovieSetImages.cpp
   movie/MovieSetInfo.cpp
   music/Album.cpp
   music/AlbumController.cpp
