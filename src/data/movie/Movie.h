@@ -10,7 +10,7 @@
 #include "data/movie/MovieController.h"
 #include "data/movie/MovieCrew.h"
 #include "data/movie/MovieImages.h"
-#include "data/movie/MovieSet.h"
+#include "data/movie/MovieSetInfo.h"
 #include "database/DatabaseId.h"
 #include "globals/Globals.h"
 #include "media/StreamDetails.h"
@@ -92,7 +92,7 @@ public:
     ELCH_NODISCARD QString folderName() const;
     ELCH_NODISCARD int playCount() const;
     ELCH_NODISCARD QDateTime lastPlayed() const;
-    ELCH_NODISCARD MovieSet set() const;
+    ELCH_NODISCARD MovieSetInfo set() const;
     ELCH_NODISCARD bool watched() const;
     ELCH_NODISCARD int movieId() const;
     ELCH_NODISCARD bool inSeparateFolder() const;
@@ -135,7 +135,7 @@ public:
     void addCountry(QString country);
     void setPlayCount(int playCount);
     void setLastPlayed(QDateTime lastPlayed);
-    void setSet(MovieSet set);
+    void setSet(MovieSetInfo set);
     void setUserRating(double rating);
     void setChanged(bool changed);
     void setDownloadsInProgress(bool inProgress);
@@ -224,7 +224,7 @@ public:
         virtual void exportTvShowLinks(const QStringList& tvShowLinks) = 0;
         virtual void exportPlayCount(int playCount) = 0;
         virtual void exportLastPlayed(const QDateTime& lastPlayed) = 0;
-        virtual void exportMovieSet(const MovieSet& set) = 0;
+        virtual void exportMovieSet(const MovieSetInfo& set) = 0;
         virtual void exportStreamDetails(const StreamDetails* streamDetails) = 0;
         virtual void exportFileLastModified(const QDateTime& fileLastModified) = 0;
         virtual void exportDateAdded(const QDateTime& dateAdded) = 0;
@@ -269,7 +269,7 @@ private:
     ImdbId m_imdbId;
     TmdbId m_tmdbId;
     WikidataId m_wikidataId;
-    MovieSet m_set;
+    MovieSetInfo m_set;
     int m_movieId = -1;
     mediaelch::DatabaseId m_databaseId;
     int m_mediaCenterId = -1;

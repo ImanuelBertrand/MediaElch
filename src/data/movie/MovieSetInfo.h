@@ -6,7 +6,7 @@
 #include <QString>
 
 /// Represents a movie collection (aka. set).
-struct MovieSet
+struct MovieSetInfo
 {
     /// A collection's TmdbId, e.g. 1241 for Harry Potter.
     /// Used for getting data from TMDB, e.g.
@@ -19,5 +19,5 @@ struct MovieSet
     /// \brief Returns this collection under a new name, keeping overview and id.
     /// \details Only for renaming a collection.  Moving a movie to a _different_
     ///          collection must not use this: overview and id describe the old one.
-    ELCH_NODISCARD MovieSet renamedTo(QString newName) const;
+    ELCH_NODISCARD MovieSetInfo renamedTo(QString newName) const;
 };

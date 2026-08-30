@@ -42,7 +42,7 @@ static void parseMovieChildren(Movie& movie, const QString& children)
     REQUIRE(reader.parseNfoDom(doc));
 }
 
-static MovieSet parseMovieSet(const QString& setXml)
+static MovieSetInfo parseMovieSet(const QString& setXml)
 {
     Movie movie;
     parseMovieChildren(movie, setXml);
@@ -216,7 +216,7 @@ TEST_CASE("Movie XML writer for Kodi v18", "[data][movie][kodi][nfo]")
         movie.addGenre("Science Fiction");
         movie.addCountry("United States of America");
 
-        MovieSet set;
+        MovieSetInfo set;
         set.tmdbId = TmdbId(283579);
         set.name = "Divergent Collection";
         set.overview =

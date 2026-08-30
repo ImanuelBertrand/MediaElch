@@ -184,7 +184,7 @@ void AdultDvdEmpireScrapeJob::parseAndAssignInfos(const QString& html)
         if (setName.endsWith("\"")) {
             setName.chop(1);
         }
-        MovieSet set;
+        MovieSetInfo set;
         set.name = setName.trimmed();
         m_movie->setSet(set);
     }

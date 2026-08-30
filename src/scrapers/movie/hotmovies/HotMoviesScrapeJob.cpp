@@ -171,7 +171,7 @@ void HotMoviesScrapeJob::parseAndAssignInfos(const QString& html)
     rx.setPattern(R"re(<strong>Series:</strong>\s+<a href="/series/[^"]+">(.*)</a>)re");
     match = rx.match(html);
     if (match.hasMatch()) {
-        MovieSet set;
+        MovieSetInfo set;
         set.name = decodeAndTrim(match.captured(1));
         m_movie->setSet(set);
     }

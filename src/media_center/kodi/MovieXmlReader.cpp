@@ -149,7 +149,7 @@ bool MovieXmlReader::parseNfoDom(QDomDocument domDoc)
     // Ember Media Manager writes the collection's id at movie level, next to the flat
     // <set>Name</set> form, unless its "extended collection info" option is enabled.
     // Relies on <set> having already been parsed by the dispatch loop above.
-    MovieSet set = m_movie.set();
+    MovieSetInfo set = m_movie.set();
     if (!set.name.isEmpty() && set.tmdbId == TmdbId::NoId) {
         const QString collectionId = movieElement.firstChildElement("tmdbcolid").text().trimmed();
         if (!collectionId.isEmpty()) {
@@ -210,7 +210,7 @@ void MovieXmlReader::movieSet(const QDomElement& movieSetElement)
     // Old Syntax:
     //   <set>Movie Set Name</set>
     //
-    MovieSet set;
+    MovieSetInfo set;
     if (!setNameElements.isEmpty()) {
         set.name = setNameElements.at(0).toElement().text();
     } else {
