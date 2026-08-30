@@ -42,9 +42,8 @@
 ### Changed
 
 - The movie set artwork options are now labelled with what reads them.  "Artwork next to
-  movies" uses the Movie Set Artwork Automator naming, which Kodi does not read; Kodi reads
-  movie set artwork only from its movie set information folder, which is the "separate artwork
-  directory" option.
+  movies" uses the Movie Set Artwork Automator naming, which Kodi does not read; "separate
+  artwork directory" writes into Kodi's movie set information folder.
 
 ### Removed
 
