@@ -445,11 +445,13 @@ void SetsWidget::saveSet()
         }
         m_moviesToSave[setName].clear();
 
-        if (!m_setPosters[setName].isNull()) {
+        // A set without a name has no path of its own to write artwork to: movieSetFileName()
+        // collapses to the artwork directory itself, or to the first movie that has no set.
+        if (!setName.isEmpty() && !m_setPosters[setName].isNull()) {
             Manager::instance()->mediaCenterInterface()->saveMovieSetPoster(setName, m_setPosters[setName]);
             m_setPosters[setName] = QImage();
         }
-        if (!m_setBackdrops[setName].isNull()) {
+        if (!setName.isEmpty() && !m_setBackdrops[setName].isNull()) {
             Manager::instance()->mediaCenterInterface()->saveMovieSetBackdrop(setName, m_setBackdrops[setName]);
             m_setBackdrops[setName] = QImage();
         }
@@ -565,6 +567,24 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         }
     }
 
+    // Artwork is stored under the set's name, so carry it over; saveSet() writes it under the
+    // new name.  Must be read before the movies are renamed: KodiXml::movieSetFileName() finds
+    // "artwork next to movies" through a movie of the set -- and for an empty name, through an
+    // arbitrary movie that has no set at all, which is why empty names carry nothing.
+    QImage poster;
+    QImage backdrop;
+    if (!mergesIntoExistingSet && !origSetName.isEmpty() && !newName.isEmpty()) {
+        auto* mediaCenter = Manager::instance()->mediaCenterInterface();
+        poster = m_setPosters.value(origSetName);
+        if (poster.isNull()) {
+            poster = mediaCenter->movieSetPoster(origSetName);
+        }
+        backdrop = m_setBackdrops.value(origSetName);
+        if (backdrop.isNull()) {
+            backdrop = mediaCenter->movieSetBackdrop(origSetName);
+        }
+    }
+
     if (!m_moviesToSave.contains(newName)) {
         m_moviesToSave.insert(newName, QVector<Movie*>());
     }
@@ -589,12 +609,20 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     m_sets[newName].append(m_sets[origSetName]);
     m_sets.remove(origSetName);
 
+    m_setPosters.remove(origSetName);
+    m_setBackdrops.remove(origSetName);
     if (!m_setPosters.contains(newName)) {
-        m_setPosters.insert(newName, QImage());
+        m_setPosters.insert(newName, poster);
     }
     if (!m_setBackdrops.contains(newName)) {
-        m_setBackdrops.insert(newName, QImage());
+        m_setBackdrops.insert(newName, backdrop);
     }
+
+    // The row is the renamed set now; saveSet(), the artwork dialogs and a second rename of the
+    // same row look it up by this role.
+    ui->sets->blockSignals(true);
+    item->setData(Qt::UserRole, newName);
+    ui->sets->blockSignals(false);
 
     if (m_addedSets.contains(newName)) {
         m_addedSets.removeOne(origSetName);
