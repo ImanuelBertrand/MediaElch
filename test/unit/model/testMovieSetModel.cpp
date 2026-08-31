@@ -6,6 +6,7 @@
 #include "model/MovieSetModel.h"
 
 #include <QAbstractItemModelTester>
+#include <QSignalSpy>
 #include <memory>
 
 namespace {
@@ -132,12 +133,14 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
 
     SECTION("an edit that is not a membership change leaves membership alone")
     {
-        // Movie::sigChanged means "repaint me" and fires for every kind of edit.
+        // Movie::sigChanged means "repaint me" and fires for every kind of edit, so
+        // most of them must not touch the set at all -- not even to remove the movie
+        // and put it back, which a view would see as the list jumping.
         alien->setTitle("Alien (1979)");
         alien->setSortTitle("Alien");
 
         REQUIRE(sets.sets().size() == 1);
-        CHECK(sets.set("Alien Collection")->movies().size() == 2);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien, aliens});
     }
 
     SECTION("a movie that is destroyed disappears from its set")
@@ -191,13 +194,56 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(alienCollection->movies().size() == 2);
     }
 
-    SECTION("reload regroups a movie whose set changed without being noticed")
+    SECTION("reload does not duplicate what is already there")
     {
-        // A resync, not the normal path: it must not duplicate memberships either.
         sets.reload();
 
         REQUIRE(sets.sets().size() == 1);
-        CHECK(sets.set("Alien Collection")->movies().size() == 2);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien, aliens});
+    }
+
+    SECTION("reload evicts a member the movie itself does not name")
+    {
+        // reload() is the resync: it rebuilds membership from the movies, so a member
+        // that only the set believes in is dropped again.
+        MovieSet* alienCollection = sets.set("Alien Collection");
+        Movie* predator = movieInSet(owner, "Predator", "Predator Collection");
+        movies.addMovie(predator);
+        alienCollection->addMovie(predator);
+        REQUIRE(alienCollection->movies().size() == 3);
+
+        sets.reload();
+
+        CHECK(alienCollection->movies() == QVector<Movie*>{alien, aliens});
+        CHECK(sets.set("Predator Collection")->movies() == QVector<Movie*>{predator});
+    }
+
+    SECTION("a regroup announces one reset and nothing else")
+    {
+        // reload() empties every set, rebuilds membership and here has to create a set
+        // from scratch as well.  Without the reset guards a view would be told about
+        // each of those steps in the middle of a model reset.
+        sets.clear();
+        QSignalSpy repaints(&sets, &QAbstractItemModel::dataChanged);
+        QSignalSpy insertions(&sets, &QAbstractItemModel::rowsInserted);
+        QSignalSpy resets(&sets, &QAbstractItemModel::modelReset);
+
+        sets.reload();
+
+        REQUIRE(sets.sets().size() == 1);
+        CHECK(resets.count() == 1);
+        CHECK(repaints.count() == 0);
+        CHECK(insertions.count() == 0);
+    }
+
+    SECTION("a set that changed announces a repaint")
+    {
+        QSignalSpy repaints(&sets, &QAbstractItemModel::dataChanged);
+
+        sets.set("Alien Collection")->setOverview("A science fiction horror franchise.");
+
+        REQUIRE(repaints.count() == 1);
+        CHECK(repaints.at(0).at(0).value<QModelIndex>().row() == 0);
     }
 }
 
@@ -277,11 +323,17 @@ TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
     auto sets = std::make_unique<MovieSetModel>();
     sets->setMovieModel(&movies);
 
-    SECTION("passes the Qt model checker")
+    SECTION("passes the Qt model checker while sets come and go")
     {
         auto tester = std::make_unique<QAbstractItemModelTester>(
             sets.get(), QAbstractItemModelTester::FailureReportingMode::Fatal);
-        CHECK(sets->rowCount() == 2);
+        REQUIRE(sets->rowCount() == 2);
+
+        sets->addSet("Alien vs Predator Collection");
+        sets->removeSet("Alien Collection");
+        sets->reload();
+
+        CHECK(sets->rowCount() == 1);
     }
 
     SECTION("a row carries its set's name and the set itself")
