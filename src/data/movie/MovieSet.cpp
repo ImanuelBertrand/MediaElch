@@ -43,9 +43,10 @@ const MovieSetImages& MovieSet::constImages() const
 // The three setters below are the fan-out point of D-A: an edit to the set's own
 // record means one `set.nfo` write plus a mirrored copy into every member movie's
 // NFO (and, for setName(), the rename mode of D-B decides whether the members'
-// `<set><name>` join key moves at all).  None of that is implemented yet: there is
-// no MovieSetModel and no `set.nfo` writer, and this entity is not wired to
-// anything.  Until then a setter only updates this object and announces it.
+// `<set><name>` join key moves at all).  The `set.nfo` writer is a later step, so
+// none of that fan-out happens yet: a setter updates this object, marks it as
+// needing to be saved and announces it, and MovieSetModel keeps the object rather
+// than dropping it while that flag is set.
 
 void MovieSet::setName(QString name)
 {

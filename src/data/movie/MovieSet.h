@@ -39,6 +39,10 @@ public:
     ///          neither dirties the set nor emits sigChanged.  That guarantee is
     ///          scoped to these three scalar setters; MovieSetImages::setImage()
     ///          and setChanged() below both fire unconditionally.
+    /// \warning Nothing here checks that no other set is called \p name, and the
+    ///          model cannot check afterwards either.  MovieSetModel::addSet() is
+    ///          the only uniqueness guard, so a caller renaming a set has to ask
+    ///          MovieSetModel::set() first and treat a hit as a merge.
     void setName(QString name);
     void setTmdbId(TmdbId id);
     void setOverview(QString overview);
