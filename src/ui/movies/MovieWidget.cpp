@@ -24,6 +24,7 @@
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QIntValidator>
+#include <QLineEdit>
 #include <QMovie>
 #include <QPainter>
 #include <QPixmapCache>
@@ -191,7 +192,12 @@ MovieWidget::MovieWidget(QWidget* parent) : QWidget(parent), ui(new Ui::MovieWid
 
     connect(ui->trailer,          &QLineEdit::textEdited,           this, &MovieWidget::onTrailerChange);
     connect(ui->certification,    &QComboBox::editTextChanged,      this, &MovieWidget::onCertificationChange);
-    connect(ui->set,              &QComboBox::editTextChanged,      this, &MovieWidget::onSetChange);
+    // The set is committed when the edit is finished, not on every keystroke: the
+    // per-keystroke wiring called Movie::setSet() -- and with it Movie::setChanged() --
+    // once per typed character, and MovieSetModel would see one membership change per
+    // character too.  ui->certification above is deliberately left as it was.
+    connect(ui->set->lineEdit(), &QLineEdit::editingFinished, this, [this]() { onSetChange(ui->set->currentText()); });
+    connect(ui->set,              &QComboBox::textActivated,        this, &MovieWidget::onSetChange);
     connect(ui->badgeWatched,     &Badge::clicked,                  this, &MovieWidget::onWatchedClicked);
     connect(ui->releaseDate,      &QDateTimeEdit::dateChanged,      this, &MovieWidget::onReleasedChange);
     connect(ui->lastPlayed,       &QDateTimeEdit::dateTimeChanged,  this, &MovieWidget::onLastWatchedChange);
@@ -912,6 +918,11 @@ void MovieWidget::onPlayLocalTrailer()
 void MovieWidget::saveInformation()
 {
     qCDebug(generic) << "[Movie] Save movie";
+    // The set combo commits when its edit is finished, and saving does not finish it:
+    // the navbar's save button is a QToolButton, which does not take focus, and Ctrl+S
+    // moves focus nowhere at all.  Without this a set name typed and then saved
+    // straight away would never reach the movie.
+    onSetChange(ui->set->currentText());
     setDisabledTrue();
 
     QVector<Movie*> movies = MovieFilesWidget::instance()->selectedMovies();
@@ -1205,7 +1216,9 @@ void MovieWidget::onSortTitleChange(QString text)
  */
 void MovieWidget::onSetChange(QString text)
 {
-    if (m_movie == nullptr) {
+    if (m_movie == nullptr || text == m_movie->set().name) {
+        // editingFinished() fires on every focus loss, whether the text was edited or
+        // not, and Movie::setSet() marks the movie changed unconditionally.
         return;
     }
     MovieSetInfo set;
