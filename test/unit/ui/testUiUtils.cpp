@@ -192,3 +192,45 @@ TEST_CASE("shouldCommitOnFocusOut is the whole commit rule for an editable combo
         CHECK_FALSE(ui::shouldCommitOnFocusOut(f.combo, f.combo, nullptr));
     }
 }
+
+TEST_CASE("withCurrentValue keeps an editable combo box able to show its value", "[ui][movie][set]")
+{
+    SECTION("a value the list already has leaves the list untouched")
+    {
+        const QStringList sets{"", "Alien Collection", "Predator Collection"};
+
+        const QStringList result = ui::withCurrentValue(sets, "Alien Collection");
+
+        CHECK(result == sets);
+    }
+
+    SECTION("a value the list is missing is added, so indexOf() cannot return -1")
+    {
+        // What MovieWidget::updateMovieInfo() faces when MovieSetModel has not seen a
+        // movie's set yet: the movie says "Alien Anthology", the model still says
+        // "Alien Collection".  Without this the combo box would be set to index -1,
+        // which empties it, and the next focus loss would commit "" over the name.
+        const QStringList sets{"", "Alien Collection"};
+
+        const QStringList result = ui::withCurrentValue(sets, "Alien Anthology");
+
+        CHECK(result.contains("Alien Anthology"));
+        CHECK(result.indexOf("Alien Anthology") >= 0);
+        // Everything that was there is still there; this only ever adds.
+        CHECK(result.mid(0, sets.size()) == sets);
+    }
+
+    SECTION("the empty name is a value like any other")
+    {
+        // A movie in no set at all.  MovieWidget's list starts with an empty entry, so
+        // this normally changes nothing -- but a list without one must still be able to
+        // show it rather than falling back to -1.
+        CHECK(ui::withCurrentValue({"", "Alien Collection"}, "") == QStringList{"", "Alien Collection"});
+        CHECK(ui::withCurrentValue({"Alien Collection"}, "").indexOf("") >= 0);
+    }
+
+    SECTION("an empty list can still show a value")
+    {
+        CHECK(ui::withCurrentValue({}, "Alien Collection") == QStringList{"Alien Collection"});
+    }
+}

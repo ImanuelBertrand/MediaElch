@@ -3,6 +3,7 @@
 #include "utils/Meta.h"
 
 #include <QPushButton>
+#include <QStringList>
 
 class QComboBox;
 class QEvent;
@@ -55,6 +56,24 @@ ELCH_NODISCARD bool isOwnPopupOpen(const QComboBox* comboBox);
 ///          it, so anything wired to that line edit is outside the bracket.
 /// \return false if \p comboBox or \p event is null.
 ELCH_NODISCARD bool shouldCommitOnFocusOut(const QComboBox* comboBox, const QObject* watched, const QEvent* event);
+
+/// \brief Returns \p entries, with \p current added if it is not in them already.
+/// \details A combo box is filled from a list and then told to show one of its
+///          entries with setCurrentIndex(list.indexOf(current)).  If the list does
+///          not happen to contain \p current, indexOf() returns -1 and
+///          setCurrentIndex(-1) leaves an *editable* combo box displaying nothing --
+///          which, for a box that commits its text when it loses focus, is not a
+///          cosmetic defect: the next focus loss commits the empty string over the
+///          value the box was supposed to be showing.
+///
+///          So a list that has to be able to display a value has to contain it, and
+///          this is the one place that guarantees it.  An entry added here is one the
+///          list's own source did not know about, which means that source is stale;
+///          the box still shows the truth.
+/// \return \p entries with \p current guaranteed to be in it, so that indexOf() on the
+///         result cannot return -1.  A list that already contains it is returned
+///         untouched.
+ELCH_NODISCARD QStringList withCurrentValue(QStringList entries, const QString& current);
 
 } // namespace ui
 } // namespace mediaelch

@@ -671,6 +671,12 @@ void MovieWidget::updateMovieInfo()
             sets.append(movieSet->name());
         }
     }
+    // The movie's own set name has to be in the list, or setCurrentIndex(-1) below
+    // empties this editable box and the next focus loss commits "" over it -- see
+    // onSetChange() and mediaelch::ui::withCurrentValue().  Reading the names from
+    // the library kept that true by construction, because m_movie is in the library;
+    // reading them from a model that can be a step behind it does not.
+    sets = mediaelch::ui::withCurrentValue(sets, m_movie->set().name);
 
     QStringList certificationsSorted = certifications.values();
     std::sort(certificationsSorted.begin(), certificationsSorted.end(), LocaleStringCompare());
@@ -1273,13 +1279,15 @@ void MovieWidget::onSetChange(QString text)
     if (m_movie == nullptr || text == m_movie->set().name) {
         // eventFilter() calls this on every focus loss, whether the text was edited or
         // not -- and twice over when another widget's popup opens, which is two
-        // focus-outs -- while Movie::setSet() marks the movie changed unconditionally.
+        // focus-outs -- while the setter below marks the movie changed unconditionally.
         // So this comparison is the only thing that stops merely tabbing through the set
         // box from dirtying the movie.  It depends on updateMovieInfo() having actually
-        // put the movie's set name in the box: if sets.indexOf() there ever returned -1,
-        // setCurrentIndex(-1) would empty an editable combo and the next focus loss
-        // would commit "" and detach the movie.  Not reachable today -- the name is
-        // always in the list -- but the two are coupled.
+        // put the movie's set name in the box: with sets.indexOf() returning -1 there,
+        // setCurrentIndex(-1) empties an editable combo and the next focus loss arrives
+        // here with an empty text that is not the movie's set name, so it commits "" and
+        // detaches the movie with no user action.  That is reachable whenever the set
+        // model is a step behind the library, which is why updateMovieInfo() now runs
+        // the list through mediaelch::ui::withCurrentValue().
         return;
     }
     MovieSetInfo set;
