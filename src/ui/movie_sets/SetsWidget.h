@@ -61,7 +61,6 @@ private:
     QMap<QString, QImage> m_setBackdrops;
     QImage m_currentPoster;
     QImage m_currentBackdrop;
-    QStringList m_addedSets;
     QMenu* m_tableContextMenu;
     DownloadManager* m_downloadManager;
     QMovie* m_loadingMovie;
