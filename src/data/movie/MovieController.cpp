@@ -7,6 +7,7 @@
 #include "media/ImageUtils.h"
 #include "media/NameFormatter.h"
 #include "media_center/MediaCenterInterface.h"
+#include "model/MovieSetModel.h"
 #include "network/DownloadManager.h"
 #include "scrapers/movie/MovieMerger.h"
 #include "scrapers/movie/MovieScraper.h"
@@ -22,6 +23,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSignalBlocker>
+#include <QThread>
 #include <QtCore/qmath.h>
 #include <chrono>
 
@@ -148,6 +150,11 @@ bool MovieController::loadData(MediaCenterInterface* mediaCenterInterface, bool 
     m_infoLoaded = infoLoaded;
     m_infoFromNfoLoaded = infoLoaded && reloadFromNfo;
     m_movie->setChanged(false);
+
+    // Called from inside the QSignalBlocker's scope, which is deliberate and safe: the
+    // reconcile is a direct call and emits no Movie signal of its own, so there is
+    // nothing for the blocker to swallow.  Measured, not assumed.
+    syncSetMembership();
     return infoLoaded;
 }
 
@@ -235,9 +242,55 @@ void MovieController::loadData(QHash<mediaelch::scraper::MovieScraper*, mediaelc
             job->config().details,
             Settings::instance()->usePlotForOutline(),
             Settings::instance()->ignoreDuplicateOriginalTitle());
+        // copyDetailsToMovie() blocks the target's signals for the whole merge
+        // (MovieMerger.cpp), so a scrape of a movie that is already in the library
+        // writes its set where MovieSetModel cannot see it.  scraperLoadDone() below
+        // happens to repair that, because Movie::setChanged() emits sigChanged even
+        // when the flag does not change -- but that is a coincidence, not coverage, and
+        // it would end the day anyone gives setChanged() the equality guard the other
+        // setters have.  Reconciled explicitly instead.
+        syncSetMembership();
         scraperLoadDone(scraper, job);
     });
     scrapeJob->start();
+}
+
+void MovieController::syncSetMembership()
+{
+    // MovieSetModel follows a movie's set through Movie::sigChanged, and both writes
+    // that reach it from here are suppressed: loadData() wraps its NFO re-read in a
+    // QSignalBlocker, and copyDetailsToMovie() blocks the target for the whole merge.
+    // A direct call is the only notification that survives either -- a dedicated signal
+    // on Movie would be blocked by the very same lines, which was measured rather than
+    // assumed.
+    //
+    // Neither blocker is narrowed to let a set signal through instead.  Both rewrite
+    // the whole movie, so every field's setter would emit sigChanged and every observer
+    // of the movie would repaint dozens of times per movie loaded.  That is what they
+    // are for.
+    //
+    // Only on the model's own thread.  A library scan loads movies on worker threads
+    // (MovieDiskLoader::doStart() maps createMovie() with QtConcurrent), and those
+    // movies are not in the library yet -- they are handed to MovieModel afterwards,
+    // where MovieSetModel picks up their set at attach time.  Reaching into the model
+    // from those threads would be a data race for no gain.  The skip is logged at debug
+    // level and not as a warning: the branch is taken once per movie on every library
+    // scan, so a warning would be one log line per movie for entirely correct
+    // behaviour.  It is logged at all because nothing else here would leave a trace the
+    // day a movie that *is* in the library gets loaded off the main thread.
+    //
+    // The comparison is against Manager's thread, and Manager is a lazy static whose
+    // thread is whichever one touches it first.  That is always the main thread:
+    // main() calls Manager::instance() at main.cpp:198, before MainWindow is built,
+    // before QApplication::exec() and before any worker thread exists.
+    MovieSetModel* movieSetModel = Manager::instance()->movieSetModel();
+    if (movieSetModel->thread() != QThread::currentThread()) {
+        qCDebug(generic) << "[MovieController] Not reconciling the set of" << m_movie->title()
+                         << "-- loaded off the movie set model's thread.  Expected during a library scan,"
+                         << "where the movie is not in the library yet.";
+        return;
+    }
+    movieSetModel->syncMovie(m_movie);
 }
 
 bool MovieController::loadStreamDetailsFromFile()

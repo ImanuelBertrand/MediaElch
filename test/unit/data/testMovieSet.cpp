@@ -161,14 +161,28 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
 
     SECTION("membership does not write the set onto the movie")
     {
-        // The movie-side value stays untouched; the model becomes the only writer
-        // in a later step.  See docs/concepts/movie-sets.md, D-C.
+        // This section was planted as a tripwire, to be retired by the step that made
+        // MovieSetModel the writer.  That step has now been taken, and the assertion
+        // survives it -- because the division of labour it describes turned out to be
+        // the permanent one rather than an interim state.
+        //
+        // A movie's MovieSetInfo is the value its own file carries.  A MovieSet's
+        // membership is the model's.  Putting a movie into a set here would write the
+        // value from a second place, which is the duplicated state the split exists to
+        // remove.  MovieSetModel::assign() does both halves, and it is the only thing
+        // that does; see docs/concepts/movie-sets.md, D-C, and the test case
+        // "MovieSetModel is the only thing that changes membership".
         MovieSet set{"Alien Collection"};
         Movie alien;
 
         set.addMovie(&alien);
 
         CHECK(alien.set().name.isEmpty());
+        CHECK(set.movies() == QVector<Movie*>{&alien});
+        // Nor does it dirty the movie, which is the other half of the same warning:
+        // a membership edit that has to reach disk is marked by MovieSetModel::assign(),
+        // and by nothing here.
+        CHECK_FALSE(alien.hasChanged());
     }
 }
 

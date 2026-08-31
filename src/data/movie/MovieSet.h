@@ -85,11 +85,16 @@ signals:
     ///        membership.
     /// \warning A membership change deliberately marks *nothing* dirty -- not
     ///          this set (membership is not part of set.nfo, D-A) and not the
-    ///          movie (the model becomes the only writer in a later step).  So
-    ///          whoever calls addMovie()/removeMovie() -- MovieSetModel, once it
-    ///          exists -- has to mark the member movies changed itself.  Forget
-    ///          that and a membership edit is lost with no flag set anywhere,
-    ///          while this signal has already claimed otherwise.
+    ///          movie, whose MovieSetInfo is the value its own file carries and is
+    ///          not written from here.  So a caller that means an *edit* -- one that
+    ///          has to reach the member's NFO -- must mark the member movies changed
+    ///          itself, and MovieSetModel::assign() is the entry point that does.
+    ///          Most callers of addMovie()/removeMovie() are not edits at all: the
+    ///          model also calls them from attachMovie(), detachMovie(), reload() and
+    ///          onMovieChanged(), where it is following the library rather than
+    ///          changing it, and where dirtying a movie would be wrong.  Get that
+    ///          distinction backwards and either a membership edit is lost with no flag
+    ///          set anywhere, or every library reload offers to rewrite every NFO.
     void sigChanged(MovieSet* set);
 
 private slots:

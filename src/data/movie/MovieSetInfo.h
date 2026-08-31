@@ -20,4 +20,13 @@ struct MovieSetInfo
     /// \details Only for renaming a collection.  Moving a movie to a _different_
     ///          collection must not use this: overview and id describe the old one.
     ELCH_NODISCARD MovieSetInfo renamedTo(QString newName) const;
+
+    /// \brief Whether both describe the same collection in the same words.
+    /// \details All three fields, because all three are written to the movie's NFO.
+    ///          MovieSetModel::assign() uses this to leave a movie alone when it is
+    ///          asked to put it where it already is: an assignment that changes nothing
+    ///          must not mark the movie changed, or MediaElch offers to rewrite an NFO
+    ///          the user never touched.  MovieSet's own setters make the same promise.
+    ELCH_NODISCARD bool operator==(const MovieSetInfo& other) const;
+    ELCH_NODISCARD bool operator!=(const MovieSetInfo& other) const;
 };

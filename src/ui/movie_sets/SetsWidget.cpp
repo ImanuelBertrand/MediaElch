@@ -306,16 +306,19 @@ void SetsWidget::onAddMovie()
     }
 
     QString setName = ui->sets->item(ui->sets->currentRow(), 0)->text();
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
     for (Movie* movie : asConst(movies)) {
         if (movie->set().name == setName) {
             continue;
         }
         // The movie joins a different collection, so its previous set's overview and
-        // id must not travel with it.
+        // id must not travel with it.  The name check above, not assign()'s whole-value
+        // guard, is what leaves a movie already in this set alone: a name-only value
+        // never compares equal to a set that carries an id or an overview.
         MovieSetInfo set;
         set.name = setName;
-        // The model follows the movie's set name, so this is also what makes it a member.
-        movie->setSet(set);
+        // The model owns membership, so it is what puts the movie into the set.
+        setModel->assign(movie, set);
         if (!m_moviesToSave[setName].contains(movie)) {
             m_moviesToSave[setName].append(movie);
         }
@@ -342,7 +345,7 @@ void SetsWidget::onRemoveMovie()
         m_moviesToSave[movie->set().name].append(movie);
     }
     movie->setSortTitle("");
-    movie->setSet(MovieSetInfo{});
+    Manager::instance()->movieSetModel()->assign(movie, MovieSetInfo{});
     ui->movies->removeRow(ui->movies->currentRow());
 }
 
@@ -609,9 +612,9 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         if (mergesIntoExistingSet) {
             MovieSetInfo set;
             set.name = newName;
-            movie->setSet(set);
+            setModel->assign(movie, set);
         } else {
-            movie->setSet(movie->set().renamedTo(newName));
+            setModel->assign(movie, movie->set().renamedTo(newName));
         }
     }
 

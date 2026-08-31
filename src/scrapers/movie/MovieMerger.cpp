@@ -150,7 +150,7 @@ void copyDetailToMovie(Movie& target,
         break;
     }
     case MovieScraperInfo::Set: {
-        target.setSet(source.set());
+        target.setSetInfo(source.set());
         break;
     }
     case MovieScraperInfo::Logo: {

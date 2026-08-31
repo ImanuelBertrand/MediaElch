@@ -194,7 +194,7 @@ MovieWidget::MovieWidget(QWidget* parent) : QWidget(parent), ui(new Ui::MovieWid
     connect(ui->trailer,          &QLineEdit::textEdited,           this, &MovieWidget::onTrailerChange);
     connect(ui->certification,    &QComboBox::editTextChanged,      this, &MovieWidget::onCertificationChange);
     // The set is committed when the edit is finished, not on every keystroke: the
-    // per-keystroke wiring called Movie::setSet() -- and with it Movie::setChanged() --
+    // per-keystroke wiring called Movie::setSetInfo() -- and with it Movie::setChanged() --
     // once per typed character, and MovieSetModel would see one membership change per
     // character too.  ui->certification above is deliberately left as it was.
     // Deliberately not QLineEdit::editingFinished: that signal is spent by the first
@@ -1279,9 +1279,17 @@ void MovieWidget::onSetChange(QString text)
     if (m_movie == nullptr || text == m_movie->set().name) {
         // eventFilter() calls this on every focus loss, whether the text was edited or
         // not -- and twice over when another widget's popup opens, which is two
-        // focus-outs -- while the setter below marks the movie changed unconditionally.
-        // So this comparison is the only thing that stops merely tabbing through the set
-        // box from dirtying the movie.  It depends on updateMovieInfo() having actually
+        // focus-outs.  So this comparison is what stops merely tabbing through the set
+        // box from dirtying the movie.
+        //
+        // MovieSetModel::assign() has a guard of its own, and it is *not* a substitute
+        // for this one: it compares the whole MovieSetInfo, while the value built below
+        // carries a name and nothing else.  For a movie whose set has a TMDB id or an
+        // overview the two values therefore never match, so assign() would write, dirty
+        // the movie and wipe both.  Deleting this comparison as redundant is exactly
+        // the harm assign()'s guard exists to prevent.
+        //
+        // It depends on updateMovieInfo() having actually
         // put the movie's set name in the box: with sets.indexOf() returning -1 there,
         // setCurrentIndex(-1) empties an editable combo and the next focus loss arrives
         // here with an empty text that is not the movie's set name, so it commits "" and
@@ -1290,9 +1298,17 @@ void MovieWidget::onSetChange(QString text)
         // the list through mediaelch::ui::withCurrentValue().
         return;
     }
+    // Deliberately name-only: reaching this line means the user named a different set,
+    // and the previous set's overview and id describe the set the movie is leaving, so
+    // they must not travel with it.  Losing them here is the point, which is why the
+    // guard above -- not assign()'s whole-value one -- is what protects a movie whose
+    // set did not change.  SetsWidget::onAddMovie() builds the same value for the same
+    // reason and guards on the name in the same way.
     MovieSetInfo set;
     set.name = text;
-    m_movie->setSet(set);
+    // The model performs the membership edit; this widget does not write the movie's
+    // set itself.  See docs/concepts/movie-sets.md, D-C.
+    Manager::instance()->movieSetModel()->assign(m_movie, set);
     ui->buttonRevert->setVisible(true);
 }
 

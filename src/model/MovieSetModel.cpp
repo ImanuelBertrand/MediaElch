@@ -106,6 +106,41 @@ MovieSet* MovieSetModel::addSet(const QString& name)
     return createSet(name);
 }
 
+void MovieSetModel::assign(Movie* movie, const MovieSetInfo& setInfo)
+{
+    if (movie == nullptr) {
+        return;
+    }
+    if (movie->set() != setInfo) {
+        // Marks the movie changed, which is the half of a membership edit that nothing
+        // else does: neither MovieSet nor this model dirties anything for a membership
+        // change on its own, and this one has to reach the member's NFO (D-A).
+        //
+        // Guarded, because putting a movie where it already is must change nothing at
+        // all -- MovieSet's own setters promise exactly that, and a dirty flag nobody
+        // asked for means MediaElch offers to rewrite an NFO the user never touched.
+        movie->setSetInfo(setInfo);
+    }
+    // Outside the guard on purpose.  Writing the value is what has to be skipped when
+    // nothing changed; reconciling is not, because the model can be behind the movie
+    // for reasons that have nothing to do with this call -- see syncMovie().  Normally
+    // it is redundant, since setSetInfo() emits Movie::sigChanged and onMovieChanged()
+    // has already run; it is not redundant when the caller has blocked the movie's
+    // signals.  Reconciling twice is a no-op.
+    syncMovie(movie);
+}
+
+void MovieSetModel::syncMovie(Movie* movie)
+{
+    if (movie == nullptr || !m_setNameByMovie.contains(movie)) {
+        // A movie this model never attached is not in the library, so it has no
+        // membership here to reconcile.  Its set is picked up by attachMovie() if it
+        // ever joins.
+        return;
+    }
+    onMovieChanged(movie);
+}
+
 void MovieSetModel::removeSet(const QString& name)
 {
     MovieSet* movieSet = set(name);
@@ -115,12 +150,11 @@ void MovieSetModel::removeSet(const QString& name)
 
     // Detaching the members has to reach disk, and nothing else marks it: a membership
     // change dirties neither the set (membership is not in `set.nfo`, D-A) nor, by
-    // itself, the movie.  Movie::setSet() does mark the movie changed; when it leaves
-    // the public API in the next step, whatever replaces it has to keep doing so.
-    // The members are copied because each setSet() removes one from the set.
+    // itself, the movie.  assign() is what marks it.
+    // The members are copied because each assign() removes one from the set.
     const QVector<Movie*> members = movieSet->movies();
     for (Movie* movie : members) {
-        movie->setSet(MovieSetInfo{});
+        assign(movie, MovieSetInfo{});
     }
 
     dropSet(movieSet);

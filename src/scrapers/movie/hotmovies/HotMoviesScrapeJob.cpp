@@ -173,7 +173,7 @@ void HotMoviesScrapeJob::parseAndAssignInfos(const QString& html)
     if (match.hasMatch()) {
         MovieSetInfo set;
         set.name = decodeAndTrim(match.captured(1));
-        m_movie->setSet(set);
+        m_movie->setSetInfo(set);
     }
 }
 

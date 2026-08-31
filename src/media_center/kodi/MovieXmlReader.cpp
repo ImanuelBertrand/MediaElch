@@ -154,7 +154,7 @@ bool MovieXmlReader::parseNfoDom(QDomDocument domDoc)
         const QString collectionId = movieElement.firstChildElement("tmdbcolid").text().trimmed();
         if (!collectionId.isEmpty()) {
             set.tmdbId = TmdbId(collectionId);
-            m_movie.setSet(set);
+            m_movie.setSetInfo(set);
         }
     }
 
@@ -223,7 +223,7 @@ void MovieXmlReader::movieSet(const QDomElement& movieSetElement)
     if (!tmdbId.isEmpty()) {
         set.tmdbId = TmdbId(tmdbId);
     }
-    m_movie.setSet(set);
+    m_movie.setSetInfo(set);
 }
 
 void MovieXmlReader::movieActor(const QDomElement& actorElement)

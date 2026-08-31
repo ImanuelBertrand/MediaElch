@@ -481,10 +481,45 @@ to rebuild on:
 - **A movie changing its set** is found by comparing the movie's current
   `set().name` against the one it was last seen with, on every `Movie::sigChanged`.
   That signal fires for every kind of edit, so most of the comparisons find nothing;
-  it costs one hash lookup and one string compare.  This is the interim arrangement
-  for as long as `Movie::setSet` is in the public API — it is option 1 of Open
-  question 2 — and it goes away with the setter when the model becomes the only
-  writer.
+  it costs one hash lookup and one string compare.
+
+  ~~This is the interim arrangement for as long as `Movie::setSet` is in the public
+  API — it is option 1 of Open question 2 — and it goes away with the setter when the
+  model becomes the only writer.~~  **Corrected 2026-08-31: it is permanent.**  The
+  comparison does not go away, because the setter does not: see the amended
+  recommendation below.  It is also, on its own, *not* sufficient, which is why the
+  model additionally offers `syncMovie()`.
+- **A movie whose set was written with its signals blocked** has to be reconciled by a
+  direct call, because no signal reaches the model at all.  There are **two** such
+  writes, not one, and both can land on a movie that is already in the library:
+
+  - **The NFO re-read.**  `MovieController::loadData()` wraps its whole body in
+    `const QSignalBlocker blocker(m_movie)` (`src/data/movie/MovieController.cpp:91`,
+    scoped to the end of the function at `:158`), and it re-reads the NFO **file** of a
+    library movie whenever `MovieWidget` opens one restored from the database cache
+    (`MovieWidget.cpp:424`; the early return at `MovieController.cpp:84-87` does not
+    fire, because `m_infoFromNfoLoaded` is false for a movie loaded from cached NFO
+    content).
+  - **The scrape merge.**  `copyDetailsToMovie()` blocks the target for the whole merge
+    loop (`src/scrapers/movie/MovieMerger.cpp:202-206`) and the set write at `:153` is
+    inside it, so scraping a library movie (`MovieController.cpp:240`, reached from
+    `MovieWidget.cpp:514` and `MovieMultiScrapeDialog`) is suppressed the same way.
+    This one *looks* covered, because `MovieController::scraperLoadDone()` calls
+    `m_movie->setChanged(true)` a frame later (`MovieController.cpp:330`) and
+    `Movie::setChanged()` emits `sigChanged` unconditionally (`Movie.cpp:796-800`).
+    That is a coincidence rather than coverage: give `setChanged()` the same equality
+    guard `MovieSet`'s own setters have and every scrape would silently leave the model
+    stale.
+
+  Both were measured — after either write the movie reads the new set name while the
+  model still has it in the old set.  A dedicated `Movie::sigSetChanged` would not help
+  with either: a `QSignalBlocker` blocks every signal of the object, including that one.
+  So `MovieSetModel::syncMovie(Movie*)` is called directly from
+  `MovieController::syncSetMembership()`, at both sites, on the model's own thread only,
+  since a library scan loads movies on worker threads where they are not in the library
+  yet.  The call sits inside the blocker's scope at the NFO site, which is safe and
+  measured to be so: the reconcile emits no `Movie` signal of its own, so there is
+  nothing for the blocker to swallow.
 
 **A set is dropped only when the library is re-derived, never by an edit.**  Moving a
 movie out of a set, or clearing its set name, leaves the set standing even if it was
@@ -543,7 +578,9 @@ to be saved.  Miss that and the edit is lost with no dirty flag anywhere, while
 `MovieSet::sigChanged` has already claimed the set changed.
 
 **The recommended shape is that the model is the only writer**: `MovieSet` and
-`MovieSetModel` own set membership, and `Movie::setSet` leaves the public API.
+`MovieSetModel` own set membership, and ~~`Movie::setSet` leaves the public API~~
+**the movie-side setter stops claiming to be a membership edit** (amended 2026-08-31,
+see below).
 This is by a wide margin the largest diff of the options — it touches the NFO
 reader, five scrapers and both widgets — and it should be planned as its own
 step rather than smuggled in.  It is recommended anyway, for two reasons that
@@ -568,6 +605,54 @@ it.  `Movie::set()` returns by value (`src/data/movie/Movie.h:95`,
 (`Movie.h:272`), so every member movie keeps a mutable copy of the set's name,
 overview and id alongside the entity's.  Two writers, no reconciliation.  Only
 removing the movie-side setter closes that.
+
+**Amendment, 2026-08-31 — the setter cannot leave the public API, and it does not need
+to.**  Read against the code, the call sites do not partition into "library movie" and
+"transient scrape or parse product", which is what a private setter plus a separate
+load-path entry would require.  Two of them serve both from the same line, and the
+distinction is made by a caller two or three frames further up that the writer cannot
+see:
+
+- `MovieXmlReader.cpp:157` and `:226` write onto `KodiXml::loadMovie()`'s argument
+  (`KodiXml.cpp:321`).  That is a not-yet-library movie during a scan
+  (`MovieDirectorySearcher.cpp:284`, `:382`, `:448`, handed to `MovieModel` afterwards
+  at `MovieFileSearcher.cpp:128`) **and** a library movie on the reload path
+  (`MovieWidget.cpp:424`).
+- `MovieMerger.cpp:153` writes onto `copyDetailsToMovie()`'s target.  From
+  `MovieController.cpp:240` that is a library movie when the scrape comes from
+  `MovieWidget.cpp:514` or `MovieMultiScrapeDialog`, and a not-yet-library movie when it
+  comes from `ImportDialog.cpp:299` or `MakeMkvDialog.cpp:267`.  From
+  `CustomMovieScrapeJob.cpp:50` it is the job's own stand-in.
+
+Only the five scraper sites are unambiguous: `MovieScrapeJob` allocates its own movie
+(`MovieScrapeJob.cpp:9`) and nothing else writes there.
+
+The alternative that *would* satisfy the letter of this section is a friended free
+helper that consults `Manager::instance()->movieSetModel()` and writes directly when the
+movie is not in it.  It is rejected because it would make **every bare-`Movie` unit
+test depend on a live `Manager`** — `test/helpers/fake_data.cpp`,
+`testKodi_v18_movie.cpp` and `testCustomMovieScraper.cpp` all construct movies and
+assign their set — for no behavioural gain.  The arrangement below avoids that: nothing
+in the test suite reaches `MovieController::loadData()`, which is where the singleton is
+consulted.  (It is *not* rejected for consulting the singleton from `src/data` as such;
+that file already does, five times over, as do four other files there.)
+
+So what leaves the public API is the *claim*, not the setter.  `Movie::setSet` is
+renamed `Movie::setSetInfo` and documented as the per-movie value that the NFO reader
+parses, the scrapers fill in and `MovieXmlWriter` writes back out — a value whose
+writing does **not** move the movie between `MovieSet` entities.  Membership has exactly
+one writer, `MovieSetModel::assign()`, which writes the value, moves the movie between
+the entities and marks the movie changed, since a membership change dirties nothing on
+its own.  The model reconciles from the value at three seams, which together are total:
+`attachMovie()` for a movie entering the library, the `Movie::sigChanged` comparison for
+any unblocked load-path write onto a library movie, and `syncMovie()` at each of the two
+suppressed writes above — the NFO re-read and the scrape merge.  Four seams, not three;
+an earlier draft of this section counted three and missed the merge.
+
+The duplicated state is closed in the sense that matters: one writer per concern, and no
+state the model can be stale in.  What remains on `Movie` is a value that a movie's own
+file legitimately carries and that a transient movie must be able to hold with no model
+in sight.
 
 The alternatives are recorded under Open questions.
 
@@ -663,12 +748,36 @@ with a different failure mode.
    no `QPointer` holes have to be tolerated, and `MovieModel` does not have to own
    the set model.  See D-C.
 2. ~~**How does the model learn about membership changes, if `Movie::setSet`
-   stays?**~~  **Answered, for as long as it stays.**  Option 1: the model compares
+   stays?**~~  ~~**Answered, for as long as it stays.**  Option 1: the model compares
    `movie->set().name` against the name it last saw on every `Movie::sigChanged`.
    The signal does fire for every change of any kind, but the comparison is a hash
    lookup and a string compare, which is cheaper than a second change signal on
    `Movie` that every future setter would have to choose between.  It goes away with
-   the setter when the model becomes the only writer.
+   the setter when the model becomes the only writer.~~
+
+   **Re-answered 2026-08-31, and the setter stays.**  Option 1 is kept and is now
+   permanent, but it was an *incomplete* answer, and so was the option it was chosen
+   over.  Both are defeated by the same line: `MovieController::loadData()` re-reads a
+   library movie's NFO under `const QSignalBlocker blocker(m_movie)`
+   (`MovieController.cpp:91`).  A `QSignalBlocker` blocks every signal the object has,
+   so a dedicated `Movie::sigSetChanged` would be blinded exactly as `sigChanged` is —
+   the comparison was never the weaker of the two, and neither is sufficient alone.
+   Measured with a probe, not reasoned about: after such a write the model still holds
+   the old set name.
+
+   The complete answer is the comparison **plus** a direct call,
+   `MovieSetModel::syncMovie(Movie*)`, made from `MovieController::syncSetMembership()`
+   at **both** suppressed writes — the NFO re-read and the scrape merge; see D-C, where
+   they are set out.  A direct call is the only notification that survives a signal
+   blocker.  It runs on the model's thread only, because a library scan loads movies on
+   worker threads (`MovieDiskLoader::doStart()`) where the movies are not in the library
+   yet anyway; that skip is deliberately silent, because the branch is taken once per
+   movie on every scan.
+
+   The blocker is deliberately **not** narrowed to let a set signal through: a load
+   rewrites the whole movie, so every field's setter would emit `sigChanged` and every
+   observer would repaint dozens of times per movie loaded.  That is what the blocker
+   is for.
 3. **Who owns the sets?**  The recommendation is `Manager`, next to the other
    models, because all three recompute sites and `KodiXml` need them and
    `Manager` is where the other cross-cutting models already live.  That adds
