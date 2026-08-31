@@ -529,8 +529,9 @@ An earlier draft of this section had a set dropped the moment it lost its last m
 whoever removed it.  That was forced by the movie widget's set combo box, which was
 `editable` and wired to `editTextChanged`, so it rewrote the movie's set name on every
 keystroke and the model would otherwise have collected one set per typed character.
-The combo now commits on `editingFinished`/`textActivated` instead, which removes the
-forcing reason — and the rule had to go regardless, because it contradicts D-A and
+The combo now commits on `textActivated` and on a focus-out that is not the combo's own
+drop-down opening (`MovieWidget::eventFilter`), instead, which removes the forcing
+reason — and the rule had to go regardless, because it contradicts D-A and
 because it destroyed and recreated the `MovieSet` object on a backspace-and-retype,
 losing the set's overview and TMDB id with it.
 
