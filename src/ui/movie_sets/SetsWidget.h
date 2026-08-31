@@ -56,7 +56,6 @@ private slots:
 
 private:
     Ui::SetsWidget* ui;
-    QMap<QString, QVector<Movie*>> m_sets;
     QMap<QString, QVector<Movie*>> m_moviesToSave;
     QMap<QString, QImage> m_setPosters;
     QMap<QString, QImage> m_setBackdrops;

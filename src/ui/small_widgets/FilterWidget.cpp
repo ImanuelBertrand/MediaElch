@@ -7,6 +7,7 @@
 #include "globals/Helper.h"
 #include "globals/LocaleStringCompare.h"
 #include "globals/Manager.h"
+#include "model/MovieSetModel.h"
 #include "ui/main/MainWindow.h"
 
 FilterWidget::FilterWidget(QWidget* parent) :
@@ -285,7 +286,6 @@ QVector<Filter*> FilterWidget::setupMovieFilters()
     QStringList tags;
     QStringList directors;
     QStringList videoCodecs;
-    // TODO: QVector<MovieSet>
     QStringList sets;
 
     const auto copyNotEmptyUnique = [](const QStringList& from, QStringList& to) {
@@ -315,8 +315,13 @@ QVector<Filter*> FilterWidget::setupMovieFilters()
         if (movie->certification().isValid() && !certifications.contains(certStr)) {
             certifications.append(certStr);
         }
-        if (!movie->set().name.isEmpty() && !sets.contains(movie->set().name)) {
-            sets.append(movie->set().name);
+    }
+
+    // The set list comes from the one model that holds it, instead of grouping the
+    // whole library by set name here.  See docs/concepts/movie-sets.md, D-C.
+    for (const MovieSet* movieSet : Manager::instance()->movieSetModel()->sets()) {
+        if (!movieSet->name().isEmpty() && !sets.contains(movieSet->name())) {
+            sets.append(movieSet->name());
         }
     }
 

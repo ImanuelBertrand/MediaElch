@@ -9,6 +9,7 @@
 #include "log/Log.h"
 #include "media/ImageCache.h"
 #include "media/ImageCapture.h"
+#include "model/MovieSetModel.h"
 #include "scrapers/movie/custom/CustomMovieScraper.h"
 #include "ui/UiUtils.h"
 #include "ui/image/ImageDialog.h"
@@ -597,11 +598,17 @@ void MovieWidget::updateMovieInfo()
 
     const auto& movies = Manager::instance()->movieModel()->movies();
     for (Movie* movie : movies) {
-        if (!sets.contains(movie->set().name) && !movie->set().name.isEmpty()) {
-            sets.append(movie->set().name);
-        }
         if (movie->certification().isValid()) {
             certifications.insert(movie->certification().toString());
+        }
+    }
+
+    // The set list comes from the one model that holds it, instead of grouping the
+    // whole library by set name here.  See docs/concepts/movie-sets.md, D-C.
+    const auto& movieSets = Manager::instance()->movieSetModel()->sets();
+    for (const MovieSet* movieSet : movieSets) {
+        if (!movieSet->name().isEmpty() && !sets.contains(movieSet->name())) {
+            sets.append(movieSet->name());
         }
     }
 
