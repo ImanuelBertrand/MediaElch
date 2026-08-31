@@ -67,6 +67,20 @@ public:
     void setChanged(bool changed);
 
 signals:
+    /// \brief Emitted for every movie that becomes a member of this set.
+    /// \details Membership is announced per movie, and not only through sigChanged
+    ///          below, because MovieSetModel keeps an index of which sets a movie is
+    ///          in and an index cannot be maintained from a signal that does not say
+    ///          what changed.  Emitting it here rather than having the model update
+    ///          the index at its own call sites is what keeps the index right for a
+    ///          membership the model did not make itself: addMovie() is public.
+    void sigMovieAdded(MovieSet* set, Movie* movie);
+    /// \brief Emitted for every movie that stops being a member of this set.
+    /// \details Carries a QObject*, not a Movie*, because it is also emitted for a
+    ///          member that has been destroyed, whose Movie sub-object is gone by
+    ///          then; see forgetDestroyedMovie().  The pointer is for comparison only.
+    void sigMovieRemoved(MovieSet* set, QObject* movie);
+
     /// \brief Emitted whenever anything about this set changed, including its
     ///        membership.
     /// \warning A membership change deliberately marks *nothing* dirty -- not

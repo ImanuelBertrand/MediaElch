@@ -140,6 +140,14 @@ void MovieSetModel::dropSet(MovieSet* movieSet)
     if (!m_inReset) {
         endRemoveRows();
     }
+    // Nothing else takes a deleted set out of the membership index, and an entry that
+    // kept it would hand out a dangling MovieSet*.  Normally there is nothing to do:
+    // a set is dropped either for having no members or after its members have been
+    // detached.
+    const QVector<Movie*> members = movieSet->movies();
+    for (Movie* movie : members) {
+        unindexMembership(movie, movieSet);
+    }
     delete movieSet;
 }
 
@@ -179,6 +187,7 @@ void MovieSetModel::reload()
         movieSet->clearMovies();
     }
     m_setNameByMovie.clear();
+    m_setsByMovie.clear();
     if (m_movieModel != nullptr) {
         for (Movie* movie : m_movieModel->movies()) {
             attachMovie(movie);
@@ -196,6 +205,7 @@ void MovieSetModel::reload()
 void MovieSetModel::clear()
 {
     m_setNameByMovie.clear();
+    m_setsByMovie.clear();
     if (m_sets.isEmpty()) {
         return;
     }
@@ -249,7 +259,14 @@ void MovieSetModel::onMovieDestroyed(QObject* movie)
     // themselves on the same signal, but whether they have done so yet depends on when
     // each of them connected, so they are asked rather than assumed -- forgetting a
     // movie twice is a no-op.
-    for (MovieSet* movieSet : asConst(m_sets)) {
+    //
+    // Taken, not read.  The sets normally empty this entry themselves, one
+    // sigMovieRemoved at a time, so taking it changes nothing when they do -- but an
+    // entry keyed by a movie that no longer exists is the hazard the line above
+    // guards against, and this is the same hazard with a heavier consequence: a
+    // MovieSet* read back for an unrelated movie at the same address.
+    const QVector<MovieSet*> memberships = m_setsByMovie.take(movie);
+    for (MovieSet* movieSet : memberships) {
         movieSet->forgetDestroyedMovie(movie);
     }
     dropEmptySets();
@@ -267,6 +284,36 @@ void MovieSetModel::onSetChanged(MovieSet* movieSet)
     }
     const QModelIndex changed = createIndex(row, 0);
     emit dataChanged(changed, changed);
+}
+
+void MovieSetModel::onSetMovieAdded(MovieSet* movieSet, Movie* movie)
+{
+    if (movieSet == nullptr || movie == nullptr) {
+        return;
+    }
+    QVector<MovieSet*>& memberships = m_setsByMovie[movie];
+    if (!memberships.contains(movieSet)) {
+        memberships.append(movieSet);
+    }
+}
+
+void MovieSetModel::onSetMovieRemoved(MovieSet* movieSet, QObject* movie)
+{
+    unindexMembership(movie, movieSet);
+}
+
+void MovieSetModel::unindexMembership(QObject* movie, MovieSet* movieSet)
+{
+    const auto it = m_setsByMovie.find(movie);
+    if (it == m_setsByMovie.end()) {
+        return;
+    }
+    it->removeAll(movieSet);
+    if (it->isEmpty()) {
+        // A movie in no set has no entry: most of a library is in no set at all, and
+        // an empty vector per movie would cost more than the index saves.
+        m_setsByMovie.erase(it);
+    }
 }
 
 void MovieSetModel::onMoviesInserted(const QModelIndex& parent, int first, int last)
@@ -322,11 +369,19 @@ void MovieSetModel::detachMovie(Movie* movie)
     }
     movie->disconnect(this);
     m_setNameByMovie.remove(movie);
-    // Every set, not just the one the movie names: MovieSet::addMovie() is public, so a
-    // set can hold a member whose own set().name points elsewhere.  reload() cures that
-    // -- it rebuilds membership from the movies -- but a movie can leave the library
-    // before one runs, and a pointer left behind here would outlive the movie.
-    for (MovieSet* movieSet : asConst(m_sets)) {
+    // Every set the movie is actually in, which is not the same as the one it names:
+    // MovieSet::addMovie() is public, so a set can hold a member whose own set().name
+    // points elsewhere.  reload() cures that -- it rebuilds membership from the movies
+    // -- but a movie can leave the library before one runs, and a pointer left behind
+    // here would outlive the movie.
+    //
+    // The index answers that in one lookup.  Scanning every set instead was O(sets) per
+    // movie, and a library reload detaches every movie, so it was O(movies x sets).
+    // Taken, not read.  Each removeMovie() empties this entry itself, one
+    // sigMovieRemoved at a time, so taking it changes nothing when they do; it is what
+    // keeps a detached movie out of the index even if one of them does not.
+    const QVector<MovieSet*> memberships = m_setsByMovie.take(movie);
+    for (MovieSet* movieSet : memberships) {
         movieSet->removeMovie(movie);
     }
 }
@@ -335,6 +390,10 @@ MovieSet* MovieSetModel::createSet(const QString& name)
 {
     auto* movieSet = new MovieSet(name, this);
     connect(movieSet, &MovieSet::sigChanged, this, &MovieSetModel::onSetChanged);
+    // The membership index is fed from the set, not from this model's own calls, so
+    // that a membership made through the public MovieSet::addMovie() is indexed too.
+    connect(movieSet, &MovieSet::sigMovieAdded, this, &MovieSetModel::onSetMovieAdded);
+    connect(movieSet, &MovieSet::sigMovieRemoved, this, &MovieSetModel::onSetMovieRemoved);
 
     const int row = qsizetype_to_int(m_sets.size());
     if (!m_inReset) {

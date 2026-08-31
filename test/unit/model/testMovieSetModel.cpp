@@ -255,6 +255,32 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(sets.set("Predator Collection") == nullptr);
     }
 
+    SECTION("a set that is dropped while it still holds a movie is forgotten entirely")
+    {
+        // detachMovie() finds the sets a movie is in from an index rather than by
+        // scanning all of them, so a set that is deleted has to leave that index with
+        // it: nothing else would take it out, and the next detach of that movie would
+        // call removeMovie() on freed memory.
+        //
+        // removeSet() detaches by clearing each member's set name, which takes the
+        // movie out of the set that *names* it -- so a member added through the public
+        // MovieSet::addMovie(), whose own name points elsewhere, is still in the set
+        // when it is deleted.
+        MovieSet* alienCollection = sets.set("Alien Collection");
+        Movie* predator = movieInSet(owner, "Predator", "Predator Collection");
+        movies.addMovie(predator);
+        alienCollection->addMovie(predator);
+        REQUIRE(alienCollection->movies().contains(predator));
+
+        sets.removeSet("Alien Collection");
+        REQUIRE(sets.set("Alien Collection") == nullptr);
+
+        // The deleted set must not be reached for again on predator's way out.
+        movies.clear();
+
+        CHECK(sets.sets().isEmpty());
+    }
+
     SECTION("an unsaved record does not exempt a set from being dropped")
     {
         // MovieSet::hasChanged() is a one-way latch -- nothing calls setChanged(false)

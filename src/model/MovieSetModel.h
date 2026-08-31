@@ -93,6 +93,8 @@ private slots:
     void onMovieChanged(Movie* movie);
     void onMovieDestroyed(QObject* movie);
     void onSetChanged(MovieSet* set);
+    void onSetMovieAdded(MovieSet* set, Movie* movie);
+    void onSetMovieRemoved(MovieSet* set, QObject* movie);
     void onMoviesInserted(const QModelIndex& parent, int first, int last);
     void onMoviesAboutToBeRemoved(const QModelIndex& parent, int first, int last);
 
@@ -101,6 +103,8 @@ private:
     void detachMovie(Movie* movie);
     MovieSet* createSet(const QString& name);
     void dropSet(MovieSet* movieSet);
+    /// \brief Takes \p movie out of the membership index entry for \p movieSet.
+    void unindexMembership(QObject* movie, MovieSet* movieSet);
     /// \brief Drops every set that has no members left.
     void dropEmptySets();
     /// \brief Logs a warning if dropping \p movieSet would discard an unsaved record.
@@ -112,6 +116,20 @@ private:
     /// \details Keyed by QObject* so that a destroyed movie can be looked up without
     ///          its pointer ever being cast back to Movie*.
     QHash<QObject*, QString> m_setNameByMovie;
+    /// \brief The sets each movie is a member of.
+    /// \details detachMovie() has to take a leaving movie out of every set that holds
+    ///          it, and it used to find them by scanning all of them -- O(sets) per
+    ///          movie, so O(movies x sets) across a library reload, the one moment when
+    ///          both counts are large at once.  This answers the same question in one
+    ///          lookup.
+    ///
+    ///          It is maintained from MovieSet::sigMovieAdded/sigMovieRemoved rather
+    ///          than at this model's own call sites, so that it stays right for a
+    ///          membership this model did not make: MovieSet::addMovie() is public.
+    ///          Keyed by QObject* for the same reason as m_setNameByMovie, and a movie
+    ///          in no set has no entry at all rather than an empty one -- most movies
+    ///          are in no set.
+    QHash<QObject*, QVector<MovieSet*>> m_setsByMovie;
     MovieModel* m_movieModel = nullptr;
     /// \brief Whether reload() is running; it announces one reset instead of each change.
     bool m_inReset = false;
