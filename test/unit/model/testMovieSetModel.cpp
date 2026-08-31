@@ -231,6 +231,30 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(alienCollection->movies() == QVector<Movie*>{outsider});
     }
 
+    SECTION("a set lets go of a movie that leaves the library and that it does not name")
+    {
+        // MovieSet::addMovie() is public, so a set can hold a member whose own
+        // set().name points somewhere else -- the state the reload section below
+        // cures.  Until a reload runs, that movie can leave the library, and a set
+        // that let go of only the movies naming it would keep a pointer that outlives
+        // the movie.  Asking the movie for its set name is therefore not enough here.
+        MovieSet* alienCollection = sets.set("Alien Collection");
+        Movie* predator = movieInSet(owner, "Predator", "Predator Collection");
+        movies.addMovie(predator);
+        alienCollection->addMovie(predator);
+        // A member the movie model never held, so that the set outlives the clear()
+        // and its membership can still be read afterwards.
+        Movie* outsider = movieInSet(owner, "Alien 3", "Alien Collection");
+        alienCollection->addMovie(outsider);
+        REQUIRE(alienCollection->movies().size() == 4);
+
+        movies.clear();
+
+        REQUIRE(sets.set("Alien Collection") == alienCollection);
+        CHECK(alienCollection->movies() == QVector<Movie*>{outsider});
+        CHECK(sets.set("Predator Collection") == nullptr);
+    }
+
     SECTION("an unsaved record does not exempt a set from being dropped")
     {
         // MovieSet::hasChanged() is a one-way latch -- nothing calls setChanged(false)

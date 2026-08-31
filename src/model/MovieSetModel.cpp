@@ -322,9 +322,10 @@ void MovieSetModel::detachMovie(Movie* movie)
     }
     movie->disconnect(this);
     m_setNameByMovie.remove(movie);
-    // Every set, not just the one the movie names: reload() can leave a set holding a
-    // member the movie itself does not name, and a pointer left behind here would
-    // outlive the movie.
+    // Every set, not just the one the movie names: MovieSet::addMovie() is public, so a
+    // set can hold a member whose own set().name points elsewhere.  reload() cures that
+    // -- it rebuilds membership from the movies -- but a movie can leave the library
+    // before one runs, and a pointer left behind here would outlive the movie.
     for (MovieSet* movieSet : asConst(m_sets)) {
         movieSet->removeMovie(movie);
     }
