@@ -54,6 +54,13 @@ public:
     void removeMovie(Movie* movie);
     /// \brief Removes every member.  Does nothing if there are none.
     void clearMovies();
+    /// \brief Removes the member that \p movie was, without ever dereferencing it.
+    /// \details This set heals itself on QObject::destroyed and calls this from there,
+    ///          so members need not do anything.  It is public for a second observer of
+    ///          the same signal -- MovieSetModel -- which cannot know whether its own
+    ///          handler runs before or after this set's, because that depends on when
+    ///          the set connected.  Calling it again is a no-op.
+    void forgetDestroyedMovie(QObject* movie);
 
     /// \brief Whether this set's own record differs from what is stored on disk.
     ELCH_NODISCARD bool hasChanged() const;

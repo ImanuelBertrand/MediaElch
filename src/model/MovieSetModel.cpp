@@ -240,10 +240,20 @@ void MovieSetModel::onMovieChanged(Movie* movie)
 
 void MovieSetModel::onMovieDestroyed(QObject* movie)
 {
-    // The sets drop the movie themselves; only this model's bookkeeping is left.
     // Without this the entry would outlive the movie and could be read again for an
     // unrelated movie allocated at the same address.
     m_setNameByMovie.remove(movie);
+
+    // A movie that leaves the library normally has been detached already, by
+    // onMoviesAboutToBeRemoved(), which also disconnects this handler.  Reaching here
+    // means the movie died some other way, so this is the backstop.  The sets heal
+    // themselves on the same signal, but whether they have done so yet depends on when
+    // each of them connected, so they are asked rather than assumed -- forgetting a
+    // movie twice is a no-op.
+    for (MovieSet* movieSet : asConst(m_sets)) {
+        movieSet->forgetDestroyedMovie(movie);
+    }
+    dropEmptySets();
 }
 
 void MovieSetModel::onSetChanged(MovieSet* movieSet)

@@ -33,7 +33,7 @@ class MovieModel;
 ///            is the only notification that arrives while the Movie is still alive and
 ///            still in the movie model, so it is where the sets let go of it.
 ///          - QObject::destroyed is the backstop for a movie that dies without leaving
-///            the movie model.  MovieSet heals its own membership the same way.
+///            the movie model at all.  MovieSet heals its own membership the same way.
 ///
 /// \see docs/concepts/movie-sets.md, D-C.
 class MovieSetModel : public QAbstractItemModel

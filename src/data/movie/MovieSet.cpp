@@ -114,6 +114,11 @@ void MovieSet::clearMovies()
 
 void MovieSet::onMovieDestroyed(QObject* movie)
 {
+    forgetDestroyedMovie(movie);
+}
+
+void MovieSet::forgetDestroyedMovie(QObject* movie)
+{
     // The Movie sub-object is gone by now, so the pointer is only ever compared,
     // never dereferenced -- and never cast back to Movie* for that reason.
     const auto it = std::remove_if(m_movies.begin(), m_movies.end(), [movie](const Movie* member) {

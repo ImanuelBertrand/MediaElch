@@ -503,7 +503,10 @@ the model, and both apply the same test — no members left:
   the movie model, so it is also where the sets have to let go of the pointer:
   `MovieModel::clear()` merely calls `deleteLater()`, and `QObject::destroyed` arrives
   a turn of the event loop too late to keep every set from holding a movie that has
-  already left the library.
+  already left the library.  `QObject::destroyed` remains the backstop for a movie
+  that dies without leaving `MovieModel` at all; the model asks each set to forget the
+  movie there rather than assuming the set's own handler for the same signal has
+  already run, since slot order follows connection order.
 
 Until `set.nfo` exists, "no members left" is the whole test, because a set has no
 record apart from the movies that name it — which is exactly what the three grouping

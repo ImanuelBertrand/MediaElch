@@ -152,6 +152,21 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{aliens});
     }
 
+    SECTION("a set whose last movie is destroyed is dropped")
+    {
+        // A Movie can die without MovieModel saying so.  The set heals itself on
+        // QObject::destroyed too, but this model's handler for that signal runs
+        // *before* the set's -- the model connects in attachMovie() before the set is
+        // even created -- so it has to ask the sets rather than assume they have
+        // already let go.
+        delete alien;
+        REQUIRE(sets.sets().size() == 1);
+
+        delete aliens;
+
+        CHECK(sets.sets().isEmpty());
+    }
+
     SECTION("a set whose movies leave the library is dropped")
     {
         // MovieFileSearcher::reload() clears the movie model and fills it again.  The
