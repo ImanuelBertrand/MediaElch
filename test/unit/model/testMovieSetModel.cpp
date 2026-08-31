@@ -197,23 +197,21 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(alienCollection->movies() == QVector<Movie*>{outsider});
     }
 
-    SECTION("a set with an unsaved record survives its movies leaving the library")
+    SECTION("an unsaved record does not exempt a set from being dropped")
     {
-        // Nothing writes `set.nfo` yet, so an edit to a set's own record lives in this
-        // object and nowhere else -- the member movies carry no flag for it, because
-        // membership is not what changed.  Dropping the object is the only way it can
-        // be lost, and it would be lost without a trace.
-        MovieSet* alienCollection = sets.set("Alien Collection");
-        alienCollection->setOverview("A science fiction horror film franchise.");
+        // MovieSet::hasChanged() is a one-way latch -- nothing calls setChanged(false)
+        // -- so exempting a changed set would exempt it for the rest of the session and
+        // put a name in the set combo and the set filter that no movie answers to.
+        // D-A's "a set with a `set.nfo` outlives its last member" arrives with the
+        // `set.nfo` writer and a clearing edge, not with this flag.
+        sets.set("Alien Collection")->setOverview("A science fiction horror film franchise.");
 
         movies.clear();
 
-        REQUIRE(sets.sets() == QVector<MovieSet*>{alienCollection});
-        CHECK(alienCollection->movies().isEmpty());
-        CHECK(alienCollection->overview() == "A science fiction horror film franchise.");
+        CHECK(sets.sets().isEmpty());
     }
 
-    SECTION("reload keeps an empty set that has an unsaved record")
+    SECTION("reload drops an empty set whose record was edited")
     {
         MovieSet* predatorCollection = sets.addSet("Predator Collection");
         predatorCollection->setTmdbId(TmdbId(399));
@@ -221,7 +219,7 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
 
         sets.reload();
 
-        CHECK(sets.set("Predator Collection") == predatorCollection);
+        CHECK(sets.set("Predator Collection") == nullptr);
     }
 
     SECTION("a movie that left the library is not followed any more")
@@ -388,8 +386,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
 
     SECTION("removeSet removes a set whose record has unsaved changes")
     {
-        // Automatic drops spare such a set; a deliberate removal is the user saying to
-        // throw it away, and does (loudly -- it logs).
+        // A deliberate removal is the user saying to throw the record away, and does.
         MovieSet* alienCollection = sets.addSet("Alien Collection");
         alienCollection->setOverview("A science fiction horror film franchise.");
         REQUIRE(alienCollection->hasChanged());

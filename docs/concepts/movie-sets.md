@@ -496,8 +496,9 @@ is a set on the same terms, not an exception to be tidied away.
 The two events that *do* drop a set are the two where the library itself changed under
 the model, and both apply the same test — no members left:
 
-- `reload()`, the full regroup.  It preserves the existing `MovieSet` objects, so a
-  set's own record survives it, and drops the ones no movie names any more.
+- `reload()`, the full regroup.  It preserves the `MovieSet` objects of the sets that
+  still have members, so their own records survive it, and drops the ones no movie
+  names any more.
 - a movie leaving `MovieModel`, which arrives as `rowsAboutToBeRemoved`.  That is the
   only notification that reaches the model while the movie is still alive and still in
   the movie model, so it is also where the sets have to let go of the pointer:
@@ -512,6 +513,17 @@ Until `set.nfo` exists, "no members left" is the whole test, because a set has n
 record apart from the movies that name it — which is exactly what the three grouping
 sites assumed.  When D-A's record lands, the test becomes "no members *and* no
 `set.nfo`", and nothing else about the rule changes.
+
+**That second half cannot be approximated with `MovieSet::hasChanged()` before the
+writer exists**, and one attempt at it has already had to be reverted.  Nothing calls
+`MovieSet::setChanged(false)`, so the flag is a one-way latch: exempt a changed set
+from the drop and a set that has ever been renamed is exempt for the rest of the
+session, immune even to `reload()` — which is the mechanism that is supposed to cure
+exactly this.  The observable result is the phantom the whole rule exists to prevent:
+rename a set in the sets tab, do not save, rescan, and the old name comes back from the
+NFOs while the new one is kept forever in the set combo box and the set filter.  The
+exemption belongs with the `set.nfo` writer and a clearing edge on the flag, in the
+same step, not before.
 
 An earlier draft of this section had a set dropped the moment it lost its last movie,
 whoever removed it.  That was forced by the movie widget's set combo box, which was

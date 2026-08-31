@@ -148,14 +148,13 @@ void MovieSetModel::dropEmptySets()
     // Iterated backwards because dropSet() removes from m_sets.
     for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
         MovieSet* movieSet = m_sets.at(row);
-        // A set with unsaved changes to its own record is kept even with no members.
-        // Nothing writes `set.nfo` yet, so that record exists in this object and
-        // nowhere else, and dropping the object is the only way it can be lost -- the
-        // member movies carry no flag for it, because membership is not what changed.
-        // This is also the seam for D-A: when `set.nfo` lands, "has a record" stops
-        // meaning "has an unwritten one" and starts meaning "has a file", and the rest
-        // of this stays as it is.
-        if (movieSet->movies().isEmpty() && !movieSet->hasChanged()) {
+        // No members left is the whole test.  D-A's "a set with a `set.nfo` outlives
+        // its last member" belongs here eventually, but it cannot be approximated by
+        // hasChanged(): nothing ever calls MovieSet::setChanged(false), so that flag is
+        // a one-way latch and a set that has ever been renamed would be exempt from
+        // every automatic drop for the rest of the session.  It arrives with the
+        // `set.nfo` writer and a clearing edge, not before.
+        if (movieSet->movies().isEmpty()) {
             dropSet(movieSet);
         }
     }
@@ -185,9 +184,9 @@ void MovieSetModel::reload()
             attachMovie(movie);
         }
     }
-    // Drop the sets no movie names any more and that hold no unsaved record of their
-    // own.  Until `set.nfo` is written the movies are all a set has, which is what the
-    // three grouping sites this model replaces assumed too.
+    // Drop the sets no movie names any more.  Until `set.nfo` is written the movies are
+    // all a set has, which is what the three grouping sites this model replaces assumed
+    // too.
     dropEmptySets();
 
     m_inReset = false;

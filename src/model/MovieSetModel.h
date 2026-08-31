@@ -66,10 +66,7 @@ public:
     ///          empties one leaves it standing, and one created by addSet() and never
     ///          filled is a set too.  Sets are dropped when the library is re-derived
     ///          and nothing is left to derive them from (reload(), or the movies
-    ///          leaving the movie model) or when they are removed deliberately.  A set
-    ///          whose own record has unsaved changes survives the re-derivation too:
-    ///          that record lives in the object and nowhere else until `set.nfo` is
-    ///          written.
+    ///          leaving the movie model) or when they are removed deliberately.
     ELCH_NODISCARD const QVector<MovieSet*>& sets() const;
     /// \brief The set called \p name, or nullptr if there is none.  An empty name is no set.
     ELCH_NODISCARD MovieSet* set(const QString& name) const;
@@ -86,8 +83,8 @@ public:
 
     /// \brief Regroups every movie of the movie model into sets.
     /// \details Existing MovieSet objects are kept, so a set's own record survives; a set
-    ///          that ends up with no members and holds no unsaved record is dropped,
-    ///          because until `set.nfo` exists the movies are all a set has.
+    ///          that ends up with no members is dropped, because until `set.nfo` exists
+    ///          the movies are all a set has.
     void reload();
     /// \brief Removes every set.
     void clear();
@@ -104,7 +101,7 @@ private:
     void detachMovie(Movie* movie);
     MovieSet* createSet(const QString& name);
     void dropSet(MovieSet* movieSet);
-    /// \brief Drops every set that has no members left and no record of its own.
+    /// \brief Drops every set that has no members left.
     void dropEmptySets();
     /// \brief Logs a warning if dropping \p movieSet would discard an unsaved record.
     void warnIfRecordIsLost(const MovieSet* movieSet) const;
