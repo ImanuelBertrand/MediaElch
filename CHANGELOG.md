@@ -30,6 +30,7 @@
 - Improved media codec detection for HDR10 and dolby vision (#1883).
   Thanks to GitHub user `@Quppa` for the help!
 - Music: If an album's cover can't be found, MediaElch may have crashed (#1918)
+- Movie sets: Renaming a set lost the set's overview, its TMDB id and its artwork
 - Movie sets: With "separate artwork directory", the set's sub-folder is now named the way
   Kodi expects (`/ \ ? : * " < > |` become `_`, trailing dots and spaces are trimmed).
   Sets whose name contains one of those characters were previously written to a folder Kodi
