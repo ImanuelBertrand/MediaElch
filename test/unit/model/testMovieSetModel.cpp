@@ -152,6 +152,48 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{aliens});
     }
 
+    SECTION("a set whose movies leave the library is dropped")
+    {
+        // MovieFileSearcher::reload() clears the movie model and fills it again.  The
+        // movies are only deleteLater()'d there, so rowsAboutToBeRemoved is the one
+        // notification that arrives while they are still in the model to be detached.
+        QSignalSpy removals(&sets, &QAbstractItemModel::rowsRemoved);
+
+        movies.clear();
+
+        CHECK(sets.sets().isEmpty());
+        CHECK(sets.set("Alien Collection") == nullptr);
+        CHECK(removals.count() == 1);
+    }
+
+    SECTION("a set lets go of a movie that leaves the library")
+    {
+        // MovieModel::clear() only calls deleteLater(), so a set that kept the pointer
+        // would hold a dangling one for as long as the event loop takes to run.  The
+        // set survives here because a member the movie model never held keeps it alive.
+        MovieSet* alienCollection = sets.set("Alien Collection");
+        Movie* outsider = movieInSet(owner, "Alien 3", "Alien Collection");
+        alienCollection->addMovie(outsider);
+        REQUIRE(alienCollection->movies().size() == 3);
+
+        movies.clear();
+
+        REQUIRE(sets.set("Alien Collection") == alienCollection);
+        CHECK(alienCollection->movies() == QVector<Movie*>{outsider});
+    }
+
+    SECTION("a movie that left the library is not followed any more")
+    {
+        movies.clear();
+        REQUIRE(sets.sets().isEmpty());
+
+        // The movie is still alive -- clear() only calls deleteLater() -- but it is no
+        // longer part of the library, so its edits must not put sets back into the model.
+        moveToSet(alien, "Predator Collection");
+
+        CHECK(sets.sets().isEmpty());
+    }
+
     SECTION("a set that loses its last movie is dropped")
     {
         // A set is its members until `set.nfo` gives it a record of its own.  Keeping

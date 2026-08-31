@@ -29,8 +29,11 @@ class MovieModel;
 ///            last seen with.  This is the interim arrangement while Movie::setSet is
 ///            still part of the public API; the next step makes this model the only
 ///            writer and the comparison goes away with it.
-///          - QObject::destroyed removes a movie again.  MovieSet heals its own
-///            membership the same way.
+///          - rowsAboutToBeRemoved detaches a movie that leaves the library again.  It
+///            is the only notification that arrives while the Movie is still alive and
+///            still in the movie model, so it is where the sets let go of it.
+///          - QObject::destroyed is the backstop for a movie that dies without leaving
+///            the movie model.  MovieSet heals its own membership the same way.
 ///
 /// \see docs/concepts/movie-sets.md, D-C.
 class MovieSetModel : public QAbstractItemModel
@@ -89,11 +92,15 @@ private slots:
     void onMovieDestroyed(QObject* movie);
     void onSetChanged(MovieSet* set);
     void onMoviesInserted(const QModelIndex& parent, int first, int last);
+    void onMoviesAboutToBeRemoved(const QModelIndex& parent, int first, int last);
 
 private:
     void attachMovie(Movie* movie);
+    void detachMovie(Movie* movie);
     MovieSet* createSet(const QString& name);
     void dropSet(MovieSet* movieSet);
+    /// \brief Drops every set that has no members left.
+    void dropEmptySets();
 
 private:
     QVector<MovieSet*> m_sets;

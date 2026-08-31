@@ -67,6 +67,8 @@ void MovieSetModel::setMovieModel(MovieModel* movieModel)
     m_movieModel = movieModel;
     if (m_movieModel != nullptr) {
         connect(m_movieModel, &QAbstractItemModel::rowsInserted, this, &MovieSetModel::onMoviesInserted);
+        connect(
+            m_movieModel, &QAbstractItemModel::rowsAboutToBeRemoved, this, &MovieSetModel::onMoviesAboutToBeRemoved);
     }
     reload();
 }
@@ -134,10 +136,25 @@ void MovieSetModel::dropSet(MovieSet* movieSet)
     if (row < 0) {
         return;
     }
-    beginRemoveRows(QModelIndex(), row, row);
+    if (!m_inReset) {
+        beginRemoveRows(QModelIndex(), row, row);
+    }
     m_sets.removeAt(row);
-    endRemoveRows();
+    if (!m_inReset) {
+        endRemoveRows();
+    }
     delete movieSet;
+}
+
+void MovieSetModel::dropEmptySets()
+{
+    // Iterated backwards because dropSet() removes from m_sets.
+    for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
+        MovieSet* movieSet = m_sets.at(row);
+        if (movieSet->movies().isEmpty()) {
+            dropSet(movieSet);
+        }
+    }
 }
 
 void MovieSetModel::reload()
@@ -157,11 +174,7 @@ void MovieSetModel::reload()
     // Drop the sets no movie names any more.  A set has no record of its own yet --
     // `set.nfo` is a later step -- so an empty one is not a set at all, which is also
     // what the three grouping sites this model replaces did.
-    for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
-        if (m_sets.at(row)->movies().isEmpty()) {
-            delete m_sets.takeAt(row);
-        }
-    }
+    dropEmptySets();
 
     m_inReset = false;
     endResetModel();
@@ -243,6 +256,26 @@ void MovieSetModel::onMoviesInserted(const QModelIndex& parent, int first, int l
     }
 }
 
+void MovieSetModel::onMoviesAboutToBeRemoved(const QModelIndex& parent, int first, int last)
+{
+    if (m_movieModel == nullptr || parent.isValid()) {
+        return;
+    }
+    // The movies are still in the movie model and still alive here, which is the whole
+    // reason this is the *aboutTo* signal: MovieModel::clear() only calls deleteLater()
+    // on them, so waiting for QObject::destroyed would leave every set holding pointers
+    // to movies that have already left the library until the event loop next runs.
+    for (int row = first; row <= last; ++row) {
+        detachMovie(m_movieModel->movie(row));
+    }
+    // A set whose last member has left the library has nothing left to exist by: until
+    // `set.nfo` is written a set *is* its members.  Keeping it would put a name in the
+    // set combo box and the set filter that no movie answers to -- neither list could
+    // do that before this model existed, because both were computed from the library
+    // on every read.
+    dropEmptySets();
+}
+
 void MovieSetModel::attachMovie(Movie* movie)
 {
     if (movie == nullptr) {
@@ -256,6 +289,21 @@ void MovieSetModel::attachMovie(Movie* movie)
     MovieSet* movieSet = addSet(name);
     if (movieSet != nullptr) {
         movieSet->addMovie(movie);
+    }
+}
+
+void MovieSetModel::detachMovie(Movie* movie)
+{
+    if (movie == nullptr) {
+        return;
+    }
+    movie->disconnect(this);
+    m_setNameByMovie.remove(movie);
+    // Every set, not just the one the movie names: reload() can leave a set holding a
+    // member the movie itself does not name, and a pointer left behind here would
+    // outlive the movie.
+    for (MovieSet* movieSet : asConst(m_sets)) {
+        movieSet->removeMovie(movie);
     }
 }
 
