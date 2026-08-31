@@ -194,18 +194,17 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(sets.sets().isEmpty());
     }
 
-    SECTION("a set that loses its last movie is dropped")
+    SECTION("a set that loses its last movie to an edit stays")
     {
-        // A set is its members until `set.nfo` gives it a record of its own.  Keeping
-        // emptied ones would also collect one set per keystroke, because the movie
-        // widget's set combo box is editable and rewrites the name on every one.
+        // An edit never destroys a set.  The one the user just emptied is very often
+        // the one they are about to fill again, and under D-A a set that has a
+        // `set.nfo` outlives its last member.
+        MovieSet* alienCollection = sets.set("Alien Collection");
         alien->setSet(MovieSetInfo{});
-        REQUIRE(sets.sets().size() == 1);
-
         aliens->setSet(MovieSetInfo{});
 
-        CHECK(sets.sets().isEmpty());
-        CHECK(sets.set("Alien Collection") == nullptr);
+        REQUIRE(sets.sets() == QVector<MovieSet*>{alienCollection});
+        CHECK(alienCollection->movies().isEmpty());
     }
 
     SECTION("a set that was created empty survives until the next reload")
@@ -331,6 +330,18 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         CHECK(aliens->set().name.isEmpty());
         CHECK(alien->hasChanged());
         CHECK(aliens->hasChanged());
+    }
+
+    SECTION("removeSet removes a set that has no movies")
+    {
+        // The sets tab's "Remove Movie Set" on a set nobody has put a movie into yet.
+        // Nothing else drops it: an emptied set is not dropped for being empty.
+        REQUIRE(sets.addSet("Alien Collection") != nullptr);
+
+        sets.removeSet("Alien Collection");
+
+        CHECK(sets.set("Alien Collection") == nullptr);
+        CHECK(sets.sets().isEmpty());
     }
 
     SECTION("removing a set that does not exist changes nothing")

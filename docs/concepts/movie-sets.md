@@ -486,16 +486,38 @@ to rebuild on:
   question 2 — and it goes away with the setter when the model becomes the only
   writer.
 
-**A set exists while it has members.**  One that loses its last movie is dropped,
-because until `set.nfo` is written a set has no record apart from the movies that name
-it, which is exactly what the three grouping sites assumed.  It is also what keeps the
-model from collecting a set per keystroke: the movie widget's set combo box is
-`editable` and `editTextChanged` rewrites the movie's set name on every one of them
-(`src/ui/movies/MovieWidget.cpp:194`).  A set created empty by `addSet()` — what the
-sets tab's *Add Movie Set* does — is the one exception, and it survives only until the
-next `reload()`.  That regroup is also where a set whose object is kept but whose
-members are gone is collected; it preserves the objects, so a set's own record survives
-it.
+**A set is dropped only when the library is re-derived, never by an edit.**  Moving a
+movie out of a set, or clearing its set name, leaves the set standing even if it was
+the last member: the set the user just emptied is very often the one they are about to
+fill again, and under D-A a set with a `set.nfo` has to outlive its last member
+anyway.  A set created empty by `addSet()` — what the sets tab's *Add Movie Set* does —
+is a set on the same terms, not an exception to be tidied away.
+
+The two events that *do* drop a set are the two where the library itself changed under
+the model, and both apply the same test — no members left:
+
+- `reload()`, the full regroup.  It preserves the existing `MovieSet` objects, so a
+  set's own record survives it, and drops the ones no movie names any more.
+- a movie leaving `MovieModel`, which arrives as `rowsAboutToBeRemoved`.  That is the
+  only notification that reaches the model while the movie is still alive and still in
+  the movie model, so it is also where the sets have to let go of the pointer:
+  `MovieModel::clear()` merely calls `deleteLater()`, and `QObject::destroyed` arrives
+  a turn of the event loop too late to keep every set from holding a movie that has
+  already left the library.
+
+Until `set.nfo` exists, "no members left" is the whole test, because a set has no
+record apart from the movies that name it — which is exactly what the three grouping
+sites assumed.  When D-A's record lands, the test becomes "no members *and* no
+`set.nfo`", and nothing else about the rule changes.
+
+An earlier draft of this section had a set dropped the moment it lost its last movie,
+whoever removed it.  That was forced by the movie widget's set combo box, which was
+`editable` and wired to `editTextChanged`, so it rewrote the movie's set name on every
+keystroke and the model would otherwise have collected one set per typed character.
+The combo now commits on `editingFinished`/`textActivated` instead, which removes the
+forcing reason — and the rule had to go regardless, because it contradicts D-A and
+because it destroyed and recreated the `MovieSet` object on a backspace-and-retype,
+losing the set's overview and TMDB id with it.
 
 **A membership change dirties nothing on its own** — not the set, since membership is
 not in `set.nfo` (D-A), and not the movie.  So wherever the model makes a membership

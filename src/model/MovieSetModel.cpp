@@ -122,12 +122,7 @@ void MovieSetModel::removeSet(const QString& name)
         movie->setSet(MovieSetInfo{});
     }
 
-    // The last member leaving has already dropped the set, so look it up again rather
-    // than reusing a pointer that may have been deleted in the meantime.
-    MovieSet* remaining = set(name);
-    if (remaining != nullptr) {
-        dropSet(remaining);
-    }
+    dropSet(movieSet);
 }
 
 void MovieSetModel::dropSet(MovieSet* movieSet)
@@ -208,15 +203,12 @@ void MovieSetModel::onMovieChanged(Movie* movie)
 
     MovieSet* oldSet = set(oldName);
     if (oldSet != nullptr) {
+        // Deliberately no drop when this empties the set.  An edit never destroys a
+        // set: the set the user just emptied is very often the one they are about to
+        // fill again, and under D-A a set that has a `set.nfo` outlives its last
+        // member anyway.  Sets go when the library is re-derived and nothing is left
+        // to derive them from -- see dropEmptySets().
         oldSet->removeMovie(movie);
-        // A set that lost its last movie has nothing left to exist by: until `set.nfo`
-        // is written, a set *is* its members, which is what the three grouping sites
-        // this model replaces assumed too.  It is also what keeps the model from
-        // collecting a set per keystroke: the movie widget's set combo box is editable
-        // and rewrites the movie's set name on every one of them.
-        if (oldSet->movies().isEmpty()) {
-            dropSet(oldSet);
-        }
     }
     MovieSet* newSet = addSet(newName);
     if (newSet != nullptr) {

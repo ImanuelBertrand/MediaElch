@@ -62,8 +62,11 @@ public:
     void setMovieModel(MovieModel* movieModel);
 
     /// \brief All sets, in the order they were first seen.  Owned by this model.
-    /// \details A set exists while it has members.  One created by addSet() and never
-    ///          filled is the exception: it survives until the next reload().
+    /// \details A set is never dropped for merely having no members -- an edit that
+    ///          empties one leaves it standing, and one created by addSet() and never
+    ///          filled is a set too.  Sets are dropped when the library is re-derived
+    ///          and nothing is left to derive them from (reload(), or the movies
+    ///          leaving the movie model) or when they are removed deliberately.
     ELCH_NODISCARD const QVector<MovieSet*>& sets() const;
     /// \brief The set called \p name, or nullptr if there is none.  An empty name is no set.
     ELCH_NODISCARD MovieSet* set(const QString& name) const;
@@ -71,12 +74,11 @@ public:
     /// \return nullptr if \p name is empty, because a set is identified by its name (D-B).
     MovieSet* addSet(const QString& name);
     /// \brief Removes the set called \p name and detaches its movies.
-    /// \details A set that loses its last movie is dropped on its own; this is for
-    ///          removing one deliberately, movies and all.  Detaching a movie is an
-    ///          edit that has to reach disk -- membership lives in the member movies'
-    ///          NFOs (D-A) -- and neither MovieSet nor this model marks anything dirty
-    ///          for a membership change on its own, so this marks the former members
-    ///          changed itself.
+    /// \details This is the deliberate removal, movies and all; nothing else destroys
+    ///          a set that still has members.  Detaching a movie is an edit that has to
+    ///          reach disk -- membership lives in the member movies' NFOs (D-A) -- and
+    ///          neither MovieSet nor this model marks anything dirty for a membership
+    ///          change on its own, so this marks the former members changed itself.
     void removeSet(const QString& name);
 
     /// \brief Regroups every movie of the movie model into sets.
