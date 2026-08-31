@@ -229,6 +229,7 @@ SOURCES += \
     src/model/ImageProxyModel.cpp \
     src/model/MediaStatusColumn.cpp \
     src/model/MovieModel.cpp \
+    src/model/MovieSetModel.cpp \
     src/model/MovieProxyModel.cpp \
     src/model/music/MusicModel.cpp \
     src/model/music/MusicModelItem.cpp \
@@ -652,6 +653,7 @@ HEADERS += Version.h \
     src/model/ImageProxyModel.h \
     src/model/MediaStatusColumn.h \
     src/model/MovieModel.h \
+    src/model/MovieSetModel.h \
     src/model/MovieProxyModel.h \
     src/model/music/MusicModel.h \
     src/model/music/MusicModelItem.h \

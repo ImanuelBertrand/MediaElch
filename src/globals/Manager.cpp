@@ -35,6 +35,8 @@ Manager::Manager(QObject* parent) : QObject(parent)
     m_tvShowModel = new TvShowModel(this);
     m_concertModel = new ConcertModel(this);
     m_musicModel = new MusicModel(this);
+    m_movieSetModel = new MovieSetModel(this);
+    m_movieSetModel->setMovieModel(m_movieModel);
 
     m_kodiSettings = new mediaelch::KodiSettings(*m_settings, this);
     m_kodiSettings->init();
@@ -130,6 +132,15 @@ MusicFileSearcher* Manager::musicFileSearcher()
 MovieModel* Manager::movieModel()
 {
     return m_movieModel;
+}
+
+/**
+ * \brief Returns an instance of the MovieSetModel
+ * \return Instance of the MovieSetModel
+ */
+MovieSetModel* Manager::movieSetModel()
+{
+    return m_movieSetModel;
 }
 
 /**

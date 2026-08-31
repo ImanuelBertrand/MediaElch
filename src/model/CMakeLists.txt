@@ -18,6 +18,7 @@ add_library(
   MovieProxyModel.cpp
   ConcertProxyModel.cpp
   MovieModel.cpp
+  MovieSetModel.cpp
   MediaStatusColumn.cpp
   RatingModel.cpp
   TvShowProxyModel.cpp
