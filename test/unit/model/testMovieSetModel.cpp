@@ -182,6 +182,33 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(alienCollection->movies() == QVector<Movie*>{outsider});
     }
 
+    SECTION("a set with an unsaved record survives its movies leaving the library")
+    {
+        // Nothing writes `set.nfo` yet, so an edit to a set's own record lives in this
+        // object and nowhere else -- the member movies carry no flag for it, because
+        // membership is not what changed.  Dropping the object is the only way it can
+        // be lost, and it would be lost without a trace.
+        MovieSet* alienCollection = sets.set("Alien Collection");
+        alienCollection->setOverview("A science fiction horror film franchise.");
+
+        movies.clear();
+
+        REQUIRE(sets.sets() == QVector<MovieSet*>{alienCollection});
+        CHECK(alienCollection->movies().isEmpty());
+        CHECK(alienCollection->overview() == "A science fiction horror film franchise.");
+    }
+
+    SECTION("reload keeps an empty set that has an unsaved record")
+    {
+        MovieSet* predatorCollection = sets.addSet("Predator Collection");
+        predatorCollection->setTmdbId(TmdbId(399));
+        REQUIRE(sets.sets().size() == 2);
+
+        sets.reload();
+
+        CHECK(sets.set("Predator Collection") == predatorCollection);
+    }
+
     SECTION("a movie that left the library is not followed any more")
     {
         movies.clear();
@@ -341,6 +368,19 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         sets.removeSet("Alien Collection");
 
         CHECK(sets.set("Alien Collection") == nullptr);
+        CHECK(sets.sets().isEmpty());
+    }
+
+    SECTION("removeSet removes a set whose record has unsaved changes")
+    {
+        // Automatic drops spare such a set; a deliberate removal is the user saying to
+        // throw it away, and does (loudly -- it logs).
+        MovieSet* alienCollection = sets.addSet("Alien Collection");
+        alienCollection->setOverview("A science fiction horror film franchise.");
+        REQUIRE(alienCollection->hasChanged());
+
+        sets.removeSet("Alien Collection");
+
         CHECK(sets.sets().isEmpty());
     }
 

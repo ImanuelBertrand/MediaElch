@@ -1,6 +1,7 @@
 #include "model/MovieSetModel.h"
 
 #include "data/movie/Movie.h"
+#include "log/Log.h"
 #include "model/MovieModel.h"
 #include "utils/Meta.h"
 
@@ -131,6 +132,7 @@ void MovieSetModel::dropSet(MovieSet* movieSet)
     if (row < 0) {
         return;
     }
+    warnIfRecordIsLost(movieSet);
     if (!m_inReset) {
         beginRemoveRows(QModelIndex(), row, row);
     }
@@ -146,10 +148,27 @@ void MovieSetModel::dropEmptySets()
     // Iterated backwards because dropSet() removes from m_sets.
     for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
         MovieSet* movieSet = m_sets.at(row);
-        if (movieSet->movies().isEmpty()) {
+        // A set with unsaved changes to its own record is kept even with no members.
+        // Nothing writes `set.nfo` yet, so that record exists in this object and
+        // nowhere else, and dropping the object is the only way it can be lost -- the
+        // member movies carry no flag for it, because membership is not what changed.
+        // This is also the seam for D-A: when `set.nfo` lands, "has a record" stops
+        // meaning "has an unwritten one" and starts meaning "has a file", and the rest
+        // of this stays as it is.
+        if (movieSet->movies().isEmpty() && !movieSet->hasChanged()) {
             dropSet(movieSet);
         }
     }
+}
+
+void MovieSetModel::warnIfRecordIsLost(const MovieSet* movieSet) const
+{
+    if (!movieSet->hasChanged()) {
+        return;
+    }
+    // Deliberate removal takes the record with it, but it must not do so quietly:
+    // once `set.nfo` is written this is a lost file, not a lost object.
+    qCWarning(generic) << "[MovieSetModel] Discarding unsaved changes to movie set" << movieSet->name();
 }
 
 void MovieSetModel::reload()
@@ -166,9 +185,9 @@ void MovieSetModel::reload()
             attachMovie(movie);
         }
     }
-    // Drop the sets no movie names any more.  A set has no record of its own yet --
-    // `set.nfo` is a later step -- so an empty one is not a set at all, which is also
-    // what the three grouping sites this model replaces did.
+    // Drop the sets no movie names any more and that hold no unsaved record of their
+    // own.  Until `set.nfo` is written the movies are all a set has, which is what the
+    // three grouping sites this model replaces assumed too.
     dropEmptySets();
 
     m_inReset = false;
@@ -180,6 +199,9 @@ void MovieSetModel::clear()
     m_setNameByMovie.clear();
     if (m_sets.isEmpty()) {
         return;
+    }
+    for (const MovieSet* movieSet : asConst(m_sets)) {
+        warnIfRecordIsLost(movieSet);
     }
     beginRemoveRows(QModelIndex(), 0, qsizetype_to_int(m_sets.size()) - 1);
     qDeleteAll(m_sets);
