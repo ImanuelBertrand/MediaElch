@@ -1,5 +1,9 @@
 #include "data/movie/MovieSet.h"
 
+// For the upcast in onMovieDestroyed(); a forward declaration is not enough for it.
+#include "data/movie/Movie.h"
+
+#include <algorithm>
 #include <utility>
 
 MovieSet::MovieSet(QString name, QObject* parent) : QObject(parent), m_name{std::move(name)}, m_images{*this}
@@ -76,6 +80,12 @@ void MovieSet::addMovie(Movie* movie)
         return;
     }
     m_movies.append(movie);
+    // The set does not own its members and has to survive their death; QObject::destroyed
+    // is the only notification it gets.  The connection is deliberately never taken down
+    // again -- removeMovie() leaves it in place, because a later addMovie() of the same
+    // movie would only have to make it again, and the handler is a no-op for a movie that
+    // is not a member.
+    connect(movie, &QObject::destroyed, this, &MovieSet::onMovieDestroyed, Qt::UniqueConnection);
     // Membership is stored in the member movies' NFOs, not in `set.nfo` (D-A), so
     // it does not make this set's own record dirty.  Writing it back to the movie
     // is deliberately not done here: the movie-side setter is removed in the later
@@ -89,6 +99,29 @@ void MovieSet::removeMovie(Movie* movie)
     if (m_movies.removeAll(movie) == 0) {
         return;
     }
+    emit sigChanged(this);
+}
+
+void MovieSet::clearMovies()
+{
+    if (m_movies.isEmpty()) {
+        return;
+    }
+    m_movies.clear();
+    emit sigChanged(this);
+}
+
+void MovieSet::onMovieDestroyed(QObject* movie)
+{
+    // The Movie sub-object is gone by now, so the pointer is only ever compared,
+    // never dereferenced -- and never cast back to Movie* for that reason.
+    const auto it = std::remove_if(m_movies.begin(), m_movies.end(), [movie](const Movie* member) {
+        return static_cast<const QObject*>(member) == movie;
+    });
+    if (it == m_movies.end()) {
+        return;
+    }
+    m_movies.erase(it, m_movies.end());
     emit sigChanged(this);
 }
 

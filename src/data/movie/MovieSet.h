@@ -44,9 +44,12 @@ public:
     void setOverview(QString overview);
 
     /// \brief Adds \p movie to this set's members.  Does nothing if it is already one.
+    /// \details A member that is destroyed removes itself again; see onMovieDestroyed().
     void addMovie(Movie* movie);
     /// \brief Removes \p movie from this set's members.  Does nothing if it is not one.
     void removeMovie(Movie* movie);
+    /// \brief Removes every member.  Does nothing if there are none.
+    void clearMovies();
 
     /// \brief Whether this set's own record differs from what is stored on disk.
     ELCH_NODISCARD bool hasChanged() const;
@@ -63,6 +66,16 @@ signals:
     ///          that and a membership edit is lost with no flag set anywhere,
     ///          while this signal has already claimed otherwise.
     void sigChanged(MovieSet* set);
+
+private slots:
+    /// \brief Drops a member that has been destroyed.
+    /// \details A set holds its members without owning them, and nothing else tells
+    ///          it when one dies: Movie::sigChanged is not emitted from ~Movie, and
+    ///          MovieModel neither resets nor names what it removed -- clear() only
+    ///          calls deleteLater() on every movie.  QObject::destroyed is therefore
+    ///          the one notification a set can rely on, so membership heals itself
+    ///          rather than being rebuilt from the outside.
+    void onMovieDestroyed(QObject* movie);
 
 private:
     QString m_name;
