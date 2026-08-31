@@ -1,7 +1,7 @@
 # Movie Sets
 
 __Status__: Concept, work in progress  
-__Last Updated on__: 2026-08-30
+__Last Updated on__: 2026-08-31
 
 Two invitations stand open in the issue tracker.  bugwelle in #1747,
 2024-05-18:
@@ -429,11 +429,25 @@ public:
     void setOverview(QString overview);
     void addMovie(Movie* movie);
     void removeMovie(Movie* movie);
+    void clearMovies();
 
 signals:
     void sigChanged(MovieSet* set);
 };
 ```
+
+**Membership heals itself.**  A set holds `Movie*` it does not own, and nothing in
+MediaElch tells it when one of them dies: `Movie::sigChanged` is not emitted from
+`~Movie`, and `MovieModel` neither resets nor names what it removed — `clear()`
+(`src/model/MovieModel.cpp:278-289`) only calls `deleteLater()` on every movie.
+`QObject::destroyed` is the one notification that does arrive, including for that
+`deleteLater()`, so `addMovie()` connects to it and the member drops out of `m_movies`
+on its own.  That is five lines, it needs no cooperation from `MovieModel`, and it is
+what makes it safe for a set to outlive a library reload at all — see Open question 1,
+which this answers for the object; the model's own bookkeeping is answered below.
+The connection is deliberately never taken down: `removeMovie()` leaves it in place,
+because re-adding the same movie would only have to make it again, and the handler is a
+no-op for a movie that is not a member.
 
 `MovieSetImages` follows `MovieImages` (`src/data/movie/MovieImages.h:67-71`):
 a `QMap<ImageType, QByteArray>` of downloaded bytes plus the has-changed flags,
@@ -456,6 +470,39 @@ exposes movies (a `MovieSetPointerRole`, `sets()`, `set(name)`, `addSet`,
 `removeSet`), and owned by `Manager` next to the other models
 (`src/globals/Manager.h:62-65`, `:91-94`).  All three recompute sites then
 read one model instead of grouping the library three times.
+
+The model does that grouping once, when `Manager` hands it the movie model, and then
+keeps the result rather than recomputing it — the three sites read `sets()` and nothing
+else.  Keeping it current takes two things, because `MovieModel` offers no reset signal
+to rebuild on:
+
+- **A movie joining the library** arrives as `rowsInserted`, which is emitted by both
+  `addMovie()` and `addMovies()`.
+- **A movie changing its set** is found by comparing the movie's current
+  `set().name` against the one it was last seen with, on every `Movie::sigChanged`.
+  That signal fires for every kind of edit, so most of the comparisons find nothing;
+  it costs one hash lookup and one string compare.  This is the interim arrangement
+  for as long as `Movie::setSet` is in the public API — it is option 1 of Open
+  question 2 — and it goes away with the setter when the model becomes the only
+  writer.
+
+**A set exists while it has members.**  One that loses its last movie is dropped,
+because until `set.nfo` is written a set has no record apart from the movies that name
+it, which is exactly what the three grouping sites assumed.  It is also what keeps the
+model from collecting a set per keystroke: the movie widget's set combo box is
+`editable` and `editTextChanged` rewrites the movie's set name on every one of them
+(`src/ui/movies/MovieWidget.cpp:194`).  A set created empty by `addSet()` — what the
+sets tab's *Add Movie Set* does — is the one exception, and it survives only until the
+next `reload()`.  That regroup is also where a set whose object is kept but whose
+members are gone is collected; it preserves the objects, so a set's own record survives
+it.
+
+**A membership change dirties nothing on its own** — not the set, since membership is
+not in `set.nfo` (D-A), and not the movie.  So wherever the model makes a membership
+edit that has to reach disk, the model marks the member movies changed itself.
+`removeSet()` is the case that exists today: it detaches its movies, and the detach has
+to be saved.  Miss that and the edit is lost with no dirty flag anywhere, while
+`MovieSet::sigChanged` has already claimed the set changed.
 
 **The recommended shape is that the model is the only writer**: `MovieSet` and
 `MovieSetModel` own set membership, and `Movie::setSet` leaves the public API.
@@ -570,23 +617,20 @@ with a different failure mode.
 
 ## Open questions
 
-1. **How does a `MovieSet` survive `MovieModel::clear()`?**  Sets hold
-   non-owning `Movie*`; a library reload deletes every movie
-   (`src/model/MovieModel.cpp:278-289`) with no reset signal and no per-movie
-   destruction notification.  Options: rebuild the set model wholesale from a
-   new signal on `MovieModel` (which means adding
-   `beginResetModel`/`endResetModel` there, a change to shared code);
-   `QPointer<Movie>` and tolerate holes; or make `MovieModel` own the set
-   model's lifetime outright.  None is obviously right, and the current code
-   sidesteps the question by keeping no state at all.
-2. **How does the model learn about membership changes, if `Movie::setSet`
-   stays?**  D-C recommends removing it, which makes this moot.  If it stays,
-   the choices are diffing `movie->set().name` against a
-   `QHash<Movie*, QString>` on every `Movie::sigChanged` — cheap, but the
-   signal fires for every change of any kind — or a dedicated
-   `Movie::sigSetChanged` emitted only from `Movie::setSet`, which is
-   self-documenting but adds a second change signal to `Movie` that every
-   future setter has to choose between.
+1. ~~**How does a `MovieSet` survive `MovieModel::clear()`?**~~  **Answered.**  The
+   premise that there is no per-movie destruction notification was wrong: there is
+   `QObject::destroyed`, and it is emitted for the `deleteLater()` that `clear()`
+   runs (`src/model/MovieModel.cpp:278-289`).  A set connects to it in `addMovie()`
+   and drops the member itself, so no reset signal has to be added to `MovieModel`,
+   no `QPointer` holes have to be tolerated, and `MovieModel` does not have to own
+   the set model.  See D-C.
+2. ~~**How does the model learn about membership changes, if `Movie::setSet`
+   stays?**~~  **Answered, for as long as it stays.**  Option 1: the model compares
+   `movie->set().name` against the name it last saw on every `Movie::sigChanged`.
+   The signal does fire for every change of any kind, but the comparison is a hash
+   lookup and a string compare, which is cheaper than a second change signal on
+   `Movie` that every future setter would have to choose between.  It goes away with
+   the setter when the model becomes the only writer.
 3. **Who owns the sets?**  The recommendation is `Manager`, next to the other
    models, because all three recompute sites and `KodiXml` need them and
    `Manager` is where the other cross-cutting models already live.  That adds
