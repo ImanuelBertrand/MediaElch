@@ -2,6 +2,8 @@
 
 #include "data/movie/MovieSet.h"
 #include "data/movie/MovieSetInfo.h"
+#include "globals/Globals.h"
+#include "media_center/KodiVersion.h"
 #include "utils/Meta.h"
 
 #include <QAbstractItemModel>
@@ -188,6 +190,42 @@ public:
     ///          Asked live rather than remembered, so that changing the setting takes
     ///          effect at once instead of at the next reload.
     ELCH_NODISCARD bool recordsAreConfigured() const;
+
+    /// \brief What renaming a set actually does, once the settings have been read.
+    /// \details Three answers, and the third is not one of the setting's three states:
+    ///          a user who explicitly asked for a set-file-only rename where there are
+    ///          no records at all has asked for something that cannot be done, and the
+    ///          honest answer is to say so rather than to quietly do the other one.
+    enum class RenameMode
+    {
+        /// Move `set.nfo`'s `<title>` and nothing else.
+        SetFileOnly,
+        /// Move every member's `<set><name>` and the record's `<originaltitle>` too.
+        AllMovieFiles,
+        /// Set-file-only was asked for and there is no `set.nfo` to rename.
+        Unavailable
+    };
+
+    /// \brief Resolves the rename mode from its three inputs and nothing else.
+    /// \details Static and total, so that the decision can be tested without a
+    ///          settings singleton, a media center or a library -- and so that there is
+    ///          one derivation of it rather than one per caller.
+    ///
+    ///          "Automatic" is **not** just the Kodi version.  Set-file-only needs a
+    ///          `set.nfo`, which exists only in the separate-artwork-folder layout with
+    ///          a folder chosen, and the shipping default is artwork next to movies --
+    ///          so a fresh install is Kodi 22 with no records, and an Automatic that
+    ///          read the version alone would pick a mode that cannot run and regress
+    ///          the default every user who never opens the settings has.  Automatic
+    ///          therefore asks both questions and never answers Unavailable.
+    ELCH_NODISCARD static RenameMode resolveRenameMode(
+        MovieSetRenameMode setting, mediaelch::KodiVersion kodiVersion, bool recordsAreConfigured);
+
+    /// \brief resolveRenameMode() for this library, read live from the settings.
+    /// \details Asked at the moment of the rename rather than cached, like
+    ///          recordsAreConfigured() above and for the same reason: the sets tab
+    ///          already follows both settings while it is open.
+    ELCH_NODISCARD RenameMode renameMode() const;
 
     /// \brief Regroups every movie of the movie model into sets.
     /// \details Existing MovieSet objects are kept, so a set's own record survives; a

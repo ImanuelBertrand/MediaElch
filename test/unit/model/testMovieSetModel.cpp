@@ -65,6 +65,73 @@ void moveToSet(Movie* movie, const QString& setName)
 
 } // namespace
 
+TEST_CASE("MovieSetModel resolves the rename mode", "[model][movie][set]")
+{
+    using RenameMode = MovieSetModel::RenameMode;
+    const mediaelch::KodiVersion v22{mediaelch::KodiVersion::v22};
+    const mediaelch::KodiVersion v21{mediaelch::KodiVersion::v21};
+    const mediaelch::KodiVersion v19{mediaelch::KodiVersion::v19};
+    const mediaelch::KodiVersion v17{mediaelch::KodiVersion::v17};
+
+    SECTION("Automatic follows the Kodi version where there are records to rename")
+    {
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v22, true)
+              == RenameMode::SetFileOnly);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v21, true)
+              == RenameMode::AllMovieFiles);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v19, true)
+              == RenameMode::AllMovieFiles);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v17, true)
+              == RenameMode::AllMovieFiles);
+    }
+
+    SECTION("Automatic asks about the records too, not only the version")
+    {
+        // The shipping default is artwork next to movies, where there is no `set.nfo`
+        // at all -- and the default Kodi version is now 22.  An Automatic that read the
+        // version alone would pick a rename that cannot run for every user who has never
+        // opened the settings, which is the regression this second question prevents.
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v22, false)
+              == RenameMode::AllMovieFiles);
+    }
+
+    SECTION("Automatic never refuses")
+    {
+        for (const mediaelch::KodiVersion& version : mediaelch::KodiVersion::all()) {
+            for (const bool records : {true, false}) {
+                CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, version, records)
+                      != RenameMode::Unavailable);
+            }
+        }
+    }
+
+    SECTION("An explicit choice overrides the version in both directions")
+    {
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::SetFileOnly, v19, true)
+              == RenameMode::SetFileOnly);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::AllMovieFiles, v22, true)
+              == RenameMode::AllMovieFiles);
+    }
+
+    SECTION("An explicit set-file-only rename with no record is refused, not downgraded")
+    {
+        // Refused rather than quietly turned into the all-movie-files rename: that one
+        // rewrites every member's NFO, which is the heavier and irreversible operation
+        // this user chose this setting to avoid.  Substituting it is not a graceful
+        // fallback, it is doing the opposite of what was asked.
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::SetFileOnly, v22, false)
+              == RenameMode::Unavailable);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::SetFileOnly, v19, false)
+              == RenameMode::Unavailable);
+    }
+
+    SECTION("All movie files never needs a record")
+    {
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::AllMovieFiles, v22, false)
+              == RenameMode::AllMovieFiles);
+    }
+}
+
 TEST_CASE("MovieSetModel is the only thing that changes membership", "[model][movie][set]")
 {
     QObject owner;

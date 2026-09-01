@@ -1,9 +1,12 @@
 #include "model/MovieSetModel.h"
 
 #include "data/movie/Movie.h"
+#include "globals/Manager.h"
 #include "log/Log.h"
 #include "media_center/MediaCenterInterface.h"
 #include "model/MovieModel.h"
+#include "settings/KodiSettings.h"
+#include "settings/Settings.h"
 #include "utils/Meta.h"
 
 #include <QSet>
@@ -261,6 +264,38 @@ void MovieSetModel::dropEmptySets()
 bool MovieSetModel::recordsAreConfigured() const
 {
     return m_mediaCenter != nullptr && m_mediaCenter->movieSetRecordsEnabled();
+}
+
+MovieSetModel::RenameMode MovieSetModel::resolveRenameMode(
+    MovieSetRenameMode setting, mediaelch::KodiVersion kodiVersion, bool recordsAreConfigured)
+{
+    switch (setting) {
+    case MovieSetRenameMode::SetFileOnly:
+        // Explicit, so it is refused rather than downgraded where it cannot run.  The
+        // only fallback available is the all-movie-files rename, which rewrites every
+        // member's NFO -- a heavier and irreversible operation that this user chose this
+        // setting precisely to avoid.  Silently substituting it is not a graceful
+        // degradation; it is doing the opposite of what was asked.
+        return recordsAreConfigured ? RenameMode::SetFileOnly : RenameMode::Unavailable;
+
+    case MovieSetRenameMode::AllMovieFiles: return RenameMode::AllMovieFiles;
+
+    case MovieSetRenameMode::Automatic: break;
+    }
+
+    // Kodi 22 is the first release that reads `set.nfo` at all: 19-21 match a set with
+    // `SELECT idSet FROM sets WHERE strSet LIKE ...` and have no set NFO loader in the
+    // tree, so a set-file-only rename there is simply invisible.  And where there are no
+    // records, there is no file for the display title to live in -- see the header.
+    const bool kodiReadsSetFiles = kodiVersion.toInt() >= mediaelch::KodiVersion::v22;
+    return kodiReadsSetFiles && recordsAreConfigured ? RenameMode::SetFileOnly : RenameMode::AllMovieFiles;
+}
+
+MovieSetModel::RenameMode MovieSetModel::renameMode() const
+{
+    return resolveRenameMode(Settings::instance()->movieSetRenameMode(),
+        Manager::instance()->kodiSettings()->kodiVersion(),
+        recordsAreConfigured());
 }
 
 bool MovieSetModel::isBacked(const MovieSet* movieSet) const
