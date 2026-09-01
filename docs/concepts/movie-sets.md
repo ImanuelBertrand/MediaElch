@@ -42,6 +42,13 @@ where they change something described here; everything else describes
 
 ## Current State
 
+**Line numbers in this section point into this branch's tree**, which is what a
+reader has checked out.  Most of the code cited here is untouched by the branch
+and reads the same in both.  Where the branch has *replaced* what a claim
+describes, the claim is still about `master` and the citation says so and gives
+`master`'s own coordinates — a bare `:537` in this section always belongs to
+this tree.
+
 ### A Set Has No Existence of Its Own
 
 `MovieSet` is a struct of three fields, `tmdbId`, `name` and `overview`
@@ -51,13 +58,16 @@ nothing else (`src/data/movie/MovieSet.cpp:3`).
 
 There is no list of sets anywhere.  It is recomputed, from scratch, in three
 unrelated places, each walking the whole movie model and grouping by
-`movie->set().name`: the sets tab (`src/ui/movie_sets/SetsWidget.cpp:227-242`),
-the set combo box in the movie widget
-(`src/ui/movies/MovieWidget.cpp:598-606`), and the set dropdown in the filter
-widget (`src/ui/small_widgets/FilterWidget.cpp:318-319`).
+`movie->set().name` — all three on `master`'s coordinates, because this branch
+has replaced all three with `MovieSetModel`: the sets tab
+(`master`'s `src/ui/movie_sets/SetsWidget.cpp:120-134`), the set combo box in
+the movie widget (`master`'s `src/ui/movies/MovieWidget.cpp:598-606`), and the
+set dropdown in the filter widget
+(`master`'s `src/ui/small_widgets/FilterWidget.cpp:320-321`).
 `MainWindow::onMenu` runs the first of those on every switch to the Movie Sets
-tab (`src/ui/main/MainWindow.cpp:882`), after first discarding the four
-`QMap`s that hold everything the tab knows (`SetsWidget.cpp:214-216`).
+tab (`src/ui/main/MainWindow.cpp:882`) — that much is still true here — after
+first discarding the maps that hold everything the tab knows
+(`SetsWidget.cpp:214-216`).
 
 What that discard costs is worth being precise about, because it is smaller
 than it looks and still bad.  Edits to a movie are not lost: `Movie::setSet`
@@ -78,14 +88,17 @@ the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:252` and
 both (`:557-560`), which is only necessary because the two are known to
 disagree.  Renaming a row never updates the role, so on `master` they diverge
 from the first rename onwards — `onRemoveMovieSet()` even detaches the movies
-under one name (`:537`) while erasing the map entries under the other
-(`:541-544`).  #2013 fixes this within the existing design; it does not remove
-the design.
+under one name (`master`'s `SetsWidget.cpp:537`) while erasing the map entries
+under the other (`master`'s `:541-544`).  #2013 fixes this within the existing
+design; it does not remove the design.
 
 The same absence forces `onSetNameChanged()` to rebuild a `MovieSet` from the
-name alone (`:568-570`), and `MovieWidget::onSetChange` to do the same
-(`src/ui/movies/MovieWidget.cpp:1307-1308`).  Both silently drop the set's
-`overview` and `tmdbId`, because there is nowhere else those values are kept.
+name alone (`master`'s `SetsWidget.cpp:566-570`), and
+`MovieWidget::onSetChange` to do the same
+(`master`'s `src/ui/movies/MovieWidget.cpp:1204-1206`).  Both silently drop the
+set's `overview` and `tmdbId`, because there is nowhere else those values are
+kept.  On this branch the model reconciles both, and `MovieWidget` drops them
+deliberately and says so.
 
 ### Artwork: Two Types, Written by Name
 
@@ -94,17 +107,17 @@ Exactly two set art types exist in the whole application:
 (`src/globals/Globals.h:123-124`), mirrored by two `DataFileType` entries
 (`:239-240`), two default filename templates
 (`src/settings/Settings.cpp:96-97`), two `QMap` members on the widget
-(`src/ui/movie_sets/SetsWidget.h:87-89`), four virtual methods on the media
+(`src/ui/movie_sets/SetsWidget.h:88-89`), four virtual methods on the media
 center interface (`src/media_center/MediaCenterInterface.h:63-79`) with their
 `KodiXml` overrides (`src/media_center/KodiXml.h:46-49`,
 `src/media_center/KodiXml.cpp:1203-1291`), and a hard-wired pair of settings
-fields (`src/ui/settings/MovieSettingsWidget.cpp:43-44`, `:55-56`, `:148-154`,
+fields (`src/ui/settings/MovieSettingsWidget.cpp:47-48`, `:59-60`, `:158-176`,
 plus its `.ui`).  Adding a third art type means touching all of it.
 
 The interface is keyed by set *name*, not by a set: `saveMovieSetPoster(QString
 setName, QImage)`.  `KodiXml::movieSetFileName` then has to find the set again
 — in "artwork next to movies" mode it linear-scans the entire movie model
-looking for any member (`src/media_center/KodiXml.cpp:1670-1683`) — and
+looking for any member (`src/media_center/KodiXml.cpp:1676-1690`) — and
 `DataFile::saveFileName` substitutes the name into the template
 (`src/settings/DataFile.cpp:52-57`).  Set art is also the only artwork
 MediaElch re-encodes: `image.save(fileName, "jpg", 100)` at
@@ -135,7 +148,7 @@ all.
 
 `SetsWidget::chooseSetPoster()` allocates a throwaway `Movie`, assigns the set
 name as that movie's *title*, and opens `ImageDialog` asking for
-`ImageType::MoviePoster` (`SetsWidget.cpp:488-493`).  `ImageDialog` seeds its
+`ImageType::MoviePoster` (`SetsWidget.cpp:484-491`).  `ImageDialog` seeds its
 search box from the movie's title (`src/ui/image/ImageDialog.cpp:118`) and
 calls `m_currentProvider->searchMovie(...)` (`:808`).  In other words, asking
 for a poster for _Alien Collection_ searches the movie database for a film
@@ -561,7 +574,7 @@ default behaviour would be wrong out of the box.  That makes it a dependency
 of this design rather than an unrelated tidy-up, and it is fixed here.
 
 Renaming a set onto an existing name is a merge, on both sides.  The current
-code already performs it (`SetsWidget.cpp:827-836`) without telling the user.
+code already performs it (`SetsWidget.cpp:828-837`) without telling the user.
 
 ### D-C: Promote `MovieSet` to an Entity, and Give the List a Model
 
