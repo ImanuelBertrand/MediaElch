@@ -324,7 +324,23 @@ TEST_CASE("The sets tab says what is off and why", "[ui][movie][set]")
         CHECK_FALSE(frame->isHidden());
         CHECK(frame->frameShape() == QFrame::StyledPanel);
         CHECK_THAT(notice->text(), Contains("No movie set directory is configured"));
-        CHECK_THAT(notice->text(), Contains("read-only"));
+
+        // Exactly what is off, and no more.
+        CHECK_THAT(notice->text(), Contains("Set artwork cannot be saved"));
+        CHECK_THAT(notice->text(), Contains("no file of their own"));
+        CHECK_THAT(notice->text(), Contains("no movies cannot be created"));
+
+        // And what still works, which is the half that keeps this notice honest.  The
+        // tab is *not* read-only: renaming a set, moving movies in and out of it and the
+        // sort title all write, and they write the member movies, which need no
+        // directory.  Saying otherwise would send the user off to rename a set by
+        // retyping the name on each movie, which is the D3 fork the sets tab's own
+        // rename exists to prevent.
+        CHECK_THAT(notice->text(), Contains("Renaming a set"));
+        CHECK_THAT(notice->text(), !Contains("read-only"));
+        // Neither the overview nor the TMDB id has an editor anywhere yet, so naming
+        // them here would describe a loss the user cannot feel.
+        CHECK_THAT(notice->text(), !Contains("TMDB"));
     }
 
     SECTION("Artwork next to movies is not a warning, because nothing is wrong")
@@ -435,4 +451,53 @@ TEST_CASE("Saving without a movie set directory is not a failure", "[ui][movie][
     // And the write was not even attempted, so there is nothing for the media center to
     // have complained about either.
     CHECK_FALSE(messages.contains("Not saving the record"));
+}
+
+TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set]")
+{
+    // The artwork guard asks the *other* question: whether the layout resolves to a real
+    // path.  It is not the record question, and the middle section is why -- gating
+    // artwork on records would turn it off in the shipping default, where it has always
+    // worked.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    auto* poster = widget.findChild<QWidget*>("poster");
+    auto* backdrop = widget.findChild<QWidget*>("backdrop");
+    REQUIRE(poster != nullptr);
+    REQUIRE(backdrop != nullptr);
+
+    SECTION("A configured directory: on")
+    {
+        widget.loadSets();
+        CHECK(poster->isEnabled());
+        CHECK(backdrop->isEnabled());
+    }
+
+    SECTION("Artwork next to movies: on, because that layout resolves too")
+    {
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        widget.loadSets();
+        CHECK(poster->isEnabled());
+        CHECK(backdrop->isEnabled());
+    }
+
+    SECTION("A separate directory that was never chosen: off")
+    {
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        widget.loadSets();
+        CHECK_FALSE(poster->isEnabled());
+        CHECK_FALSE(backdrop->isEnabled());
+
+        // And the slots behind those labels refuse as well.  This can only pin that the
+        // refusal is *there*, by the line it logs: a run with the guard removed would
+        // reach ImageDialog::execWithType() and block on a modal dialog, so the failure
+        // mode of deleting that guard is this test hanging rather than failing.  Said
+        // out loud because a hang reads like a broken test rather than a broken guard.
+        test::MessageCapture messages;
+        REQUIRE(QMetaObject::invokeMethod(&widget, "chooseSetPoster"));
+        REQUIRE(QMetaObject::invokeMethod(&widget, "chooseSetBackdrop"));
+        CHECK(messages.contains("nowhere to be written"));
+    }
 }

@@ -123,17 +123,19 @@ void SetsWidget::applyWriteAccess()
                                         "under Settings, Movies, Movie Set Artwork."));
 
     // A disabled widget receives no mouse events, so this is what stops the artwork
-    // dialogs from opening.  chooseSetPoster() and chooseSetBackdrop() refuse as well:
-    // the affordance and the action are guarded separately on purpose, because a
-    // download that cannot be saved wastes the user's time either way.
+    // dialogs from opening.  chooseSetPoster() and chooseSetBackdrop() refuse as well,
+    // so that a future rearrangement of this tab cannot reopen the path -- but only the
+    // enabled state below is held by a test.  The slots' own refusal is pinned by the
+    // line they log and nothing more, because a test that removed the guard to watch it
+    // fail would open a modal ImageDialog and hang instead.
+    //
+    // Deliberately no tooltip on these two.  A disabled widget gets no hover either, so
+    // a tooltip here could never be shown; the notice below is on screen in exactly the
+    // state that disables them and is where the explanation belongs.  (The disabled
+    // *action* above is a different mechanism: QMenu draws and hovers its own action
+    // rects, so setToolTipsVisible() does show that one.)
     ui->poster->setEnabled(artworkEnabled);
     ui->backdrop->setEnabled(artworkEnabled);
-    const QString artworkTooltip =
-        artworkEnabled ? QString()
-                       : tr("Set artwork cannot be saved: a separate artwork directory is selected but none has "
-                            "been chosen. Choose one under Settings, Movies, Movie Set Artwork.");
-    ui->poster->setToolTip(artworkTooltip);
-    ui->backdrop->setToolTip(artworkTooltip);
 
     // Three states, derived from the two answers above rather than from a third look at
     // the settings -- which is deliberate, because a third look would be a third
@@ -146,12 +148,21 @@ void SetsWidget::applyWriteAccess()
     } else if (!artworkEnabled) {
         // A real misconfiguration: the user asked for a directory and never named one.
         // Until this step that silently wrote into the process's working directory.
+        //
+        // It names exactly the three things that are off and then says what still works,
+        // and the second half is not politeness.  Calling this tab "read-only" would be
+        // untrue -- renaming, membership, the sort title and deleting a set all still
+        // write -- and it would push the user into renaming a set by retyping the name on
+        // each movie, which is the D3 fork the sets tab's own rename exists to prevent.
+        // Nor does it claim the overview and the TMDB id cannot be saved: neither has an
+        // editor anywhere yet, so that would be describing a loss the user cannot feel.
         ui->folderNoticeFrame->setFrameShape(QFrame::StyledPanel);
         ui->folderNotice->setText(
-            tr("<b>No movie set directory is configured.</b> Movie sets are shown but read-only: their artwork, "
-               "overview and TMDB id cannot be saved, and new movie sets cannot be created. "
-               "<a href=\"settings\">Choose a directory</a> under Settings, Movies, Movie Set Artwork, or switch "
-               "back to \"Artwork next to movies\". A movie's set can still be changed on the movie itself."));
+            tr("<b>No movie set directory is configured.</b> Set artwork cannot be saved, movie sets get no file "
+               "of their own, and a movie set with no movies cannot be created. Renaming a set, adding and "
+               "removing movies and the sort title still work: those are stored in the movies themselves. "
+               "<a href=\"settings\">Choose a directory</a> under Settings, Movies, Movie Set Artwork, or "
+               "switch back to \"Artwork next to movies\"."));
         ui->folderNoticeFrame->show();
 
     } else {
@@ -462,7 +473,9 @@ void SetsWidget::chooseSetPoster()
         // applyWriteAccess() has already disabled the label this is reached from; this
         // is the same refusal at the action rather than at the affordance, so that a
         // download is never started for an image that could not be written afterwards.
-        qCDebug(generic) << "[SetsWidget] Not choosing a set poster: set artwork has nowhere to be written.";
+        // Logged at info rather than debug so that a test can see it: removing this
+        // guard to watch a test fail would open a modal dialog and hang instead.
+        qCInfo(generic) << "[SetsWidget] Not choosing set artwork: it has nowhere to be written.";
         return;
     }
 
@@ -502,7 +515,7 @@ void SetsWidget::chooseSetBackdrop()
     }
     if (!Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled()) {
         // See chooseSetPoster().
-        qCDebug(generic) << "[SetsWidget] Not choosing a set backdrop: set artwork has nowhere to be written.";
+        qCInfo(generic) << "[SetsWidget] Not choosing set artwork: it has nowhere to be written.";
         return;
     }
 
