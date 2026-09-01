@@ -411,3 +411,28 @@ TEST_CASE("Turning the directory off does not destroy sets that have a record", 
     REQUIRE(movieSet != nullptr);
     CHECK(movieSet->hasRecord());
 }
+
+TEST_CASE("Saving without a movie set directory is not a failure", "[ui][movie][set]")
+{
+    // "There are no records in this configuration" is not "the record could not be
+    // written", but saveMovieSet() answers false for both -- correctly, because the
+    // model's callers need to know a record was not written.  Asked without checking
+    // first, every Save in the artwork-next-to-movies layout, which is the default,
+    // reported a failure to write a file that the sets tab's own notice has just
+    // finished explaining does not exist in that layout.
+    MovieSetFolderGuard guard;
+    Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    REQUIRE_FALSE(Manager::instance()->movieSetModel()->recordsAreConfigured());
+
+    test::MessageCapture messages;
+    widget.saveSet();
+
+    CHECK_FALSE(messages.contains("could not be written"));
+    // And the write was not even attempted, so there is nothing for the media center to
+    // have complained about either.
+    CHECK_FALSE(messages.contains("Not saving the record"));
+}

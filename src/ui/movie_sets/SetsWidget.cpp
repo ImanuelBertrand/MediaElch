@@ -595,7 +595,17 @@ void SetsWidget::saveSet()
     // record for a set that no longer exists.
     const QString currentName = ui->sets->item(ui->sets->currentRow(), 0)->text();
     MovieSet* movieSet = Manager::instance()->movieSetModel()->set(currentName);
-    const bool recordSaved = movieSet == nullptr || mediaCenter->saveMovieSet(*movieSet);
+    // "There are no records here" is not a failed write, and the media center cannot
+    // tell the two apart: saveMovieSet() answers false for both, because that is what
+    // its own callers in the model need to hear.  Asked without this, every Save in the
+    // artwork-next-to-movies layout -- the shipping default -- put a red error box on
+    // screen complaining that a file the notice above has just explained does not exist
+    // could not be written.
+    //
+    // The same predicate applyWriteAccess() asks, and for the same reason: two answers
+    // to one question is how a guard and the rule it guards come apart.
+    const bool recordsEnabled = Manager::instance()->movieSetModel()->recordsAreConfigured();
+    const bool recordSaved = !recordsEnabled || movieSet == nullptr || mediaCenter->saveMovieSet(*movieSet);
 
     // Three whole sentences rather than one assembled from fragments: which of the two
     // failed is what tells the user where to look, and a translator needs the sentence.
