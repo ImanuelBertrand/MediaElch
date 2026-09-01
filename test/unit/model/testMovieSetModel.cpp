@@ -1036,6 +1036,24 @@ TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
         REQUIRE(sets.set("Predator Collection") == nullptr);
         CHECK(mediaCenter.hasRecordOnDisk("Predator Collection"));
     }
+
+    SECTION("Turning the folder off and on again does not cost a set its record")
+    {
+        // reload() must leave the flags alone while records are off.  There is nothing to
+        // re-derive them from -- the media center answers with an empty list -- so
+        // re-deriving would clear every one of them, and the set would then be destroyed
+        // for losing its last member although its `set.nfo` is on disk.  It heals at the
+        // next reload, but a set vanishing from the sets tab in the meantime is not
+        // something a user can be asked to understand.
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload(); // a visit to the sets tab while the folder is switched off
+        mediaCenter.setRecordsEnabled(true);
+
+        movies.clear();
+        qApp->processEvents();
+
+        CHECK(sets.set("Alien Collection") != nullptr);
+    }
 }
 
 TEST_CASE("A set with a record but no movie is found at all", "[model][movie][set]")

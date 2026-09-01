@@ -167,11 +167,14 @@ public:
     /// \details Existing MovieSet objects are kept, so a set's own record survives; a
     ///          set that ends up with neither members nor a `set.nfo` is dropped.
     ///
-    ///          This is also where the model re-asks the disk which sets have a record.
-    ///          It is one directory listing for the whole library, not a probe per set,
-    ///          and doing it every time is what heals a `set.nfo` deleted behind
-    ///          MediaElch's back or a movie set information folder pointed somewhere
-    ///          else -- with no settings-changed plumbing to keep in step.
+    ///          This is also where the model re-asks the disk which sets have a record,
+    ///          which is what heals a `set.nfo` deleted behind MediaElch's back or a
+    ///          movie set information folder pointed somewhere else, with no
+    ///          settings-changed plumbing to keep in step.  The question is asked once
+    ///          for the whole library rather than once per set, but it is not cheap:
+    ///          answering it means parsing every `set.nfo` in the folder, since only the
+    ///          file says which set it belongs to.  The cost is one parse per record,
+    ///          plus a second for each set that has to be created from one.
     ///
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
@@ -212,8 +215,16 @@ private:
     /// \details Two questions, and the configuration one is asked live rather than
     ///          remembered.  A user who goes back to "artwork next to movies" has no
     ///          folder any more, so no set has a record any more, and every set is its
-    ///          movies again at once instead of at the next reload.  Switching back
-    ///          restores every set's answer, because nothing cleared the flags.
+    ///          movies again at once instead of at the next reload.
+    ///
+    ///          Turning the folder back on restores every set's answer immediately, and
+    ///          that holds only because reload() leaves the flags alone while records
+    ///          are off -- if it re-derived them from an empty answer, a visit to the
+    ///          sets tab in between would clear every one of them and a set would then
+    ///          be destroyed for losing its last member although its `set.nfo` is on
+    ///          disk.  Otherwise the flags are re-derived on every reload(), and the
+    ///          correctness of this predicate rests on that: the flag is a cached fact
+    ///          about the file system, so it is only as fresh as the last reload.
     ELCH_NODISCARD bool isBacked(const MovieSet* movieSet) const;
     /// \brief Logs a warning if dropping \p movieSet would discard an unsaved record.
     void warnIfRecordIsLost(const MovieSet* movieSet) const;

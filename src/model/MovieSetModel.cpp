@@ -255,10 +255,11 @@ void MovieSetModel::warnIfRecordIsLost(const MovieSet* movieSet) const
     if (!movieSet->hasChanged()) {
         return;
     }
-    // Deliberate removal takes the record with it, but it must not do so quietly.
-    // The flag means "this set differs from what is stored on disk", and since the
-    // `set.nfo` writer gave it a clearing edge it means that literally: what is being
-    // discarded is an edit the user has not saved into the set's file.
+    // Every path that destroys a set object arrives here, through dropSet(): the
+    // deliberate removeSet(), the automatic dropEmptySets() and clear().  The flag means
+    // "this set differs from what is stored on disk", and since the `set.nfo` writer gave
+    // it a clearing edge it means that literally, so this fires exactly when an edit the
+    // user has not saved into the set's file is about to go.
     qCWarning(generic) << "[MovieSetModel] Discarding unsaved changes to movie set" << movieSet->name();
 }
 
@@ -273,24 +274,45 @@ void MovieSetModel::reload()
     m_setNameByMovie.clear();
     m_setsByMovie.clear();
 
-    // One question to the disk for the whole library, not one per set: the media center
-    // lists the sets that have a record, and every set here is told whether it is among
-    // them.  Only the existence of the record is refreshed -- its contents are read once,
-    // when a set is created, because re-reading would overwrite an overview or an id the
+    // Which sets have a record is asked once for the whole library, and every set here is
+    // told whether it is among the answers.  It is not a cheap question: the media center
+    // has to open and parse every `set.nfo` in the folder to find out which set each one
+    // names, so this costs one parse per record -- plus a second one for each set that
+    // has to be created from a record below, which goes through loadMovieSet() again.
+    // It is bounded by the number of sets, not by the size of the library.
+    //
+    // Only the *existence* of a record is refreshed.  Its contents are read once, when
+    // the set is created, because re-reading would overwrite an overview or an id the
     // user has edited and not saved yet.
-    const QStringList recordNames = (m_mediaCenter != nullptr) ? m_mediaCenter->movieSetsWithRecord() : QStringList();
-    const QSet<QString> setsWithRecord(recordNames.cbegin(), recordNames.cend());
-    for (MovieSet* movieSet : asConst(m_sets)) {
-        const bool hasRecord = setsWithRecord.contains(movieSet->name());
-        if (hasRecord && !movieSet->hasRecord()) {
-            // A record this set did not have before -- the folder was configured or
-            // changed, the file was put there by something else, or the set was renamed
-            // onto one.  Its contents have to be read, and not only its existence: a set
-            // marked as having a record while still holding the empty overview it was
-            // created with would write that emptiness over the file on the next save.
-            m_mediaCenter->loadMovieSet(*movieSet);
+    //
+    // Skipped entirely when records are not configured, and that is not just an
+    // optimisation: with no folder there is nothing to re-derive from, so clearing every
+    // flag would throw away the last thing that was actually known.  isBacked() already
+    // returns false for every set while records are off, so a preserved flag changes no
+    // decision -- and it is what makes turning the folder back on restore every set's
+    // answer immediately rather than at the next reload.
+    QStringList recordNames;
+    if (recordsAreConfigured()) {
+        recordNames = m_mediaCenter->movieSetsWithRecord();
+        const QSet<QString> setsWithRecord(recordNames.cbegin(), recordNames.cend());
+        for (MovieSet* movieSet : asConst(m_sets)) {
+            const bool hasRecord = setsWithRecord.contains(movieSet->name());
+            if (hasRecord && !movieSet->hasRecord()) {
+                // A record this set did not have before -- the folder was configured or
+                // changed, the file was put there by something else, or the set was
+                // renamed onto one.  Its contents have to be read, and not only its
+                // existence: a set marked as having a record while still holding the
+                // empty overview it was created with would write that emptiness over the
+                // file on the next save.
+                m_mediaCenter->loadMovieSet(*movieSet);
+            }
+            // The other direction is deliberately left alone.  A set whose record has
+            // gone keeps the overview and id it read from it, so saving the set writes
+            // the file again with those contents.  That is the same thing that happens
+            // to any other unsaved value in this application and it is recoverable;
+            // silently emptying the object would not be.
+            movieSet->setHasRecord(hasRecord);
         }
-        movieSet->setHasRecord(hasRecord);
     }
 
     if (m_movieModel != nullptr) {
