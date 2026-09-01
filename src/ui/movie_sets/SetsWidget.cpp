@@ -253,6 +253,14 @@ void SetsWidget::loadSets()
         return lhs.second != rhs.second ? lhs.second < rhs.second : lhs.first < rhs.first;
     });
 
+    // Signals blocked for the whole population, because setItem() and setToolTip() are
+    // both an itemChanged -- the signal onSetNameChanged() is connected to -- and the row
+    // does not have its Qt::UserRole yet when the first of them fires.  So every row
+    // inserted here used to re-enter the rename slot as "a set with no name, renamed to
+    // this one", which found a set already called that and took the merge branch: a
+    // no-op merge of an empty set, run once per row on every load.  It was invisible
+    // while a merge was silent.  It is not invisible now that a merge asks first.
+    ui->sets->blockSignals(true);
     for (const auto& setRow : asConst(setRows)) {
         const QString& setName = setRow.first;
         m_moviesToSave.insert(setName, QVector<Movie*>());
@@ -271,6 +279,8 @@ void SetsWidget::loadSets()
                 tr("The movie files say: %1\nOnly the movie set file carries the name above.").arg(setName));
         }
     }
+    ui->sets->blockSignals(false);
+
     if (ui->sets->rowCount() > 0 && currentRow < ui->sets->rowCount()) {
         ui->sets->setCurrentItem(ui->sets->item(currentRow, 0));
     }
@@ -802,17 +812,25 @@ void SetsWidget::onRemoveMovieSet()
     m_setBackdrops.remove(origSetName);
 }
 
+/// \brief Puts the row's text back to what the set is actually called.
+/// \details Used wherever a rename is refused.  Signals are blocked because writing an
+///          item's text is an itemChanged, which is the signal onSetNameChanged() is
+///          connected to -- without this a refusal would re-enter it and refuse again.
+void SetsWidget::revertSetName(QTableWidgetItem* item, const QString& name)
+{
+    ui->sets->blockSignals(true);
+    item->setText(name);
+    ui->sets->blockSignals(false);
+}
+
 void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
 {
-    QString newName = item->text();
-    QString origSetName = item->data(Qt::UserRole).toString();
-    if (newName == origSetName) {
-        return;
-    }
+    // What the user typed is a *display* name.  Whether it reaches the member movies'
+    // NFOs -- whether it becomes the set's match key at all -- is what the rename mode
+    // decides; see docs/concepts/movie-sets.md, D-B.
+    const QString newName = item->text();
+    const QString origSetName = item->data(Qt::UserRole).toString();
 
-    // Renaming a set to the name of an existing one merges the two.  The movies then
-    // end up in a collection that is not the one their overview and id describe.
-    //
     // Whether this is a rename or a merge is the model's answer, not the table's.  The
     // table is the snapshot the last loadSets() took, and the model can hold a set it
     // does not show; deciding from the table would then rename A to B while a second
@@ -821,33 +839,179 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     // afterwards either.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     MovieSet* origSet = setModel->set(origSetName);
+    const QString origDisplayName = origSet != nullptr ? origSet->displayName() : origSetName;
+    if (newName == origDisplayName) {
+        return;
+    }
+
     MovieSet* targetSet = setModel->set(newName);
     const bool mergesIntoExistingSet = targetSet != nullptr && targetSet != origSet;
 
-    // A second row showing the new name goes either way: it is the row being merged
-    // into, or a row left over from a set the model no longer has.
+    if (mergesIntoExistingSet) {
+        // Asked, not assumed.  A merge moves movies between sets and is not undoable,
+        // and it is one typo in a table cell away -- the doc has called this out as a
+        // gap since the behaviour was first written.
+        const QMessageBox::StandardButton answer = QMessageBox::question(this,
+            tr("Merge movie sets?"),
+            tr("<b>\"%1\"</b> already exists. Renaming <b>\"%2\"</b> to it merges the two: every movie in "
+               "<b>\"%2\"</b> is moved into <b>\"%1\"</b>, and <b>\"%2\"</b> is deleted.<br><br>This cannot be "
+               "undone. Merge them?")
+                .arg(targetSet->displayName(), origDisplayName),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            revertSetName(item, origDisplayName);
+            return;
+        }
+        // A merge is always the all-movie-files rename and the setting does not govern
+        // it, because there is no other way to perform one.  Membership lives in the
+        // member movies' NFOs (D-A), so moving a movie into another set *is* rewriting
+        // its `<set><name>`; a `set.nfo` cannot say which movies belong to a set, so a
+        // "set file only" merge would write a display title and quietly not merge.
+        performMerge(item, origSet, targetSet, origSetName, newName);
+        return;
+    }
+
+    switch (setModel->renameMode()) {
+    case MovieSetModel::RenameMode::Unavailable:
+        // The user asked for a set-file-only rename and there is no `set.nfo` for the
+        // display title to live in.  Refused rather than quietly performed the other
+        // way: see MovieSetModel::resolveRenameMode().
+        qCWarning(generic) << "[SetsWidget] Movie set" << origDisplayName
+                           << "was not renamed: a set-file-only rename needs a movie set information folder and"
+                           << "none is configured.";
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b> was not renamed: renaming only the movie set file needs a movie set information "
+               "folder, and none is configured. Choose one in the settings, or set renaming to \"all movie "
+               "files\".")
+                .arg(origDisplayName));
+        revertSetName(item, origDisplayName);
+        return;
+
+    case MovieSetModel::RenameMode::SetFileOnly: performSetFileOnlyRename(item, origSet, origSetName, newName); return;
+
+    case MovieSetModel::RenameMode::AllMovieFiles: performAllMovieFilesRename(item, origSet, origSetName, newName);
+        return;
+    }
+}
+
+void SetsWidget::performSetFileOnlyRename(
+    QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
+{
+    if (origSet == nullptr || newName.isEmpty()) {
+        revertSetName(item, origSetName);
+        return;
+    }
+
+    // The match key does not move, so MovieSetModel::set(newName) found nothing and the
+    // merge check above said "not a merge" -- correctly, because two sets may share a
+    // display title without being one set to Kodi.  They may not share one *here*: the
+    // sets tab would show two rows the user cannot tell apart, and the next rename of
+    // either would be ambiguous.  So the collision is checked against both names.
+    for (const MovieSet* other : Manager::instance()->movieSetModel()->sets()) {
+        if (other == origSet) {
+            continue;
+        }
+        if (other->displayName() == newName || other->name() == newName) {
+            qCWarning(generic) << "[SetsWidget] Movie set" << origSet->displayName() << "was not renamed: another"
+                               << "movie set is already called" << newName;
+            NotificationBox::instance()->showError(
+                tr("<b>\"%1\"</b> was not renamed: another movie set is already called <b>\"%2\"</b>.")
+                    .arg(origSet->displayName(), newName));
+            revertSetName(item, origSet->displayName());
+            return;
+        }
+    }
+
+    // The whole rename.  No movie is touched -- their `<set><name>` is the join key and
+    // stays exactly where it is -- and neither is the set's folder, which Kodi derives
+    // from that same key.  What changes is `set.nfo`'s `<title>`, on the next save.
+    origSet->setTitle(newName);
+
+    // The row keeps its key.  Only the text moved, and it already has.
+    loadSet(origSetName);
+}
+
+void SetsWidget::performAllMovieFilesRename(
+    QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
+{
+    // A second row showing the new name is one left over from a set the model no longer
+    // has; the merge case never reaches here.
     for (int i = 0, n = ui->sets->rowCount(); i < n; ++i) {
-        if (i != item->row() && ui->sets->item(i, 0)->text() == newName) {
+        if (i != item->row() && ui->sets->item(i, 0)->data(Qt::UserRole).toString() == newName) {
             ui->sets->removeRow(i);
             break;
         }
     }
 
-    // Artwork is stored under the set's name, so carry it over; saveSet() writes it under the
-    // new name.  Must be read before the movies are renamed: KodiXml::movieSetFileName() finds
-    // "artwork next to movies" through a movie of the set -- and for an empty name, through an
-    // arbitrary movie that has no set at all, which is why empty names carry nothing.
-    QImage poster;
-    QImage backdrop;
-    if (!mergesIntoExistingSet && !origSetName.isEmpty() && !newName.isEmpty()) {
-        auto* mediaCenter = Manager::instance()->mediaCenterInterface();
-        poster = m_setPosters.value(origSetName);
-        if (poster.isNull()) {
-            poster = mediaCenter->movieSetPoster(origSetName);
-        }
-        backdrop = m_setBackdrops.value(origSetName);
-        if (backdrop.isNull()) {
-            backdrop = mediaCenter->movieSetBackdrop(origSetName);
+    // Before the movies are reassigned, and that ordering is required rather than
+    // tidy: in the artwork-next-to-movies layout the artwork's path is found through a
+    // movie whose `set().name` is still the old one, so afterwards there is nothing to
+    // resolve it from.  This moves the set's `set.nfo` and every file in its folder --
+    // not the poster and backdrop this widget happens to know about, and not through a
+    // decode and re-encode, which is what carrying them in memory used to cost.
+    auto* mediaCenter = Manager::instance()->mediaCenterInterface();
+    const bool filesMoved =
+        origSetName.isEmpty() || newName.isEmpty() || mediaCenter->renameMovieSetFiles(origSetName, newName);
+
+    if (!m_moviesToSave.contains(newName)) {
+        m_moviesToSave.insert(newName, QVector<Movie*>());
+    }
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    const QVector<Movie*> members = (origSet != nullptr) ? origSet->movies() : QVector<Movie*>();
+
+    // Rename the set object before its movies, so that the object -- and with it the
+    // set's overview, id and artwork -- is kept instead of being emptied and a second
+    // one created under the new name.
+    if (origSet != nullptr && !newName.isEmpty()) {
+        origSet->setName(newName);
+    }
+
+    for (Movie* movie : members) {
+        m_moviesToSave[newName].append(movie);
+        setModel->assign(movie, movie->set().renamedTo(newName));
+    }
+    m_moviesToSave[origSetName].clear();
+
+    // Images that are pending in this widget and nowhere else -- downloaded and not yet
+    // saved -- move with the set.  What is already on disk was moved above, so it is
+    // deliberately *not* read back in here: doing that re-encoded a PNG to JPEG and
+    // left the original behind as an orphan.
+    carrySetArtworkOver(origSetName, newName);
+
+    // The row is the renamed set now; saveSet(), the artwork dialogs and a second rename
+    // of the same row look it up by this role.
+    ui->sets->blockSignals(true);
+    item->setData(Qt::UserRole, newName);
+    ui->sets->setToolTip(QString());
+    item->setToolTip(QString());
+    ui->sets->blockSignals(false);
+
+    if (!filesMoved) {
+        qCWarning(generic) << "[SetsWidget] Movie set" << origSetName << "was renamed to" << newName
+                           << "but its movie set file and artwork could not be moved.";
+        // The rename happened.  The movie NFOs are the set's identity, so a rename whose
+        // files could not follow is a rename plus a findable leftover -- the same shape
+        // as the merge leftover below, and for the same reason: undoing it would mean
+        // rewriting every member again, which is larger and riskier than saying so.
+        NotificationBox::instance()->showWarning(
+            tr("<b>\"%1\"</b> was renamed, but its movie set file and artwork could not be moved. They are still "
+               "stored under <b>\"%2\"</b>.")
+                .arg(newName, origSetName));
+    }
+
+    loadSet(newName);
+}
+
+void SetsWidget::performMerge(
+    QTableWidgetItem* item, MovieSet* origSet, MovieSet* targetSet, const QString& origSetName, const QString& newName)
+{
+    // The row being merged into goes; this row becomes it.
+    for (int i = 0, n = ui->sets->rowCount(); i < n; ++i) {
+        if (i != item->row() && ui->sets->item(i, 0)->data(Qt::UserRole).toString() == targetSet->name()) {
+            ui->sets->removeRow(i);
+            break;
         }
     }
 
@@ -855,30 +1019,22 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         m_moviesToSave.insert(newName, QVector<Movie*>());
     }
 
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
     const QVector<Movie*> members = (origSet != nullptr) ? origSet->movies() : QVector<Movie*>();
-
-    // Rename the set object before its movies, so that a plain rename keeps the object
-    // -- and with it the set's overview, id and artwork -- instead of emptying it and
-    // creating a second one under the new name.  A merge cannot: the object it merges
-    // into already has that name.
-    if (origSet != nullptr && !mergesIntoExistingSet && !newName.isEmpty()) {
-        origSet->setName(newName);
-    }
-
     for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);
-        if (mergesIntoExistingSet) {
-            MovieSetInfo set;
-            set.name = newName;
-            setModel->assign(movie, set);
-        } else {
-            setModel->assign(movie, movie->set().renamedTo(newName));
-        }
+        // Deliberately name-only: the movies end up in a collection that is not the one
+        // their old overview and id describe, so those must not travel with them.
+        MovieSetInfo set;
+        set.name = targetSet->name();
+        setModel->assign(movie, set);
     }
-
     m_moviesToSave[origSetName].clear();
 
-    if (mergesIntoExistingSet && !setModel->removeSet(origSetName)) {
+    // The source set's files go through the deliberate removal path rather than being
+    // moved: there is nothing for them to be moved to, because the target set already
+    // has its own record and its own folder.
+    if (!setModel->removeSet(origSetName)) {
         // Its movies are in the set they were merged into now, so the merge itself
         // happened; what could not go is the emptied source set, because its `set.nfo`
         // could not be removed.  It stays, backed and memberless, and the sets tab's
@@ -898,7 +1054,7 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         ui->sets->blockSignals(true);
         const int leftoverRow = ui->sets->rowCount();
         ui->sets->insertRow(leftoverRow);
-        ui->sets->setItem(leftoverRow, 0, new QTableWidgetItem(origSetName));
+        ui->sets->setItem(leftoverRow, 0, new QTableWidgetItem(origSet != nullptr ? origSet->displayName() : origSetName));
         ui->sets->item(leftoverRow, 0)->setData(Qt::UserRole, origSetName);
         ui->sets->blockSignals(false);
 
@@ -908,22 +1064,35 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
                 .arg(newName, origSetName));
     }
 
+    // A merge carries no artwork: the set the movies joined has its own, and the source
+    // set's images belong to a set that is being deleted.
     m_setPosters.remove(origSetName);
     m_setBackdrops.remove(origSetName);
-    if (!m_setPosters.contains(newName)) {
-        m_setPosters.insert(newName, poster);
-    }
-    if (!m_setBackdrops.contains(newName)) {
-        m_setBackdrops.insert(newName, backdrop);
-    }
 
-    // The row is the renamed set now; saveSet(), the artwork dialogs and a second rename of the
-    // same row look it up by this role.
     ui->sets->blockSignals(true);
-    item->setData(Qt::UserRole, newName);
+    item->setData(Qt::UserRole, targetSet->name());
+    item->setText(targetSet->displayName());
     ui->sets->blockSignals(false);
 
-    loadSet(newName);
+    loadSet(targetSet->name());
+}
+
+/// \brief Moves images this widget is holding unsaved from \p oldName's key to \p newName's.
+/// \details Only what is pending here.  Anything already on disk is moved on disk by
+///          MediaCenterInterface::renameMovieSetFiles(), losslessly and for every file in
+///          the set's folder rather than for the two types this widget knows about.
+void SetsWidget::carrySetArtworkOver(const QString& oldName, const QString& newName)
+{
+    const QImage poster = m_setPosters.value(oldName);
+    const QImage backdrop = m_setBackdrops.value(oldName);
+    m_setPosters.remove(oldName);
+    m_setBackdrops.remove(oldName);
+    if (!poster.isNull() || !m_setPosters.contains(newName)) {
+        m_setPosters.insert(newName, poster);
+    }
+    if (!backdrop.isNull() || !m_setBackdrops.contains(newName)) {
+        m_setBackdrops.insert(newName, backdrop);
+    }
 }
 
 void SetsWidget::onDownloadFinished(DownloadManagerElement elem)

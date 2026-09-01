@@ -10,6 +10,8 @@
 
 #include "network/DownloadManagerElement.h"
 
+class MovieSet;
+
 class DownloadManager;
 class Movie;
 class QAction;
@@ -83,6 +85,21 @@ private slots:
     void onSettingsSaved();
 
 private:
+    /// \brief The three renames, kept apart because they are three different operations.
+    /// \details onSetNameChanged() decides which one a typed name means -- merge, or the
+    ///          rename mode of D-B -- and each of these performs exactly one of them.
+    void performSetFileOnlyRename(
+        QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName);
+    void performAllMovieFilesRename(
+        QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName);
+    void performMerge(QTableWidgetItem* item,
+        MovieSet* origSet,
+        MovieSet* targetSet,
+        const QString& origSetName,
+        const QString& newName);
+    void revertSetName(QTableWidgetItem* item, const QString& name);
+    void carrySetArtworkOver(const QString& oldName, const QString& newName);
+
     Ui::SetsWidget* ui;
     QMap<QString, QVector<Movie*>> m_moviesToSave;
     QMap<QString, QImage> m_setPosters;

@@ -15,12 +15,15 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
 #include <QImage>
 #include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -90,6 +93,44 @@ void writeMisfiledRecord(const QDir& msif, const QString& folder, const QString&
     record.close();
 }
 
+/// \brief Hands \p widget a downloaded image for \p setName, as the download manager does.
+/// \details The one production path that puts an image into the sets tab's own maps
+///          without it existing on disk first.  A rename used to do it too, by reading
+///          the set's artwork back off the disk and holding it -- which re-encoded a PNG
+///          to JPEG and left the original behind; the files are moved on disk now, so a
+///          rename no longer produces a pending image and cannot stand in for one here.
+void seedDownloadedImage(SetsWidget& widget, const QString& setName, ImageType imageType, const QImage& image)
+{
+    DownloadManagerElement elem;
+    // Owned by the slot, which deletes it.  The set's name travels as the movie's title;
+    // that is how the download manager carries it for set artwork.
+    elem.movie = new Movie(QStringList());
+    elem.movie->setTitle(setName);
+    elem.imageType = imageType;
+    QBuffer buffer(&elem.data);
+    REQUIRE(buffer.open(QIODevice::WriteOnly));
+    REQUIRE(image.save(&buffer, "png"));
+    buffer.close();
+    REQUIRE(QMetaObject::invokeMethod(
+        &widget, "onDownloadFinished", Qt::DirectConnection, Q_ARG(DownloadManagerElement, elem)));
+}
+
+/// \brief Pins the rename mode for the duration of a test, and puts it back.
+class RenameModeGuard
+{
+public:
+    explicit RenameModeGuard(MovieSetRenameMode mode) : m_mode{Settings::instance()->movieSetRenameMode()}
+    {
+        Settings::instance()->setMovieSetRenameMode(mode);
+    }
+    ~RenameModeGuard() { Settings::instance()->setMovieSetRenameMode(m_mode); }
+    RenameModeGuard(const RenameModeGuard&) = delete;
+    RenameModeGuard& operator=(const RenameModeGuard&) = delete;
+
+private:
+    MovieSetRenameMode m_mode;
+};
+
 /// \brief Writes a `set.nfo` that really does belong to \p setName.
 /// \details Such a set has a record and needs no member movie to exist.
 void writeRecord(const QDir& msif, const QString& setName)
@@ -99,6 +140,44 @@ void writeRecord(const QDir& msif, const QString& setName)
     REQUIRE(record.open(QIODevice::WriteOnly));
     record.write(QString("<set><title>%1</title><originaltitle>%1</originaltitle></set>").arg(setName).toUtf8());
     record.close();
+}
+
+/// \brief Answers the next modal question box by clicking \p button.
+/// \details Posted before the call that opens the box: QMessageBox::exec() spins a
+///          nested event loop, and a zero timer queued beforehand runs as soon as it
+///          starts.  Anything modal that is *not* a question box with that button is
+///          closed instead, so a test whose expectation is wrong fails rather than hangs.
+void answerNextQuestion(QMessageBox::StandardButton button)
+{
+    QTimer::singleShot(0, qApp, [button] {
+        QWidget* modal = QApplication::activeModalWidget();
+        auto* box = qobject_cast<QMessageBox*>(modal);
+        if (box != nullptr && box->button(button) != nullptr) {
+            box->button(button)->click();
+        } else if (modal != nullptr) {
+            modal->close();
+        }
+    });
+}
+
+/// \brief The one movie of \p setName in the library, or nullptr.
+Movie* libraryMovie(const QString& title)
+{
+    for (Movie* movie : Manager::instance()->movieModel()->movies()) {
+        if (movie->title() == title) {
+            return movie;
+        }
+    }
+    return nullptr;
+}
+
+/// \brief Renames the first row of \p widget's set table to \p newName.
+void renameFirstSet(SetsWidget& widget, const QString& newName)
+{
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() >= 1);
+    sets->item(0, 0)->setText(newName);
 }
 
 /// \brief Emits Settings::sigSettingsSaved without writing the user's real settings.
@@ -175,19 +254,14 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
 
     addLibraryMovie("Alien", "Alien Collection");
 
-    // The only way a pending image gets into the widget is a download or a rename that
-    // carries one over.  A rename is the one a test can drive: it reads the set's poster
-    // through the media center and keeps it under the new name until the next save.
+    // A pending image is one that exists nowhere but this widget, which is what a
+    // download leaves behind.  It used to be seeded by a rename instead, back when a
+    // rename read the set's artwork off the disk and held it; the artwork moves on disk
+    // now, so a rename produces nothing pending and this has to come from a download.
     QImage poster(4, 4, QImage::Format_RGB32);
     poster.fill(Qt::red);
     const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
     REQUIRE_FALSE(posterFiles.isEmpty());
-    REQUIRE(QDir().mkpath(guard.dir().absoluteFilePath("Alien Collection")));
-    for (DataFile dataFile : posterFiles) {
-        const QString fileName =
-            guard.dir().absoluteFilePath("Alien Collection/" + dataFile.saveFileName("Alien Collection"));
-        REQUIRE(poster.save(fileName, "jpg", 100));
-    }
 
     SetsWidget widget;
     widget.loadSets();
@@ -195,7 +269,7 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
     auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(sets != nullptr);
     REQUIRE(sets->rowCount() == 1);
-    sets->item(0, 0)->setText("Alien Anthology");
+    seedDownloadedImage(widget, "Alien Collection", ImageType::MovieSetPoster, poster);
 
     // Now take the movie set information folder away, so the pending poster has nowhere
     // to go.  The set's own record is *not* also a failure here: with no folder there
@@ -224,7 +298,7 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
     }
     DataFile posterFile = posterFiles.first();
     CHECK(QFileInfo::exists(
-        guard.dir().absoluteFilePath("Alien Anthology/" + posterFile.saveFileName("Alien Anthology"))));
+        guard.dir().absoluteFilePath("Alien Collection/" + posterFile.saveFileName("Alien Collection"))));
 }
 
 TEST_CASE("Add Movie Set is off without a movie set directory", "[ui][movie][set]")
@@ -579,24 +653,16 @@ TEST_CASE("A save that fails on both halves says which", "[ui][movie][set]")
 
     addLibraryMovie("Alien", "Alien Collection");
 
-    // A pending poster, carried in by a rename, exactly as in the test above -- which
-    // needs the directory to be usable, so it is broken afterwards rather than before.
+    // A pending poster, exactly as in the test above.
     QImage poster(4, 4, QImage::Format_RGB32);
     poster.fill(Qt::red);
-    const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
-    REQUIRE_FALSE(posterFiles.isEmpty());
-    REQUIRE(QDir().mkpath(guard.dir().absoluteFilePath("Alien Collection")));
-    for (DataFile dataFile : posterFiles) {
-        REQUIRE(poster.save(
-            guard.dir().absoluteFilePath("Alien Collection/" + dataFile.saveFileName("Alien Collection")), "jpg", 100));
-    }
 
     SetsWidget widget;
     widget.loadSets();
     auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(sets != nullptr);
     REQUIRE(sets->rowCount() == 1);
-    sets->item(0, 0)->setText("Alien Anthology");
+    seedDownloadedImage(widget, "Alien Collection", ImageType::MovieSetPoster, poster);
 
     // A plain file standing where the movie set information directory should be.  It is
     // a valid DirectoryPath, so records stay enabled and this is not the "no directory"
@@ -620,4 +686,386 @@ TEST_CASE("A save that fails on both halves says which", "[ui][movie][set]")
     // The phrase an operator greps for is in this line too; it was the one branch of the
     // three that did not have it.
     CHECK(messages.contains("could not be written"));
+}
+
+TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
+{
+    // The whole point of the mode: `set.nfo`'s <title> moves and the join key does not,
+    // so Kodi 22 renames the set's row in place and keeps its artwork and its id.
+    MovieSetFolderGuard guard;
+    RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
+
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    renameFirstSet(widget, "The Alien Saga");
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+
+    SECTION("the key stays where the member movies put it")
+    {
+        // Looked up under the old name, because that is still the set's key -- and *not*
+        // findable under the new one, which is a display title and not a name any file
+        // carries.
+        MovieSet* set = setModel->set("Alien Collection");
+        REQUIRE(set != nullptr);
+        CHECK(set->displayName() == "The Alien Saga");
+        CHECK(setModel->set("The Alien Saga") == nullptr);
+    }
+
+    SECTION("no movie is rewritten")
+    {
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK(alien->set().name == "Alien Collection");
+        // Not marked for saving: a set-file-only rename has nothing to write into a
+        // movie's NFO, so dirtying one would offer to rewrite a file for no reason.
+        CHECK_FALSE(alien->hasChanged());
+    }
+
+    SECTION("the row shows the new name and still carries the old key")
+    {
+        auto* sets = widget.findChild<QTableWidget*>("sets");
+        REQUIRE(sets->rowCount() == 1);
+        CHECK(sets->item(0, 0)->text() == "The Alien Saga");
+        CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Collection");
+    }
+
+    SECTION("the record is written under the key's folder, not the title's")
+    {
+        // Kodi derives the movie set information folder from the match key, before it
+        // ever loads the record (VideoInfoScanner.cpp:839), so a record filed under the
+        // display title is a record Kodi never looks at.
+        widget.saveSet();
+        CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+        CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("The Alien Saga/set.nfo")));
+    }
+
+    SECTION("it survives a reload, which is the failure the second string exists for")
+    {
+        // The members still name the old set and the reload re-derives from them, so
+        // without the record being read back the rename would simply evaporate here.
+        widget.saveSet();
+        widget.loadSets();
+
+        auto* sets = widget.findChild<QTableWidget*>("sets");
+        REQUIRE(sets->rowCount() == 1);
+        CHECK(sets->item(0, 0)->text() == "The Alien Saga");
+        CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Collection");
+    }
+}
+
+TEST_CASE("A set-file-only rename with nowhere to write it is refused", "[ui][movie][set]")
+{
+    // The shipping default has no `set.nfo` at all, so there is no file for the display
+    // title to live in.  Refused rather than quietly turned into the all-movie-files
+    // rename, which rewrites every member's NFO -- the heavier and irreversible
+    // operation this user chose this setting to avoid.
+    RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
+    REQUIRE(Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies);
+
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    test::MessageCapture messages;
+    renameFirstSet(widget, "The Alien Saga");
+
+    CHECK(messages.contains("was not renamed"));
+    CHECK(messages.contains("movie set information folder"));
+
+    // Nothing moved, in either direction.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* set = setModel->set("Alien Collection");
+    REQUIRE(set != nullptr);
+    CHECK(set->displayName() == "Alien Collection");
+    CHECK(setModel->set("The Alien Saga") == nullptr);
+
+    Movie* alien = libraryMovie("Alien");
+    REQUIRE(alien != nullptr);
+    CHECK(alien->set().name == "Alien Collection");
+    CHECK_FALSE(alien->hasChanged());
+
+    // And the cell says what the set is called, rather than leaving the user looking at
+    // a name nothing answers to.
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    CHECK(sets->item(0, 0)->text() == "Alien Collection");
+
+    Manager::instance()->movieModel()->clear();
+    qApp->processEvents();
+    setModel->reload();
+}
+
+TEST_CASE("A set-file-only rename onto a display title already in use is refused", "[ui][movie][set]")
+{
+    // Typing an existing set's *key* is a merge and is offered as one, whatever the mode.
+    // Typing another set's *display title* is not: no set answers to that name, so the
+    // merge check finds nothing -- correctly, since two sets with one display title are
+    // still two sets to Kodi.  They may not be two rows the user cannot tell apart here.
+    MovieSetFolderGuard guard;
+    RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Predator", "Predator Collection");
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    // Give the second set a display title of its own, then try to take it.
+    MovieSet* predator = setModel->set("Predator Collection");
+    REQUIRE(predator != nullptr);
+    predator->setTitle("The Hunt");
+    widget.loadSets();
+
+    test::MessageCapture messages;
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 2);
+    // The rows are sorted by what the user reads, so find "Alien Collection" by its key
+    // rather than assuming which row it landed in.
+    int alienRow = -1;
+    for (int i = 0; i < sets->rowCount(); ++i) {
+        if (sets->item(i, 0)->data(Qt::UserRole).toString() == "Alien Collection") {
+            alienRow = i;
+        }
+    }
+    REQUIRE(alienRow >= 0);
+    sets->item(alienRow, 0)->setText("The Hunt");
+
+    CHECK(messages.contains("was not renamed"));
+    CHECK(messages.contains("already called"));
+
+    MovieSet* set = setModel->set("Alien Collection");
+    REQUIRE(set != nullptr);
+    CHECK(set->displayName() == "Alien Collection");
+}
+
+TEST_CASE("An all-movie-files rename moves what the set keeps on disk", "[ui][movie][set]")
+{
+    MovieSetFolderGuard guard;
+    test::DataFileGuard dataFiles;
+    RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+
+    addLibraryMovie("Alien", "Alien Collection");
+    writeRecord(guard.dir(), "Alien Collection");
+
+    SECTION("the record follows, so the old name does not come back as a ghost")
+    {
+        // Left behind, movieSetsWithRecord() lists the old folder at the next reload and
+        // reports a set nothing answers to, which reload() then resurrects with no
+        // members -- a ghost in the sets tab, the set combo box and the set filter.
+        SetsWidget widget;
+        widget.loadSets();
+        renameFirstSet(widget, "Alien Anthology");
+
+        CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/set.nfo")));
+        CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+
+        widget.loadSets();
+        auto* sets = widget.findChild<QTableWidget*>("sets");
+        CHECK(sets->rowCount() == 1);
+        CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Anthology");
+    }
+
+    SECTION("every file in the folder moves, not the two types this tab knows about")
+    {
+        // MovieSetImages::supportedImageTypes() is poster and backdrop, and the rename
+        // used to carry exactly those two through memory.  Kodi reads six more, and a
+        // user may have put anything in this folder.
+        QFile extra(guard.dir().absoluteFilePath("Alien Collection/clearlogo.png"));
+        REQUIRE(extra.open(QIODevice::WriteOnly));
+        extra.write("not really a png");
+        extra.close();
+
+        SetsWidget widget;
+        widget.loadSets();
+        renameFirstSet(widget, "Alien Anthology");
+
+        CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/clearlogo.png")));
+    }
+
+    SECTION("artwork moves byte for byte, without a decode and re-encode")
+    {
+        // The carry-over this replaced read the poster as a QImage and wrote it back as
+        // JPEG at quality 100, so a PNG came out a JPEG and a lossless original did not
+        // survive its own rename.
+        QImage poster(4, 4, QImage::Format_RGB32);
+        poster.fill(Qt::red);
+        QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
+        REQUIRE_FALSE(posterFiles.isEmpty());
+        DataFile posterFile = posterFiles.first();
+        const QString posterPath =
+            guard.dir().absoluteFilePath("Alien Collection/" + posterFile.saveFileName("Alien Collection"));
+        REQUIRE(poster.save(posterPath, "png"));
+
+        QFile before(posterPath);
+        REQUIRE(before.open(QIODevice::ReadOnly));
+        const QByteArray originalBytes = before.readAll();
+        before.close();
+
+        SetsWidget widget;
+        widget.loadSets();
+        renameFirstSet(widget, "Alien Anthology");
+        widget.saveSet();
+
+        QFile after(guard.dir().absoluteFilePath("Alien Anthology/" + posterFile.saveFileName("Alien Anthology")));
+        REQUIRE(after.open(QIODevice::ReadOnly));
+        CHECK(after.readAll() == originalBytes);
+        after.close();
+    }
+
+    SECTION("the movies are rewritten, which is what makes this the other rename")
+    {
+        SetsWidget widget;
+        widget.loadSets();
+        renameFirstSet(widget, "Alien Anthology");
+
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK(alien->set().name == "Alien Anthology");
+        CHECK(alien->hasChanged());
+    }
+}
+
+TEST_CASE("An all-movie-files rename that cannot move its files says so", "[ui][movie][set]")
+{
+    MovieSetFolderGuard guard;
+    RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+
+    addLibraryMovie("Alien", "Alien Collection");
+    writeRecord(guard.dir(), "Alien Collection");
+    // Something is already standing where the set's folder would go.  QDir::rename()
+    // refuses, and merging the two folders would let one set's artwork shadow another's.
+    //
+    // Artwork rather than a record: a folder holding a record is a *set*, so renaming
+    // onto its name would be a merge and would never reach the move at all.
+    REQUIRE(QDir().mkpath(guard.dir().absoluteFilePath("Alien Anthology")));
+    QFile occupant(guard.dir().absoluteFilePath("Alien Anthology/folder.jpg"));
+    REQUIRE(occupant.open(QIODevice::WriteOnly));
+    occupant.write("someone else's artwork");
+    occupant.close();
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    test::MessageCapture messages;
+    renameFirstSet(widget, "Alien Anthology");
+
+    CHECK(messages.contains("could not be moved"));
+
+    // The rename still happened: the movie NFOs are the set's identity, so undoing it
+    // would mean rewriting every member again -- larger and riskier than a leftover the
+    // message names.
+    Movie* alien = libraryMovie("Alien");
+    REQUIRE(alien != nullptr);
+    CHECK(alien->set().name == "Alien Anthology");
+
+    // And both folders are exactly as they were.
+    CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+    CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/folder.jpg")));
+}
+
+TEST_CASE("An all-movie-files rename moves artwork next to the movies too", "[ui][movie][set]")
+{
+    // The other layout, where there is no per-set folder: the artwork sits beside a
+    // member movie under a file name built from the set's name, and the anchor movie is
+    // found through the *old* name -- so this only works because the files are moved
+    // before the members are reassigned.
+    test::DataFileGuard dataFiles;
+    RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+    REQUIRE(Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies);
+
+    QTemporaryDir movieDir;
+    REQUIRE(movieDir.isValid());
+    const QString moviePath = QDir(movieDir.path()).absoluteFilePath("Alien.mkv");
+    QFile movieFile(moviePath);
+    REQUIRE(movieFile.open(QIODevice::WriteOnly));
+    movieFile.close();
+
+    auto* movie = new Movie(QStringList{moviePath}, nullptr);
+    movie->setTitle("Alien");
+    MovieSetInfo info;
+    info.name = "Alien Collection";
+    movie->setSetInfo(info);
+    movie->setChanged(false);
+    Manager::instance()->movieModel()->addMovie(movie);
+    qApp->processEvents();
+
+    QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
+    REQUIRE_FALSE(posterFiles.isEmpty());
+    DataFile posterFile = posterFiles.first();
+    QImage poster(4, 4, QImage::Format_RGB32);
+    poster.fill(Qt::red);
+    const QString oldPoster = QDir(movieDir.path()).absoluteFilePath(posterFile.saveFileName("Alien Collection"));
+    REQUIRE(poster.save(oldPoster, "jpg", 100));
+
+    SetsWidget widget;
+    widget.loadSets();
+    renameFirstSet(widget, "Alien Anthology");
+
+    CHECK_FALSE(QFileInfo::exists(oldPoster));
+    CHECK(QFileInfo::exists(QDir(movieDir.path()).absoluteFilePath(posterFile.saveFileName("Alien Anthology"))));
+
+    Manager::instance()->movieModel()->clear();
+    qApp->processEvents();
+    Manager::instance()->movieSetModel()->reload();
+}
+
+TEST_CASE("Renaming a set onto another set's name asks before merging", "[ui][movie][set]")
+{
+    // A merge moves movies between sets, is not undoable, and is one typo in a table
+    // cell away.  It used to happen silently.
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Predator", "Predator Collection");
+
+    SECTION("declining leaves both sets alone")
+    {
+        SetsWidget widget;
+        widget.loadSets();
+
+        answerNextQuestion(QMessageBox::No);
+        renameFirstSet(widget, "Predator Collection");
+
+        MovieSetModel* setModel = Manager::instance()->movieSetModel();
+        REQUIRE(setModel->set("Alien Collection") != nullptr);
+        REQUIRE(setModel->set("Predator Collection") != nullptr);
+        CHECK(setModel->set("Alien Collection")->movies().size() == 1);
+        CHECK(setModel->set("Predator Collection")->movies().size() == 1);
+
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK(alien->set().name == "Alien Collection");
+    }
+
+    SECTION("accepting merges, whatever the rename setting says")
+    {
+        // The setting does not govern a merge, because there is no other way to perform
+        // one: membership lives in the member movies' NFOs, so moving a movie into
+        // another set *is* rewriting its <set><name>.  A "set file only" merge would
+        // write a display title and quietly not merge.
+        RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
+
+        SetsWidget widget;
+        widget.loadSets();
+
+        answerNextQuestion(QMessageBox::Yes);
+        renameFirstSet(widget, "Predator Collection");
+
+        MovieSetModel* setModel = Manager::instance()->movieSetModel();
+        CHECK(setModel->set("Alien Collection") == nullptr);
+        MovieSet* predator = setModel->set("Predator Collection");
+        REQUIRE(predator != nullptr);
+        CHECK(predator->movies().size() == 2);
+
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK(alien->set().name == "Predator Collection");
+        CHECK(alien->hasChanged());
+    }
 }
