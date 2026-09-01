@@ -55,6 +55,10 @@ class MovieSetModel : public QAbstractItemModel
 public:
     enum Roles
     {
+        /// \brief The set's **match key**, never its display title; see MovieSet::name().
+        /// \details Qt::DisplayRole answers MovieSet::displayName() instead, because that
+        ///          is the one a person reads.  A caller that means "which set is this"
+        ///          wants this role.
         NameRole = Qt::UserRole,
         MovieCountRole = Qt::UserRole + 1,
         MovieSetPointerRole = Qt::UserRole + 22

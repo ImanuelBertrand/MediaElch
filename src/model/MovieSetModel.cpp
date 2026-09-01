@@ -41,7 +41,13 @@ QVariant MovieSetModel::data(const QModelIndex& index, int role) const
     MovieSet* movieSet = m_sets.at(index.row());
 
     switch (role) {
-    case Qt::DisplayRole:
+    // Split deliberately.  DisplayRole means "what to show a person", which after a
+    // set-file-only rename is not the set's key (D-B); NameRole is the key, which is what
+    // a caller looks a set up by and must never quietly become a display string.  Nothing
+    // reads DisplayRole from this model today -- the sets tab is a QTableWidget -- so this
+    // is the moment to get the two apart, before a view arrives and enshrines the wrong
+    // one.
+    case Qt::DisplayRole: return movieSet->displayName();
     case Roles::NameRole: return movieSet->name();
     case Roles::MovieCountRole: return qsizetype_to_int(movieSet->movies().size());
     case Roles::MovieSetPointerRole: return QVariant::fromValue(movieSet);

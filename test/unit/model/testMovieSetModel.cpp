@@ -865,6 +865,22 @@ TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
             sets->data(index, MovieSetModel::MovieSetPointerRole).value<MovieSet*>() == sets->set("Alien Collection"));
     }
 
+    SECTION("DisplayRole is what a person reads and NameRole is the key")
+    {
+        // The two agree until a set-file-only rename and must part company after one:
+        // DisplayRole means "what to show", NameRole means "which set is this".  Nothing
+        // reads DisplayRole from this model yet, which is exactly why the split is made
+        // now rather than after a view has enshrined the wrong one.
+        MovieSet* set = sets->set("Alien Collection");
+        REQUIRE(set != nullptr);
+        set->setTitle("The Alien Saga");
+
+        const QModelIndex index = sets->index(0, 0);
+        REQUIRE(index.isValid());
+        CHECK(sets->data(index, Qt::DisplayRole).toString() == "The Alien Saga");
+        CHECK(sets->data(index, MovieSetModel::NameRole).toString() == "Alien Collection");
+    }
+
     SECTION("an invalid index carries nothing")
     {
         CHECK_FALSE(sets->index(2, 0).isValid());
@@ -1628,4 +1644,45 @@ TEST_CASE("MovieSetModel lets go of the library before it is torn down", "[model
 
         CHECK(sets.sets().isEmpty());
     }
+}
+
+TEST_CASE("Manager detaches its set model from the library before it dies", "[model][movie][set]")
+{
+    // The production wiring, which the four sections above do **not** pin: every one of
+    // them calls detachFromLibrary() itself, so removing the call from ~Manager
+    // (`Manager.cpp:69`) leaves all four green.  Measured, not assumed -- an earlier
+    // commit message claimed one of them would catch it and none did.
+    //
+    // Pinned here through a Manager of this test's own, because the singleton cannot be
+    // destroyed.  The mock outlives it, so it can still be asked afterwards what it was
+    // asked during teardown.  Without the call in ~Manager, the movie file searcher --
+    // the parent of every Movie, and an older child than the set model -- is deleted
+    // first, and each movie's destroyed() reaches a set model that still holds a record
+    // source, which is the read that aborted MediaElch on exit.
+    MediaCenterInterfaceMock mediaCenter;
+    mediaCenter.setRecordsEnabled(true);
+
+    int queriesDuringTeardown = 0;
+    {
+        Manager manager;
+        MovieSetModel* sets = manager.movieSetModel();
+        REQUIRE(sets != nullptr);
+        sets->setRecordSource(&mediaCenter);
+        sets->setMovieModel(manager.movieModel());
+
+        auto* alien = new Movie({}, manager.movieFileSearcher());
+        alien->setTitle("Alien");
+        MovieSetInfo info;
+        info.name = "Alien Collection";
+        alien->setSetInfo(info);
+        manager.movieModel()->addMovie(alien);
+        REQUIRE(sets->sets().size() == 1);
+
+        const int before = mediaCenter.recordsEnabledQueryCount();
+        // Leaving this scope destroys the Manager, then its children in creation order.
+        queriesDuringTeardown = -before;
+    }
+    queriesDuringTeardown += mediaCenter.recordsEnabledQueryCount();
+
+    CHECK(queriesDuringTeardown == 0);
 }
