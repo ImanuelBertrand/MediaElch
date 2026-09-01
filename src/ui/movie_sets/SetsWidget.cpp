@@ -672,7 +672,24 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         // could not be removed.  It stays, backed and memberless, and the sets tab's
         // "Show Only Empty Movie Sets" is how the user finds it.  Undoing the merge
         // instead would mean putting every movie back, which is a larger and riskier
-        // operation than leaving a findable leftover.
+        // operation than leaving a findable leftover.  This is a merge that finished
+        // plus a leftover, not a half-done one.
+        //
+        // The table has to be told, or the warning names a set the user cannot see.  The
+        // dedupe loop above took the target's row away and this row now carries the
+        // target's name, so nothing here shows the source set at all while the model
+        // still holds it.  Signals are blocked because inserting an item is an
+        // itemChanged, which is the signal this very slot is connected to.
+        //
+        // Deliberately not loadSets(): that clears m_moviesToSave, and the movies this
+        // merge just reassigned are sitting in it waiting to be written.
+        ui->sets->blockSignals(true);
+        const int leftoverRow = ui->sets->rowCount();
+        ui->sets->insertRow(leftoverRow);
+        ui->sets->setItem(leftoverRow, 0, new QTableWidgetItem(origSetName));
+        ui->sets->item(leftoverRow, 0)->setData(Qt::UserRole, origSetName);
+        ui->sets->blockSignals(false);
+
         NotificationBox::instance()->showWarning(
             tr("The movies were merged into <b>\"%1\"</b>, but the old set's movie set file could not be "
                "removed, so <b>\"%2\"</b> is still there with no movies.")
