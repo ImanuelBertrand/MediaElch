@@ -289,10 +289,11 @@ reading costs nothing and keeps the sets tab useful for everyone who has never
 configured the folder.
 
 **With no folder configured, sets are still read from the movie NFOs and
-shown, but read-only** — editing, artwork download, *Add Movie Set* and every
-write path are disabled, behind a warning that says what is off and why.
-Applying that everywhere is its own step; what this step establishes is only
-*whether* a folder is configured.
+shown, but read-only** — artwork download, *Add Movie Set* and every write
+path that needs the folder are disabled, behind a notice that says what is off
+and why.  Which write paths those actually are is narrower than it first
+looked, and the narrowing is a decision; it is written out under *What
+"Read-Only" Turned Out To Mean* below.
 
 This still answers the objection bugwelle raised in #1243 on 2021-04-06
 against changing the artwork default:
@@ -328,10 +329,103 @@ finds one, and returns `<that movie's folder>/set.nfo` — a real, writable path
 that Kodi never reads.  The empty return happens only for a set with no
 members at all.
 
+#### Artwork And Records Are Not The Same Question
+
 The artwork paths (`movieSetPoster()`, `movieSetBackdrop()` and their two
-savers) still call `movieSetFileName()` unguarded and still have the working
-directory exposure described above.  That is deliberate and belongs to the
-read-only guard step, not to the record reader and writer.
+savers) had the working-directory exposure described above, and closing it
+looked like a one-line job: give them the same guard the records have.  **It
+is not, and that guard would have been a worse bug than the one it fixed.**
+
+A set's *record* can only live in the movie set information folder, so
+`movieSetRecordsEnabled()` requires the separate-folder layout.  A set's
+*artwork* lives in **both** layouts: `ArtworkNextToMovies` resolves through a
+member movie's folder and writes beside it, and that layout is MediaElch's
+shipping default (`Settings.h`, `m_movieSetArtworkType`).  Gating the four
+artwork callers on the record predicate would therefore have taken set artwork
+— reading it as well as writing it — away from every user who has never opened
+the settings.
+
+So there are two questions over one primitive:
+
+| Question | True when | Used by |
+|---|---|---|
+| `movieSetRecordsEnabled()` | separate folder **and** `isValid()` | the four `set.nfo` paths, *Add Movie Set* |
+| `movieSetArtworkEnabled()` | next-to-movies **or** the above | the artwork read and the two savers |
+
+The second is the disjunction of the first with the other layout, and it is
+implemented as literally that: it *calls* `movieSetRecordsEnabled()` rather
+than repeating its condition, so the two cannot drift apart.  A truth table
+pins that they are different questions and which configurations separate them,
+because "unifying" them is exactly the tidy-looking change that breaks the
+default configuration.
+
+The guard itself goes **inside `movieSetFileName()`**, where the path is built,
+rather than in each caller: that closes it for all four and for any added
+later.  It still has to come before the path is resolved, for the reason above
+— an empty return means something else in the other layout.
+
+The refusal then has to be *listened to*, and one caller was not listening.
+`SetsWidget::saveSet()` cleared its pending poster and backdrop unconditionally
+after a `void` save and reported "Saved"; a set's artwork lives nowhere but
+that map until it is written, so closing the working-directory exposure turned
+a misplaced file into a lost one.  The two savers return `bool` now.
+`ELCH_NODISCARD` is silent on a virtual under GCC (reproduced, 14.2), so both
+the refusal and the obligation to honour it are held by tests.
+
+#### What "Read-Only" Turned Out To Mean
+
+"Read-only" is a property of each *destination*, not of the sets tab.  There
+are three, and only two of them need the folder:
+
+- **the member movie NFOs** — membership, the set's name, the overview mirror,
+  the sort title.  Available always (D1a, D3, D7).
+- **the set's `set.nfo`** — needs `movieSetRecordsEnabled()`.
+- **the set's artwork files** — needs `movieSetArtworkEnabled()`.
+
+So with no folder configured the sets tab disables *Add Movie Set*, the artwork
+dialogs and the artwork half of a save, and **keeps** renaming a set, adding
+and removing movies, the sort title, *Delete Movie Set* and the movie half of a
+save.  Disabling those too was the earlier wording, and it was wrong on four
+counts, of which the third decided it:
+
+1. It regresses the shipping default — those paths work today for every user
+   who has never opened the settings.
+2. It is inconsistent with leaving the movie widget's set box enabled, which
+   performs the identical edit through the identical `MovieSetModel::assign()`.
+3. **Disabling the rename pushes users into the D3 fork it exists to prevent.**
+   The sets tab's rename is the only path that rewrites every member
+   byte-identically; take it away and retyping the name on each movie is what
+   is left, which is precisely how one set becomes two.
+4. Disabling *Save* orphans the edits that are still allowed, since it is the
+   only thing that flushes them.
+
+*Add Movie Set* is the one that must go, and for a reason that is not
+symmetric with the others: a set created there has no members and no record,
+and with no folder it can never get one, so `dropEmptySets()` takes it at the
+next reload and the user watches a set they just made disappear.  It is also
+the only path that can create such a set, which is what keeps read-only mode
+from accumulating them.
+
+Naming a **new** set on a movie stays allowed and does not reopen that: the set
+has a member from the moment it exists, so nothing drops it, and it comes back
+from the movie's own NFO on every reload.  Closing that "back door" would break
+assigning movies to sets in the default configuration, which is why a test
+states the difference rather than a comment.
+
+#### The Notice Must Not Tell Off The Default
+
+bugwelle's objection is answered by *what* is said, not only by saying
+something.  The notice has three states, and they are derived from the two
+answers above rather than from a third look at the settings:
+
+- **a separate directory selected with none chosen** — a real
+  misconfiguration, and the state that used to write into the working
+  directory.  A warning, naming what cannot be saved and where the setting is.
+- **artwork next to movies** — the default.  **Not** a warning: it says only
+  that a set has no file of its own in that layout, so a set with no movies
+  cannot be created, and where the setting is.  Every user who has never opened
+  the settings sees this line, and none of them has done anything wrong.
+- **a directory configured** — nothing.
 
 #### Migration Is Not Optional
 
