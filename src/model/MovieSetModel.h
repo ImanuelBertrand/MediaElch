@@ -233,6 +233,33 @@ private:
     void dropSet(MovieSet* movieSet);
     /// \brief Takes \p movie out of the membership index entry for \p movieSet.
     void unindexMembership(QObject* movie, MovieSet* movieSet);
+    /// \brief Fills a record-less set's empty overview and id from its members' NFOs.
+    /// \details A set is born from a movie NFO.  That is the only place MediaElch ever
+    ///          learns that a set exists at all, because membership lives in the member
+    ///          movies and nowhere else (D-A) -- so `movie.nfo` -> set is a permanent
+    ///          path and not an upgrade route.  A set with no `set.nfo` is the normal
+    ///          first state of every set that has ever existed, not a leftover to be
+    ///          migrated away, and it stays reachable however many records a library
+    ///          accumulates.
+    ///
+    ///          Such a set is built from a name and nothing else, so it was born with an
+    ///          empty overview and no id even when every member NFO carried both -- and
+    ///          the first `set.nfo` written for it was written from that emptiness,
+    ///          because the writer skips what is not there
+    ///          (MovieSetXmlWriter::getMovieSetXml()).  Nothing was lost, but the
+    ///          authoritative copy was blank while the mirror held the data, which
+    ///          inverts D-A's table; it turns destructive as soon as an edited overview
+    ///          is mirrored back down into every member.
+    ///
+    ///          Read-side only: nothing is written to disk here, and no set gains a
+    ///          record it did not have.
+    ///
+    ///          Called for every membership addition, from onSetMovieAdded(), because a
+    ///          set can be born at any moment a movie NFO naming it is read or edited and
+    ///          not only while the library is loading: reload(), a movie entering the
+    ///          library afterwards, a membership edit and a MovieSet::addMovie() this
+    ///          model did not make all arrive there.
+    void seedFromMembers(MovieSet* movieSet);
     /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
     /// \brief Whether \p movieSet has a `set.nfo` of its own.

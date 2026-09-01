@@ -461,6 +461,94 @@ void MovieSetModel::onSetMovieAdded(MovieSet* movieSet, Movie* movie)
     if (!memberships.contains(movieSet)) {
         memberships.append(movieSet);
     }
+    // Every membership addition in the application arrives here, which is why the seed
+    // hangs off this signal rather than off this model's own call sites: reload(),
+    // onMoviesInserted() for a movie that enters the library afterwards, onMovieChanged()
+    // for a membership edit, and a MovieSet::addMovie() made from outside the model all
+    // pass through it.  Placing it in reload() and onMovieChanged() instead would miss
+    // the other two.
+    seedFromMembers(movieSet);
+}
+
+void MovieSetModel::seedFromMembers(MovieSet* movieSet)
+{
+    if (movieSet == nullptr) {
+        return;
+    }
+    // Never over a record.  A set that read a `set.nfo` already holds the authoritative
+    // overview and id, and the seed would be the same hazard reload() refuses to take
+    // when it declines to re-read a record: overwriting a value the user has edited with
+    // one derived from somewhere else.  The mirror is a copy of the record, not a source
+    // for it.
+    if (isBacked(movieSet)) {
+        return;
+    }
+    // Only what is missing is filled, so this never overwrites -- neither a value seeded
+    // by an earlier member nor one the user typed.  The other side of that is that a
+    // seeded value is not refreshed when a member's NFO changes: the seed fills a hole
+    // once, it does not track the members.
+    const bool overviewIsMissing = movieSet->overview().isEmpty();
+    const bool idIsMissing = !movieSet->tmdbId().isValid();
+    if (!overviewIsMissing && !idIsMissing) {
+        return;
+    }
+
+    // First member with a non-empty value, in member order, and the two are decided
+    // independently: a set may take its overview from one member and its id from another,
+    // because a member NFO that carries one and not the other is ordinary and demanding
+    // both from one movie would throw away the half that is there.
+    //
+    // Members can legitimately disagree -- nothing in MediaElch has ever forced D2's
+    // "identical text in every member", so a library assembled by other tools will have
+    // sets whose members differ -- and first-wins is the rule that matches what Kodi 19
+    // and 20 do with the same input: AddSet keeps the first-scanned member's copy and
+    // runs no UPDATE at all.  Whichever value is picked here becomes authoritative once
+    // the user saves the set, so it is picked by a stated rule rather than by hash order.
+    QString overview;
+    TmdbId tmdbId = TmdbId::NoId;
+    for (const Movie* movie : movieSet->movies()) {
+        const MovieSetInfo info = movie->set();
+        // A member that names some other set describes some other collection, and its
+        // overview and id belong to that one.  MovieSet::addMovie() is public, so this
+        // set can hold a movie whose own `<set><name>` points elsewhere -- reload() cures
+        // that, but until it runs such a member must not donate anything.
+        if (info.name != movieSet->name()) {
+            continue;
+        }
+        if (overview.isEmpty()) {
+            overview = info.overview;
+        }
+        if (!tmdbId.isValid()) {
+            tmdbId = info.tmdbId;
+        }
+        if (!overview.isEmpty() && tmdbId.isValid()) {
+            break;
+        }
+    }
+
+    const bool seedsOverview = overviewIsMissing && !overview.isEmpty();
+    const bool seedsId = idIsMissing && tmdbId.isValid();
+    if (!seedsOverview && !seedsId) {
+        return;
+    }
+
+    // Seeding is not an edit.  Both setters mark the set as needing to be saved, and this
+    // is not a change the user made: it is the same value the library already held, just
+    // read into the object that was missing it.  Leaving the flag set would have
+    // warnIfRecordIsLost() report discarding unsaved changes on every ordinary drop, and
+    // it would do so for a set nobody touched -- the same reason KodiXml::loadMovieSet()
+    // clears it after the reader has run.
+    //
+    // The previous value is restored rather than cleared: a set that really does have an
+    // unsaved rename waiting must not have it forgotten because a movie joined it.
+    const bool wasChanged = movieSet->hasChanged();
+    if (seedsOverview) {
+        movieSet->setOverview(overview);
+    }
+    if (seedsId) {
+        movieSet->setTmdbId(tmdbId);
+    }
+    movieSet->setChanged(wasChanged);
 }
 
 void MovieSetModel::onSetMovieRemoved(MovieSet* movieSet, QObject* movie)
