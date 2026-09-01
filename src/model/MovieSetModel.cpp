@@ -295,22 +295,36 @@ void MovieSetModel::reload()
     // Which sets have a record is asked once for the whole library, and every set here is
     // told whether it is among the answers.  It is not a cheap question: the media center
     // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names.  That is one parse per `set.nfo`, plus one for every set whose legalised path
-    // lands on a file -- normally just the sets that have a record, and one more for each
-    // name that shares a folder with another.  KodiXml::loadMovieSet() cannot avoid that
-    // second parse: it has to read the document before it can ask which set the document
-    // names, and a set whose path lands on a neighbour's record parses the file and then
-    // answers false.  A set whose path resolves to no file at all costs nothing.
+    // names.  That is one parse per `set.nfo`, plus one for every set this pass actually
+    // *probes* -- one it builds, or one that has just gained a record -- whose legalised
+    // path lands on a file.  A set that already had its record and still has it is not
+    // probed: the branch below is guarded on hasRecord && !movieSet->hasRecord(), and
+    // addSet() returns an existing set untouched.  So the steady state -- open the tab
+    // twice with nothing changed -- is the listing and nothing more.
     //
-    // Which sets take that second parse is deliberately not enumerated.  It has been
-    // written down wrongly four times -- omitting one of the two loadMovieSet() call
-    // sites, and then claiming a set with no record never parses -- and the mechanism is
-    // shorter than any correct list of cases: a parse happens wherever a set's path
-    // resolves to a file, whoever owns it.
+    // KodiXml::loadMovieSet() cannot avoid that second parse where it does happen: it has
+    // to read the document before it can ask which set the document names, so a set whose
+    // path lands on a neighbour's record parses the file and only then answers false.  A
+    // set whose path resolves to no file at all costs nothing.
+    //
+    // Bounded by the folder and the number of sets, never by the size of the library.
+    //
+    // A standing rule about the three sentences above, because they have been wrong in
+    // five consecutive review rounds: three enumerations that each missed a call site, one
+    // guarantee ("at most two parses per record") that the folder-collision case
+    // falsified, and one condition that was right except for the restriction that only a
+    // probed set parses.  Every fix answered the error that had just been found, which is
+    // why it kept taking another round.  **If this is ever found wrong a sixth time,
+    // delete the quantified claim instead of repairing it.**  The mechanism -- a parse
+    // happens where a probed path lands on a file -- and the bound above carry the whole
+    // useful warning between them, and a comment that has been wrong six times is worth
+    // less than no comment at all.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the
-    // user has edited and not saved yet.
+    // user has edited and not saved yet.  The one exception is the branch below: a set
+    // that had no record and now has one has to be read, or it would write the emptiness
+    // it was created with over the file.
     //
     // Skipped entirely when records are not configured, and that is not just an
     // optimisation: with no folder there is nothing to re-derive from, so clearing every

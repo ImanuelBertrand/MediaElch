@@ -200,14 +200,16 @@ public:
     ///          for the whole library rather than once per set, but it is not cheap:
     ///          answering it means parsing every `set.nfo` in the folder, since only the
     ///          file says which set it belongs to.  That is one parse per `set.nfo`,
-    ///          plus one for every set whose legalised path lands on a file -- normally
-    ///          just the sets that have a record, and one more for each name that shares
-    ///          a folder with another.  loadMovieSet() cannot avoid that second parse:
-    ///          it has to read the document before it can ask which set the document
-    ///          names, and asking those two in the other order is what once let a set
-    ///          claim its neighbour's record.  A set whose path resolves to no file at
-    ///          all costs nothing.  Bounded by the folder, in either case, and not by
-    ///          the size of the library.
+    ///          plus one for every set this pass actually *probes* -- one it builds, or
+    ///          one that has just gained a record -- whose legalised path lands on a
+    ///          file.  A set that already had its record and still has it is not probed
+    ///          at all, so a reload that finds nothing changed costs the listing and
+    ///          nothing more.  loadMovieSet() cannot avoid that second parse where it
+    ///          does happen: it has to read the document before it can ask which set the
+    ///          document names, and asking those two in the other order is what once let
+    ///          a set claim its neighbour's record.  A set whose path resolves to no file
+    ///          at all costs nothing.  Bounded by the folder and the number of sets,
+    ///          never by the size of the library.
     ///
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
