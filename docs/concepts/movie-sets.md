@@ -51,31 +51,31 @@ nothing else (`src/data/movie/MovieSet.cpp:3`).
 
 There is no list of sets anywhere.  It is recomputed, from scratch, in three
 unrelated places, each walking the whole movie model and grouping by
-`movie->set().name`: the sets tab (`src/ui/movie_sets/SetsWidget.cpp:132-147`),
+`movie->set().name`: the sets tab (`src/ui/movie_sets/SetsWidget.cpp:227-242`),
 the set combo box in the movie widget
 (`src/ui/movies/MovieWidget.cpp:598-606`), and the set dropdown in the filter
 widget (`src/ui/small_widgets/FilterWidget.cpp:318-319`).
 `MainWindow::onMenu` runs the first of those on every switch to the Movie Sets
-tab (`src/ui/main/MainWindow.cpp:881`), after first discarding the four
-`QMap`s that hold everything the tab knows (`SetsWidget.cpp:117-121`).
+tab (`src/ui/main/MainWindow.cpp:882`), after first discarding the four
+`QMap`s that hold everything the tab knows (`SetsWidget.cpp:214-216`).
 
 What that discard costs is worth being precise about, because it is smaller
 than it looks and still bad.  Edits to a movie are not lost: `Movie::setSet`
 marks the movie dirty (`src/data/movie/Movie.cpp:779-783`) and it stays dirty
 in `MovieModel`.  What is lost is the tab's own state — the `m_moviesToSave`
 list of what still needs writing, and any set poster or backdrop the user
-picked but has not saved (`SetsWidget.cpp:119-121`).  Leave the tab and come
+picked but has not saved (`SetsWidget.cpp:214-216`).  Leave the tab and come
 back, and the images are gone with no indication that anything happened.
 
 ### The Identity of a Set Is a Table Cell
 
 Because there is no set object, the set the UI is operating on is identified by
-the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:157` and
-`:542`).  Four call sites read it back as the set's identity:
-`chooseSetPoster()` (`:378`), `chooseSetBackdrop()` (`:413`),
-`onRemoveMovieSet()` (`:555`) and `onSetNameChanged()` (`:576`).  A fifth,
+the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:252` and
+`:723`).  Four call sites read it back as the set's identity:
+`chooseSetPoster()` (`:482`), `chooseSetBackdrop()` (`:522`),
+`onRemoveMovieSet()` (`:736`) and `onSetNameChanged()` (`:767`).  A fifth,
 `saveSet()`, hedges: it reads the role *and* the displayed text and iterates
-both (`:448-451`), which is only necessary because the two are known to
+both (`:557-560`), which is only necessary because the two are known to
 disagree.  Renaming a row never updates the role, so on `master` they diverge
 from the first rename onwards — `onRemoveMovieSet()` even detaches the movies
 under one name (`:537`) while erasing the map entries under the other
@@ -84,7 +84,7 @@ the design.
 
 The same absence forces `onSetNameChanged()` to rebuild a `MovieSet` from the
 name alone (`:568-570`), and `MovieWidget::onSetChange` to do the same
-(`src/ui/movies/MovieWidget.cpp:1204-1206`).  Both silently drop the set's
+(`src/ui/movies/MovieWidget.cpp:1307-1308`).  Both silently drop the set's
 `overview` and `tmdbId`, because there is nowhere else those values are kept.
 
 ### Artwork: Two Types, Written by Name
@@ -94,21 +94,21 @@ Exactly two set art types exist in the whole application:
 (`src/globals/Globals.h:123-124`), mirrored by two `DataFileType` entries
 (`:239-240`), two default filename templates
 (`src/settings/Settings.cpp:96-97`), two `QMap` members on the widget
-(`src/ui/movie_sets/SetsWidget.h:61-62`), four virtual methods on the media
-center interface (`src/media_center/MediaCenterInterface.h:32-35`) with their
-`KodiXml` overrides (`src/media_center/KodiXml.h:44-47`,
-`src/media_center/KodiXml.cpp:1183-1245`), and a hard-wired pair of settings
+(`src/ui/movie_sets/SetsWidget.h:87-89`), four virtual methods on the media
+center interface (`src/media_center/MediaCenterInterface.h:63-79`) with their
+`KodiXml` overrides (`src/media_center/KodiXml.h:46-49`,
+`src/media_center/KodiXml.cpp:1203-1291`), and a hard-wired pair of settings
 fields (`src/ui/settings/MovieSettingsWidget.cpp:43-44`, `:55-56`, `:148-154`,
 plus its `.ui`).  Adding a third art type means touching all of it.
 
 The interface is keyed by set *name*, not by a set: `saveMovieSetPoster(QString
 setName, QImage)`.  `KodiXml::movieSetFileName` then has to find the set again
 — in "artwork next to movies" mode it linear-scans the entire movie model
-looking for any member (`src/media_center/KodiXml.cpp:1316-1327`) — and
+looking for any member (`src/media_center/KodiXml.cpp:1670-1683`) — and
 `DataFile::saveFileName` substitutes the name into the template
 (`src/settings/DataFile.cpp:52-57`).  Set art is also the only artwork
-MediaElch re-encodes: `poster.save(fileName, "jpg", 100)` at
-`KodiXml.cpp:1226` and `:1242`, regardless of the template's extension, where
+MediaElch re-encodes: `image.save(fileName, "jpg", 100)` at
+`KodiXml.cpp:1285`, regardless of the template's extension, where
 movie, show and concert art is written as the bytes that were downloaded.
 Whether those paths are ones Kodi reads at all is the subject of #2011, #1747,
 #1158 and #1809, and is not revisited here.
@@ -135,7 +135,7 @@ all.
 
 `SetsWidget::chooseSetPoster()` allocates a throwaway `Movie`, assigns the set
 name as that movie's *title*, and opens `ImageDialog` asking for
-`ImageType::MoviePoster` (`SetsWidget.cpp:384-391`).  `ImageDialog` seeds its
+`ImageType::MoviePoster` (`SetsWidget.cpp:488-493`).  `ImageDialog` seeds its
 search box from the movie's title (`src/ui/image/ImageDialog.cpp:118`) and
 calls `m_currentProvider->searchMovie(...)` (`:808`).  In other words, asking
 for a poster for _Alien Collection_ searches the movie database for a film
@@ -302,25 +302,28 @@ against changing the artwork default:
 > would have to configure a directory first. And MediaElch does not yet have a
 > "Quick Start" dialog or similar.
 
-The objection is right, and the answer is the explicit warning rather than a
+The objection is right, and the answer is the explicit notice rather than a
 silent fallback — because the silent fallback is worse than refusing.  With no
 folder configured, `Settings::movieSetArtworkDirectory()` returns a
 `DirectoryPath` built from an empty string, which is `isValid() == false`
 wrapping `QDir("")` (`src/media/Path.h:26`,
-`src/settings/Settings.cpp:305-306`), and `KodiXml::movieSetFileName` never
-checks `isValid()` before calling `dir.absolutePath()`.
-`QDir("").absolutePath()` resolves to the *process's current working
-directory* (verified against Qt 6.8), so today a user who selects the
-separate-folder mode without setting a folder scatters set artwork next to
-wherever MediaElch happened to be launched from.
+`src/settings/Settings.cpp:305-306`), and `QDir("").absolutePath()` resolves to
+the *process's current working directory* (verified against Qt 6.8).
+`KodiXml::movieSetFileName` used not to check `isValid()` before calling
+`dir.absolutePath()`, so a user who selected the separate-folder mode without
+setting a folder scattered set artwork next to wherever MediaElch happened to
+be launched from.  It checks now, through
+`movieSetFolderIsConfigured()` — see *Artwork And Records Are Not The Same
+Question* below for where that guard lives and what it does not cover.
 
 **`set.nfo` is therefore a separate-artwork-folder feature, and that is the
 design rather than a gap.**  `KodiXml::movieSetRecordsEnabled()` is the one
-place that decides, and it tests *both* the layout and `isValid()`, because
-the mode alone is what walks into the working directory.  It gates reading as
-well as writing: a `set.nfo` read out of the working directory would mark a
-set as having a record, and that is what decides whether the model keeps or
-drops the set.
+place that decides, and it tests *both* the layout and `isValid()`.  The layout
+alone would walk into the working directory, and the path guard above does not
+make this one redundant: that guard stops a file being *written* there, while
+this one stops a `set.nfo` *found* there from marking a set as having a record,
+which is what decides whether the model keeps or drops the set — and it is
+asked before any path is built.  So it gates reading as well as writing.
 
 The gate has to come **before** the path is resolved, not be inferred from an
 empty result.  In the artwork-next-to-movies layout `movieSetFileName()` does
@@ -541,7 +544,7 @@ default behaviour would be wrong out of the box.  That makes it a dependency
 of this design rather than an unrelated tidy-up, and it is fixed here.
 
 Renaming a set onto an existing name is a merge, on both sides.  The current
-code already performs it (`SetsWidget.cpp:581-586`) without telling the user.
+code already performs it (`SetsWidget.cpp:827-836`) without telling the user.
 
 ### D-C: Promote `MovieSet` to an Entity, and Give the List a Model
 
@@ -879,7 +882,7 @@ library reload, and nothing today makes that safe.  `MovieModel` has no
 and `MovieModel::clear()` (`:278-289`) calls `movie->deleteLater()` on every
 element while `Movie::sigChanged` never fires on destruction.  The existing
 code already knows this hazard and works around it by having no long-lived
-state at all: the comment at `SetsWidget.cpp:114-115` says the maps must be
+state at all: the comment at `SetsWidget.cpp:208-209` says the maps must be
 cleared before the table is, "otherwise MediaElch may access invalidated
 `Movie*`".  Any design that keeps set objects across a reload takes that
 hazard on, and the version where the model is the only writer is the one where
