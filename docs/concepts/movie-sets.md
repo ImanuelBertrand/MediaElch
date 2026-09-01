@@ -479,14 +479,17 @@ property, with one section per configuration, says so; it was covered only as a
 side effect of two tests about other things until then.
 
 And this is not an upgrade path that ages out.  Membership lives in the member
-movies and nowhere else, so a movie NFO is the only place MediaElch ever learns
-that a set exists at all: `movie.nfo` to set is how *every* set that has ever
-existed came into being, and it stays valid however many records a library
-accumulates.  `set.nfo` is where a set's attributes become authoritative once
-the set has one; it is never where a set is discovered, and the folder
-enumeration above finds only the sets that no movie derives.  A set with no
-record is therefore the normal first state of a set, not an anomaly to be
-migrated away.
+movies and nowhere else, so a movie's `<set><name>` is the only thing that can
+say that movie is in a set at all.  That makes the `movie.nfo` to set path one
+that can never be retired, however many records a library accumulates, and makes
+a set with no `set.nfo` the normal first state of a set *that has members* —
+not an anomaly to be migrated away.
+
+Sets that have no members are learned about differently, and the distinction
+matters below: the folder enumeration above creates the sets that only a record
+names, and *Add Movie Set* creates one from a click, with no movie and no NFO
+anywhere.  Neither is derived from its movies, and the seed has to know the
+difference.
 
 A one-shot pass that materialised every derived set into a `set.nfo` was
 considered and rejected.  Giving every set a record makes every set permanent,
@@ -502,7 +505,7 @@ worth keeping.
 What such a pass would genuinely have carried forward — *whatever overview and
 id those NFOs already hold* — is carried forward on the read side instead, and
 no file is written for it.  A set with no record takes its overview and its
-collection id from its members (`MovieSetModel.cpp:479`).  Without that it is
+collection id from its members (`MovieSetModel.cpp:481`).  Without that it is
 built from a name alone: the entity is blank while the mirror in every member
 NFO holds the data, and the first `set.nfo` written for it is written from that
 emptiness, because the writer skips an empty overview
@@ -511,17 +514,32 @@ above inverted, and it turns destructive as soon as an edited overview is
 mirrored back down into every member — the `UPDATE sets SET strOverview = ''`
 hazard set out below.
 
-Three rules the seed follows, each load-bearing:
+Four rules the seed follows, each load-bearing:
 
-- **Never over a record** (`MovieSetModel.cpp:484`).  A set that has read a
+- **Never over a record** (`MovieSetModel.cpp:486`).  A set that has read a
   `set.nfo` already holds the authoritative values, and the members hold a
-  mirror of them; a mirror is not a source.
-- **Seeding is not an edit** (`:541`).  It is the value the library already
-  held, read into the object that was missing it, so the set must not be left
-  marked as needing to be saved — nor may an unsaved edit already waiting on it
-  be forgotten.
+  mirror of them; a mirror is not a source.  The question asked is
+  `MovieSet::hasRecord()` and deliberately *not* `MovieSetModel::isBacked()`,
+  which is the same question plus "and is a folder configured".  The second half
+  is right where it lives, at the drop rule, and wrong here: the values a set
+  read out of its record do not stop being the record's because the folder was
+  switched off, and nothing would put them back — `reload()` leaves the record
+  flags alone while records are off, and re-reads a record only when a set
+  *gains* one.
+- **Never from a member that names another set** (`:542`).  `MovieSet::addMovie()`
+  is public and `reload()` documents that a set can hold a movie whose own
+  `<set><name>` points elsewhere.  That movie's overview and id describe the
+  collection it names, so letting it donate would make this set authoritative for
+  another set's text.  The guard holds across a rename only because
+  `SetsWidget::onSetNameChanged()` rewrites every member's value straight after
+  renaming the object (`SetsWidget.cpp:830-839`), and it is the only
+  `MovieSet::setName()` caller in `src/`.
+- **Seeding is not an edit** (`MovieSetModel.cpp:573`).  It is the value the
+  library already held, read into the object that was missing it, so the set must
+  not be left marked as needing to be saved — nor may an unsaved edit already
+  waiting on it be forgotten.
 - **Members may legitimately disagree**, and the winner is the first member
-  with a non-empty value in member order (`:502`), with overview and id decided
+  with a non-empty value in member order (`:527`), with overview and id decided
   independently.  Nothing in MediaElch has ever forced the "identical text in
   every member" rule below, so a library assembled by other tools has sets whose
   members differ; first-wins is what Kodi 19 and 20 do with the same input.
@@ -539,9 +557,11 @@ existing row's id and runs no `UPDATE` at all
 win.  Identical text everywhere is the only way to get a deterministic result
 on all four.
 
-And an *empty* overview must never be written.  MediaElch currently emits
+And an *empty* overview must never be written.  On `master` MediaElch emits
 `<overview></overview>` unconditionally whenever a set name exists
-(`MovieXmlWriter.cpp:109-115`), and `XMLUtils::GetString` returns `true` for
+(`master`'s `MovieXmlWriter.cpp:109-115`; this branch skips it at
+`src/media_center/kodi/MovieXmlWriter.cpp:117-126`), and `XMLUtils::GetString`
+returns `true` for
 an existing-but-empty element (`xbmc/utils/XMLUtils.cpp:261-262`).  On Kodi 21
 that reaches `m_updateSetOverview = true`
 (`21.3-Omega:xbmc/video/VideoInfoTag.cpp:1278-1281`) and then
@@ -1167,12 +1187,26 @@ with a different failure mode.
    Sets Are Read-Only* sets out.  The migration consequence went with it: there
    is no one-shot materialisation pass to find a home for, because nothing has
    to be materialised — see *A Set Is Born From Its Movies*.
-5. **Should MediaElch ever write a `set.nfo` the user did not ask for?**  Kodi
-   22 reads a set's overview and title from the record, so a library MediaElch
-   has never explicitly saved gives Kodi 22 nothing to read, and writing records
-   automatically is the obvious answer.  It collides with the drop rule: a
-   record is what makes a set permanent, so writing one for every set puts every
-   set that ever loses its last movie into the set combo box and the set filter
-   with no movie answering to it — the same ghost sets the one-shot pass was
-   rejected for.  Any answer has to say which sets earn a record and when,
-   rather than "all of them, always".  Open.
+5. **Should MediaElch ever write a `set.nfo` the user did not ask for?**  Not
+   for the overview's sake: Kodi 22 populates `tag.m_set` from the movie NFO
+   *before* it looks for a record and returns early if the movie names no set
+   (`xbmc/video/VideoInfoScanner.cpp:834-835`), and the record then overrides only a
+   non-empty `<title>`, `<overview>` and `<art>` (`:852-857`).  With no record,
+   Kodi 22 reads the member mirror exactly as 19-21 do.
+
+   What a record does buy on 22 is **rename-in-place** and **`<art>`**.  `AddSet`
+   matches on `strOriginalSet` and writes that column only on INSERT — the UPDATE
+   branch touches `strSet` and `strOverview` and never the key
+   (`xbmc/video/VideoDatabase.cpp:1535-1536`, `:1555-1558`) — and
+   `strOriginalSet` is populated only inside the branch that found a record
+   (`VideoInfoScanner.cpp:851`).  So without one, renaming through the member
+   NFOs orphans the old set row instead of renaming it, which is what forces the
+   three-state rename setting (D-B); and `<art>` is Kodi 22's only fallback for a
+   folder with no image files.
+
+   That is a real motive for writing records unasked, and it collides with the
+   drop rule: a record is what makes a set permanent, so writing one for every
+   set puts every set that ever loses its last movie into the set combo box and
+   the set filter with no movie answering to it — the same ghost sets the
+   one-shot pass was rejected for.  Any answer has to say which sets earn a
+   record and when, rather than "all of them, always".  Open.
