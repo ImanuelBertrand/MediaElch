@@ -30,10 +30,6 @@ public:
 
     /// \brief Whether a movie set information folder is configured.
     void setRecordsEnabled(bool enabled) { m_recordsEnabled = enabled; }
-    /// \brief Whether set artwork has somewhere to go.  Independent of the records here.
-    /// \details KodiXml derives one from the other; this mock lets a test set them apart,
-    ///          which is how the two layouts are told apart without a real Settings.
-    void setArtworkEnabled(bool enabled) { m_artworkEnabled = enabled; }
     /// \brief Puts a `set.nfo` for \p setName on the pretend disk.
     void putRecord(const QString& setName, Record record) { m_records.insert(setName, record); }
     void putRecord(const QString& setName) { putRecord(setName, Record()); }
@@ -42,9 +38,6 @@ public:
     void setRemovalRefused(bool refused) { m_removalRefused = refused; }
     /// \brief Makes every record write refuse, as a folder owned by another set does.
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
-    /// \brief Makes every artwork write refuse, as a failing QImage::save() does.
-    void setArtworkRefused(bool refused) { m_artworkRefused = refused; }
-    ELCH_NODISCARD int savedArtworkCount() const { return m_savedArtworkCount; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
 
@@ -90,14 +83,13 @@ public:
     // Everything below is unused by MovieSetModel and does nothing.
     bool saveMovie(Movie* /*movie*/) override { return false; }
     bool loadMovie(Movie* /*movie*/, QString /*nfoContent*/ = "") override { return false; }
-    ELCH_NODISCARD bool movieSetArtworkEnabled() const override { return m_artworkEnabled; }
+    // Set artwork is exercised against the real KodiXml, where the two layouts and the
+    // file names actually exist; this mock has no notion of either.
+    ELCH_NODISCARD bool movieSetArtworkEnabled() const override { return true; }
     QImage movieSetPoster(QString /*setName*/) override { return {}; }
     QImage movieSetBackdrop(QString /*setName*/) override { return {}; }
-    ELCH_NODISCARD bool saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override { return saveArtwork(); }
-    ELCH_NODISCARD bool saveMovieSetBackdrop(QString /*setName*/, QImage /*backdrop*/) override
-    {
-        return saveArtwork();
-    }
+    ELCH_NODISCARD bool saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override { return true; }
+    ELCH_NODISCARD bool saveMovieSetBackdrop(QString /*setName*/, QImage /*backdrop*/) override { return true; }
     bool saveConcert(Concert* /*concert*/) override { return false; }
     bool loadConcert(Concert* /*concert*/, QString /*nfoContent*/ = "") override { return false; }
     bool loadTvShow(TvShow* /*show*/, QString /*nfoContent*/ = "") override { return false; }
@@ -132,20 +124,8 @@ public:
     void loadBooklets(Album* /*album*/) override {}
 
 private:
-    bool saveArtwork()
-    {
-        if (!m_artworkEnabled || m_artworkRefused) {
-            return false;
-        }
-        ++m_savedArtworkCount;
-        return true;
-    }
-
     QHash<QString, Record> m_records;
     bool m_recordsEnabled = true;
-    bool m_artworkEnabled = true;
-    bool m_artworkRefused = false;
-    int m_savedArtworkCount = 0;
     bool m_removalRefused = false;
     bool m_writeRefused = false;
     int m_savedRecordCount = 0;

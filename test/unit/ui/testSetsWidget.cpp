@@ -367,12 +367,19 @@ TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]
     addLibraryMovie("Alien", "Alien Collection");
 
     SetsWidget widget;
+    // Shown, off screen, because half of the rule is conditional on isVisible(): the
+    // reload only happens for a user who is looking at this tab.  A widget that is never
+    // shown reports false there, so a test that skips this cannot tell the reload from
+    // its absence -- and that half was a live survivor until it did.
+    widget.show();
     widget.loadSets();
 
     auto* addSet = widget.findChild<QAction*>("actionAddMovieSet");
     auto* frame = widget.findChild<QFrame*>("folderNoticeFrame");
+    auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(addSet != nullptr);
     REQUIRE(frame != nullptr);
+    REQUIRE(sets != nullptr);
     REQUIRE(addSet->isEnabled());
     REQUIRE(frame->isHidden());
 
@@ -388,6 +395,25 @@ TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]
         announceSettingsSaved();
         CHECK(addSet->isEnabled());
         CHECK(frame->isHidden());
+    }
+
+    SECTION("Choosing a directory finds the sets only a record knows about")
+    {
+        // The other half of the rule, and the reason it is a reload and not just a
+        // re-enable: a set with a `set.nfo` and no member movie is invisible until the
+        // folder has been listed, and nothing but reload() lists it.  Without that call
+        // the user chooses a directory, is told everything is writable again, and their
+        // curated empty sets are still missing until they leave the tab and come back.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        announceSettingsSaved();
+        REQUIRE(Manager::instance()->movieSetModel()->set("Curated Collection") == nullptr);
+
+        writeRecord(guard.dir(), "Curated Collection");
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+        announceSettingsSaved();
+
+        CHECK(Manager::instance()->movieSetModel()->set("Curated Collection") != nullptr);
+        CHECK(sets->rowCount() == 2);
     }
 }
 
