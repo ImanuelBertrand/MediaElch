@@ -155,7 +155,7 @@ TEST_CASE("MovieSetModel is the only thing that changes membership", "[model][mo
     {
         // removeSet() clears its members' set names as it detaches them, so there is
         // nothing left for a later reconcile to read the set back out of.
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
         REQUIRE(sets.sets().isEmpty());
 
         sets.syncMovie(alien);
@@ -475,7 +475,7 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         alienCollection->addMovie(predator);
         REQUIRE(alienCollection->movies().contains(predator));
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
         REQUIRE(sets.set("Alien Collection") == nullptr);
 
         // The deleted set must not be reached for again on predator's way out.
@@ -649,7 +649,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         movies.addMovie(aliens);
         REQUIRE_FALSE(alien->hasChanged());
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(sets.set("Alien Collection") == nullptr);
         CHECK(sets.sets().isEmpty());
@@ -665,7 +665,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         // Nothing else drops it: an emptied set is not dropped for being empty.
         REQUIRE(sets.addSet("Alien Collection") != nullptr);
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(sets.set("Alien Collection") == nullptr);
         CHECK(sets.sets().isEmpty());
@@ -678,7 +678,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         alienCollection->setOverview("A science fiction horror film franchise.");
         REQUIRE(alienCollection->hasChanged());
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(sets.sets().isEmpty());
     }
@@ -690,7 +690,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         sets.addSet("Alien Collection")->setOverview("A science fiction horror film franchise.");
 
         test::MessageCapture warnings;
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         REQUIRE(warnings.messages().size() == 1);
         CHECK(warnings.messages().first().contains("Alien Collection"));
@@ -701,7 +701,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         REQUIRE(sets.addSet("Alien Collection") != nullptr);
 
         test::MessageCapture warnings;
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(warnings.messages().isEmpty());
     }
@@ -724,8 +724,8 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
     {
         sets.addSet("Alien Collection");
 
-        sets.removeSet("Predator Collection");
-        sets.removeSet("");
+        CHECK(sets.removeSet("Predator Collection")); // nothing to remove is not a failure
+        CHECK(sets.removeSet(""));
 
         CHECK(sets.sets().size() == 1);
     }
@@ -759,7 +759,7 @@ TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
         REQUIRE(sets->rowCount() == 2);
 
         sets->addSet("Alien vs Predator Collection");
-        sets->removeSet("Alien Collection");
+        CHECK(sets->removeSet("Alien Collection"));
         sets->reload();
 
         CHECK(sets->rowCount() == 1);
@@ -974,11 +974,40 @@ TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
     {
         // Otherwise the record outlives the set, the next reload finds it again and the
         // set comes back: "Delete Movie Set" would delete nothing that lasted.
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
         CHECK(sets.set("Alien Collection") == nullptr);
         CHECK_FALSE(mediaCenter.hasRecordOnDisk("Alien Collection"));
         sets.reload();
         CHECK(sets.set("Alien Collection") == nullptr);
+    }
+
+    SECTION("A removal the media center refuses changes nothing at all")
+    {
+        // The media center can refuse: an unreadable record, one that turns out to belong
+        // to another set, a read-only mount, a file something else has locked.  Ignoring
+        // that produced the exact outcome the record deletion was added to prevent -- the
+        // row vanishes, the file survives, and reload() brings the set back with its
+        // overview intact.
+        //
+        // The refusal has to leave *everything* untouched, which is why the record is
+        // attempted before the members are detached.  Detaching first and bailing out
+        // afterwards would leave the members detached and dirtied with the set still
+        // standing: half-done, and worse than either clean outcome.
+        REQUIRE(alien->set().name == "Alien Collection");
+        alien->setChanged(false);
+        mediaCenter.setRemovalRefused(true);
+
+        CHECK_FALSE(sets.removeSet("Alien Collection"));
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+        CHECK(alien->set().name == "Alien Collection");
+        CHECK_FALSE(alien->hasChanged());
+        CHECK(mediaCenter.hasRecordOnDisk("Alien Collection"));
+
+        // And the set is still there after a reload, because it never went anywhere.
+        sets.reload();
+        CHECK(sets.set("Alien Collection") != nullptr);
     }
 
     SECTION("An automatic drop never removes a record")
@@ -1064,7 +1093,7 @@ TEST_CASE("A set with a record but no movie is found at all", "[model][movie][se
     {
         // The sharp edge of listing records: a set whose `set.nfo` outlived it would be
         // found again on the very next reload.
-        sets.removeSet("Curated Collection");
+        CHECK(sets.removeSet("Curated Collection"));
         sets.reload();
         CHECK(sets.set("Curated Collection") == nullptr);
     }

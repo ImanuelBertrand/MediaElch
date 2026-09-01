@@ -45,6 +45,7 @@ target_sources(
     tv_shows/testTvMazeId.cpp
     tv_shows/testEpisodeNumber.cpp
     tv_shows/testSeasonNumber.cpp
+    ui/testSetsWidget.cpp
     ui/testUiUtils.cpp
     utils/testMath.cpp
     utils/testContainers.cpp

@@ -155,13 +155,27 @@ public:
     /// \details This is the deliberate removal, movies and all; nothing else destroys
     ///          a set that still has members, and nothing else deletes a set's
     ///          `set.nfo`.  Deleting it is not optional: a record that outlived its set
-    ///          would be found again by the next reload() and bring the set back.  Detaching a movie is an edit that
-    ///          has to reach disk -- membership lives in the member movies' NFOs (D-A) -- and neither MovieSet nor this
-    ///          model marks anything dirty for a membership change on its own, so this marks the former members changed
-    ///          itself -- through assign(), and so only those whose set value actually had something in it to clear.  A
-    ///          member whose own value was already empty is detached without being dirtied, because for that movie
-    ///          nothing about the file on disk has changed.
-    void removeSet(const QString& name);
+    ///          would be found again by the next reload() and bring the set back.
+    ///
+    ///          Detaching a movie is an edit that has to reach disk -- membership lives
+    ///          in the member movies' NFOs (D-A) -- and neither MovieSet nor this model
+    ///          marks anything dirty for a membership change on its own, so this marks
+    ///          the former members changed itself, through assign(), and so only those
+    ///          whose set value actually had something in it to clear.  A member whose
+    ///          own value was already empty is detached without being dirtied, because
+    ///          for that movie nothing about the file on disk has changed.
+    ///
+    ///          The record is removed **first** and its refusal is honoured, so that a
+    ///          refusal leaves the members attached and undirtied.  Detaching them first
+    ///          and bailing out afterwards would leave the removal half-done, which is
+    ///          worse than either clean outcome.
+    /// \return Whether the set is gone.  **False means nothing was changed at all** --
+    ///         the media center refused to remove the record, so the set, its members
+    ///         and its file are all exactly as they were.  A caller that ignores this
+    ///         tells the user a set was deleted that will be back at the next reload,
+    ///         which is the failure the record deletion exists to prevent.  Removing a
+    ///         set that does not exist is true: there is nothing left to remove.
+    ELCH_NODISCARD bool removeSet(const QString& name);
 
     /// \brief Regroups every movie of the movie model into sets.
     /// \details Existing MovieSet objects are kept, so a set's own record survives; a

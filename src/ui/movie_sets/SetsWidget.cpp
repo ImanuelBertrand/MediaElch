@@ -471,19 +471,29 @@ void SetsWidget::saveSet()
     // The set's own record.  Its overview, collection id and artwork are authoritative
     // in `set.nfo` (D-A), so saving a set means writing that file -- and writing it is
     // also what gives the set an existence apart from its movies, so that an empty one
-    // is still there after the next reload.  Nothing happens when no movie set
-    // information folder is configured: there is nowhere to put a record, and sets are
-    // read-only.
+    // is still there after the next reload.
+    //
+    // The write can refuse, in more ways than it once could: no movie set information
+    // folder configured, a name that legalises away to nothing, a file already there
+    // that belongs to another set, or one that cannot be read to find out.  Reporting
+    // success anyway tells the user the opposite of what happened twice over -- nothing
+    // was written, and the set did not gain the record that would let it survive losing
+    // its movies.
     //
     // The current name, not the pre-rename one: a record under the old name would be a
     // record for a set that no longer exists.
-    MovieSet* movieSet = Manager::instance()->movieSetModel()->set(ui->sets->item(ui->sets->currentRow(), 0)->text());
-    if (movieSet != nullptr) {
-        Manager::instance()->mediaCenterInterface()->saveMovieSet(*movieSet);
+    const QString currentName = ui->sets->item(ui->sets->currentRow(), 0)->text();
+    MovieSet* movieSet = Manager::instance()->movieSetModel()->set(currentName);
+    if (movieSet != nullptr && !Manager::instance()->mediaCenterInterface()->saveMovieSet(*movieSet)) {
+        // The movies and the artwork above were saved; only the set's own file was not.
+        qCWarning(generic) << "[SetsWidget] Movie set" << currentName
+                           << "was not saved: its movie set file could not be written.";
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.").arg(currentName));
+        return;
     }
 
-    NotificationBox::instance()->showSuccess(
-        tr("<b>\"%1\"</b> Saved").arg(ui->sets->item(ui->sets->currentRow(), 0)->text()));
+    NotificationBox::instance()->showSuccess(tr("<b>\"%1\"</b> Saved").arg(currentName));
 }
 
 /**
@@ -553,19 +563,29 @@ void SetsWidget::onRemoveMovieSet()
 
     QString setName = ui->sets->item(ui->sets->currentRow(), 0)->text();
     QString origSetName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
-    ui->sets->removeRow(ui->sets->currentRow());
 
-    // removeSet() detaches the movies from the set and marks them changed; the sort
-    // title is this tab's own doing and has to be cleared here.
+    // The model goes first, and the row only follows if it agreed.  removeSet() can
+    // refuse -- it will not destroy a set whose `set.nfo` it could not remove, because
+    // such a set comes back at the next reload -- and taking the row away first would
+    // show the user a deletion that had not happened.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     const MovieSet* movieSet = setModel->set(origSetName);
-    if (movieSet != nullptr) {
-        const QVector<Movie*> members = movieSet->movies();
-        for (Movie* movie : members) {
-            movie->setSortTitle("");
-        }
+    const QVector<Movie*> members = (movieSet != nullptr) ? movieSet->movies() : QVector<Movie*>();
+
+    if (!setModel->removeSet(origSetName)) {
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b> could not be deleted: its movie set file could not be removed.").arg(setName));
+        return;
     }
-    setModel->removeSet(origSetName);
+
+    // removeSet() detaches the movies from the set and marks them changed; the sort
+    // title is this tab's own doing and has to be cleared here.  Read before the
+    // removal, which empties the set, and applied after it, so that a refusal leaves the
+    // movies untouched too.
+    for (Movie* movie : members) {
+        movie->setSortTitle("");
+    }
+    ui->sets->removeRow(ui->sets->currentRow());
     m_setPosters.remove(setName);
     m_setBackdrops.remove(setName);
 }
@@ -646,9 +666,17 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
 
     m_moviesToSave[origSetName].clear();
 
-    if (mergesIntoExistingSet) {
-        // Its movies are in the set they were merged into now; the emptied one goes.
-        setModel->removeSet(origSetName);
+    if (mergesIntoExistingSet && !setModel->removeSet(origSetName)) {
+        // Its movies are in the set they were merged into now, so the merge itself
+        // happened; what could not go is the emptied source set, because its `set.nfo`
+        // could not be removed.  It stays, backed and memberless, and the sets tab's
+        // "Show Only Empty Movie Sets" is how the user finds it.  Undoing the merge
+        // instead would mean putting every movie back, which is a larger and riskier
+        // operation than leaving a findable leftover.
+        NotificationBox::instance()->showWarning(
+            tr("The movies were merged into <b>\"%1\"</b>, but the old set's movie set file could not be "
+               "removed, so <b>\"%2\"</b> is still there with no movies.")
+                .arg(newName, origSetName));
     }
 
     m_setPosters.remove(origSetName);

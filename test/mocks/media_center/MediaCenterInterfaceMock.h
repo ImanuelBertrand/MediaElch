@@ -34,6 +34,10 @@ public:
     void putRecord(const QString& setName, Record record) { m_records.insert(setName, record); }
     void putRecord(const QString& setName) { putRecord(setName, Record()); }
     ELCH_NODISCARD bool hasRecordOnDisk(const QString& setName) const { return m_records.contains(setName); }
+    /// \brief Makes every record removal refuse, as a read-only mount or a locked file does.
+    void setRemovalRefused(bool refused) { m_removalRefused = refused; }
+    /// \brief Makes every record write refuse, as a folder owned by another set does.
+    void setWriteRefused(bool refused) { m_writeRefused = refused; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
 
@@ -58,7 +62,7 @@ public:
     }
     bool saveMovieSet(MovieSet& set) override
     {
-        if (!m_recordsEnabled) {
+        if (!m_recordsEnabled || m_writeRefused) {
             return false;
         }
         ++m_savedRecordCount;
@@ -69,7 +73,7 @@ public:
     }
     bool removeMovieSetRecord(const QString& setName) override
     {
-        if (!m_recordsEnabled) {
+        if (!m_recordsEnabled || m_removalRefused) {
             return false;
         }
         m_records.remove(setName);
@@ -119,6 +123,8 @@ public:
 private:
     QHash<QString, Record> m_records;
     bool m_recordsEnabled = true;
+    bool m_removalRefused = false;
+    bool m_writeRefused = false;
     int m_savedRecordCount = 0;
     int m_listingCount = 0;
 };
