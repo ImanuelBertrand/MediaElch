@@ -1343,6 +1343,59 @@ TEST_CASE("A record beats the members", "[model][movie][set]")
         CHECK_FALSE(sets.set("Alien Collection")->hasChanged());
     }
 
+    SECTION("A record still counts while the folder is switched off")
+    {
+        // The gate is hasRecord(), not isBacked().  Switching the folder off does not make
+        // the values a set read out of its `set.nfo` stop being the record's, and nothing
+        // would put them back: reload() leaves the record flags alone while records are
+        // off, and its re-read branch fires only when a set *gains* a record, so turning
+        // the folder back on does not read the file again either.  Seeded here, a member's
+        // text would be permanent and the next save would write it over the file.
+        //
+        // An empty record is the case that bites, and it is the common one:
+        // `<set><uniqueid type="tmdb">` is #2012 and unmerged, so nearly every `set.nfo`
+        // in the wild carries no id at all.
+        mediaCenter.putRecord("Alien Collection", {"", TmdbId::NoId});
+        MovieSetModel sets;
+        sets.setRecordSource(&mediaCenter);
+        sets.setMovieModel(&movies);
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE(sets.set("Alien Collection")->hasRecord());
+
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview().isEmpty());
+        CHECK_FALSE(sets.set("Alien Collection")->tmdbId().isValid());
+
+        // And back on again, which is where it would show: the record is not re-read, so
+        // anything the seed had let in while the folder was off would still be here.
+        mediaCenter.setRecordsEnabled(true);
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE(sets.set("Alien Collection")->hasRecord());
+        CHECK(sets.set("Alien Collection")->overview().isEmpty());
+        CHECK_FALSE(sets.set("Alien Collection")->tmdbId().isValid());
+    }
+
+    SECTION("A set with no record is seeded while the folder is off")
+    {
+        // The other side of narrowing the gate to hasRecord(): it must not block the seed
+        // where there is no record to protect.  Artwork next to movies is the shipping
+        // default, so this is the configuration in which nearly every set is seeded.
+        mediaCenter.setRecordsEnabled(false);
+        MovieSetModel sets;
+        sets.setRecordSource(&mediaCenter);
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE_FALSE(sets.set("Alien Collection")->hasRecord());
+        CHECK(sets.set("Alien Collection")->overview() == "What the members say.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(1234));
+    }
+
     SECTION("An empty record is still a record")
     {
         // The gate is "does this set have a record", not "is this set's overview empty".

@@ -481,12 +481,25 @@ void MovieSetModel::seedFromMembers(MovieSet* movieSet)
     if (movieSet == nullptr) {
         return;
     }
-    // Never over a record.  A set that read a `set.nfo` already holds the authoritative
-    // overview and id, and the seed would be the same hazard reload() refuses to take
-    // when it declines to re-read a record: overwriting a value the user has edited with
-    // one derived from somewhere else.  The mirror is a copy of the record, not a source
-    // for it.
-    if (isBacked(movieSet)) {
+    // Never over a record.  A set that has read a `set.nfo` already holds the
+    // authoritative overview and id, and seeding over them would be the hazard reload()
+    // refuses to take when it declines to re-read a record: a value the user edited
+    // replaced by one derived from somewhere else.  The mirror is a copy of the record,
+    // not a source for it.
+    //
+    // hasRecord() and deliberately *not* isBacked(), which is the same question plus
+    // "is a folder configured".  That second half is right for dropEmptySets(), where a
+    // record nothing can reach cannot keep a set standing, and wrong here: the contents
+    // this set read out of its record do not stop being the record's because the folder
+    // was switched off.  Nothing would re-derive them either.  reload() skips the whole
+    // record-refresh block while records are off, so the flag survives untouched, and the
+    // re-read branch fires only false->true, so switching the folder back on does not
+    // read the file again.  Gated on isBacked(), one reload in the artwork-next-to-movies
+    // layout -- the shipping default -- would let a member's overview and id into a set
+    // that has a record, permanently, and the next save would write them over the file.
+    // The id is the sharper half: `<set><uniqueid type="tmdb">` is #2012 and unmerged, so
+    // nearly every `set.nfo` in the wild carries no id at all and would acquire one.
+    if (movieSet->hasRecord()) {
         return;
     }
     // Only what is missing is filled, so this never overwrites -- neither a value seeded
