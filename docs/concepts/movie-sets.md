@@ -83,13 +83,18 @@ back, and the images are gone with no indication that anything happened.
 ### The Identity of a Set Is a Table Cell
 
 Because there is no set object, the set the UI is operating on is identified by
-the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:252` and
-`:726`).  Four call sites read it back as the set's identity:
-`chooseSetPoster()` (`:483`), `chooseSetBackdrop()` (`:523`),
-`onRemoveMovieSet()` (`:739`) and `onSetNameChanged()` (`:770`).  A fifth,
-`saveSet()`, hedges: it reads the role *and* the displayed text and iterates
-both (`:558-561`), which is only necessary because the two are known to
-disagree.  Renaming a row never updates the role, so on `master` they diverge
+the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:273` and
+`:771`).  Call sites read it back as the set's identity:
+`chooseSetPoster()` (`:515`), `chooseSetBackdrop()` (`:555`),
+`onRemoveMovieSet()` (`:784`), `onSetNameChanged()` (`:832`) and `saveSet()`
+(`:596`, `:653`).
+
+`saveSet()` used to **hedge** — reading the role *and* the displayed text and
+iterating both — which was only necessary because the two were known to
+disagree.  It does not any more, and the reason is D-B rather than tidiness:
+the two now disagree *by design* after a set-file-only rename, the role is the
+match key and the text is the display title, and a loop over both would index
+this widget's three maps under a string none of them has ever held.  Renaming a row never updates the role, so on `master` they diverge
 from the first rename onwards — `onRemoveMovieSet()` even detaches the movies
 under one name (`master`'s `SetsWidget.cpp:537`) while erasing the map entries
 under the other (`master`'s `:541-544`).  #2013 fixes this within the existing
@@ -107,20 +112,20 @@ deliberately and says so.
 
 Exactly two set art types exist in the whole application:
 `ImageType::MovieSetPoster` and `ImageType::MovieSetBackdrop`
-(`src/globals/Globals.h:123-124`), mirrored by two `DataFileType` entries
-(`:239-240`), two default filename templates
-(`src/settings/Settings.cpp:96-97`), two `QMap` members on the widget
-(`src/ui/movie_sets/SetsWidget.h:88-89`), four virtual methods on the media
+(`src/globals/Globals.h:143-144`), mirrored by two `DataFileType` entries
+(`:259-260`), two default filename templates
+(`src/settings/Settings.cpp:97-98`), two `QMap` members on the widget
+(`src/ui/movie_sets/SetsWidget.h:105-106`), four virtual methods on the media
 center interface (`src/media_center/MediaCenterInterface.h:63-79`) with their
 `KodiXml` overrides (`src/media_center/KodiXml.h:46-49`,
 `src/media_center/KodiXml.cpp:1203-1291`), and a hard-wired pair of settings
-fields (`src/ui/settings/MovieSettingsWidget.cpp:47-48`, `:59-60`, `:158-176`,
+fields (`src/ui/settings/MovieSettingsWidget.cpp:60-61`, `:72-73`, `:179-201`,
 plus its `.ui`).  Adding a third art type means touching all of it.
 
 The interface is keyed by set *name*, not by a set: `saveMovieSetPoster(QString
 setName, QImage)`.  `KodiXml::movieSetFileName` then has to find the set again
 — in "artwork next to movies" mode it linear-scans the entire movie model
-looking for any member (`src/media_center/KodiXml.cpp:1677-1691`) — and
+looking for any member (`src/media_center/KodiXml.cpp:1809-1823`) — and
 `DataFile::saveFileName` substitutes the name into the template
 (`src/settings/DataFile.cpp:52-57`).  Set art is also the only artwork
 MediaElch re-encodes: `image.save(fileName, "jpg", 100)` at
@@ -131,8 +136,8 @@ Whether those paths are ones Kodi reads at all is the subject of #2011, #1747,
 
 The movie-set information folder is optional today and off by default: the
 artwork mode defaults to `ArtworkNextToMovies`
-(`src/globals/Globals.h:76-83`, `src/settings/Settings.h:233`,
-`src/settings/Settings.cpp:304`), and the separate-folder path is only taken
+(`src/globals/Globals.h:76-83`, `src/settings/Settings.h:235`,
+`src/settings/Settings.cpp:305`), and the separate-folder path is only taken
 when the user has switched to it.
 
 Kodi is much more generous than two art types.  In the movie-set information
@@ -151,7 +156,7 @@ all.
 
 `SetsWidget::chooseSetPoster()` allocates a throwaway `Movie`, assigns the set
 name as that movie's *title*, and opens `ImageDialog` asking for
-`ImageType::MoviePoster` (`SetsWidget.cpp:484-491`).  `ImageDialog` seeds its
+`ImageType::MoviePoster` (`SetsWidget.cpp:516-523`).  `ImageDialog` seeds its
 search box from the movie's title (`src/ui/image/ImageDialog.cpp:118`) and
 calls `m_currentProvider->searchMovie(...)` (`:808`).  In other words, asking
 for a poster for _Alien Collection_ searches the movie database for a film
@@ -248,9 +253,17 @@ That gives a clean division:
 | | Authoritative copy | Mirror | Read by |
 |---|---|---|---|
 | Membership | member `<set><name>` | — | 19-22, MediaElch |
+| Display title | `set.nfo` | **none** | 22 only |
 | Overview | `set.nfo` | every member | 22: file; 19-21: mirror |
 | Artwork | MSIF folder files | — | Kodi 19-22 |
 | TMDB id | `set.nfo` | every member | MediaElch only (#2012) |
+
+The display title is the one row with **no** mirror, and that absence is load
+bearing rather than an oversight: a movie NFO has no element that could carry
+it, so a set with no record cannot have one at all.  That is why
+`MovieSetModel::seedFromMembers()` never sets a display title, why a
+set-file-only rename is refused where there are no records, and why Kodi 19-21
+cannot see such a rename — there is nothing for them to read it out of.
 
 Read that row for artwork carefully: it is the **image files** in the folder
 that are authoritative, not `set.nfo`'s `<art>` block.  Kodi 19-21 read the
@@ -324,7 +337,7 @@ silent fallback — because the silent fallback is worse than refusing.  With no
 folder configured, `Settings::movieSetArtworkDirectory()` returns a
 `DirectoryPath` built from an empty string, which is `isValid() == false`
 wrapping `QDir("")` (`src/media/Path.h:26`,
-`src/settings/Settings.cpp:305-306`), and `QDir("").absolutePath()` resolves to
+`src/settings/Settings.cpp:306-307`), and `QDir("").absolutePath()` resolves to
 the *process's current working directory* (verified against Qt 6.8).
 `KodiXml::movieSetFileName` used not to check `isValid()` before calling
 `dir.absolutePath()`, so a user who selected the separate-folder mode without
@@ -429,7 +442,8 @@ save.  Disabling those too was the earlier wording, and it was wrong on four
 counts, of which the third decided it:
 
 1. It regresses the shipping default — those paths work today for every user
-   who has never opened the settings.
+   who has never opened the settings.  This is also why Automatic never selects
+   the set-file-only rename in that layout; see D-B.
 2. It is inconsistent with leaving the movie widget's set box enabled, which
    performs the identical edit through the identical `MovieSetModel::assign()`.
 3. **Disabling the rename pushes users into the D3 fork it exists to prevent.**
@@ -473,7 +487,7 @@ An existing user who upgrades and configures a folder must find their sets
 already there, not gone.  That requirement stands.  What meets it is the drop
 rule, not a migration: sets are re-derived from the movie NFOs on every
 `reload()`, and a set is dropped only when it has **neither** members **nor** a
-record (`MovieSetModel.cpp:255`), so a set with members survives in every
+record (`MovieSetModel.cpp:258`), so a set with members survives in every
 configuration — no media center at all, no folder configured, and a folder
 freshly configured with no records in it yet.  A test case named for that
 property, with one section per configuration, says so; it was covered only as a
@@ -500,11 +514,11 @@ A one-shot pass that materialised every derived set into a `set.nfo` was
 considered and rejected.  Giving every set a record makes every set permanent,
 since a record is precisely what lets a set outlive its last member — so every
 set that ever lost its last movie would sit in the set combo box and the set
-filter with no movie answering to it (`MovieSetModel.cpp:247`), which is the
+filter with no movie answering to it (`MovieSetModel.cpp:250`), which is the
 outcome the drop rule exists to prevent.  It would also write unprompted into a
 directory the user has just named, possibly by typo or on a drive that is not
 mounted, to fix a problem that does not exist.  A set gets its record when the
-user saves it (`SetsWidget.cpp:624`), which is the gesture that says the set is
+user saves it (`SetsWidget.cpp:668`), which is the gesture that says the set is
 worth keeping.
 
 What such a pass would genuinely have carried forward — *whatever overview and
@@ -514,7 +528,7 @@ collection id from its members (`MovieSetModel.cpp:523`).  Without that it is
 built from a name alone: the entity is blank while the mirror in every member
 NFO holds the data, and the first `set.nfo` written for it is written from that
 emptiness, because the writer skips an empty overview
-(`MovieSetXmlWriter.cpp:32-34`) and an invalid id (`:38-43`).  That is the table
+(`MovieSetXmlWriter.cpp:34-36`) and an invalid id (`:40-45`).  That is the table
 above inverted, and it turns destructive as soon as an edited overview is
 mirrored back down into every member — the `UPDATE sets SET strOverview = ''`
 hazard set out below.
@@ -536,10 +550,12 @@ Four rules the seed follows, each load-bearing:
   written down at the guard itself and at `detachMovie()` (`:713-715`), both of
   which note that `reload()` is what *cures* it.  That movie's overview and id describe the
   collection it names, so letting it donate would make this set authoritative for
-  another set's text.  The guard holds across a rename only because
-  `SetsWidget::onSetNameChanged()` rewrites every member's value straight after
-  renaming the object (`SetsWidget.cpp:830-839`), and it is the only
-  `MovieSet::setName()` caller in `src/`.
+  another set's text.  The guard holds across a rename only because the rename
+  that moves the key rewrites every member's value straight after renaming the
+  object (`SetsWidget::performAllMovieFilesRename()`), and that is the only
+  `MovieSet::setName()` caller in `src/`.  There are two renames now and only
+  that one comes through here: a set-file-only rename moves the display title and
+  leaves the key untouched, so no member ever disagrees with it.
 - **Seeding is not an edit** (`MovieSetModel.cpp:622`).  It is the value the
   library already held, read into the object that was missing it, so the set must
   not be left marked as needing to be saved — nor may an unsaved edit already
@@ -629,36 +645,174 @@ old one orphaned with its artwork rows until the user runs Clean Library.
 Bounded rather than catastrophic — the new row picks up art from the new
 folder — but real, and users should be told.
 
-This is exposed as a **three-state setting defaulting to "Automatic"**, which
-follows `KodiSettings::kodiVersion()`: set-file-only at v22, all-movie-files
-at v17-v21, with the two explicit modes available as overrides.  The correct
-choice is fully determined by the target version, so most users should never
-have to understand any of the above; the overrides exist for mixed setups and
-for users who want their movie NFOs to stay human-readable.  Coupling
-set behaviour to the Kodi version setting is what psonnosp proposed in #1243
-on 2021-04-08 and bugwelle agreed to ("Errr... yes of course. :)"), which is
-the closest thing to prior maintainer assent this design has.
+This is exposed as a **three-state setting defaulting to "Automatic"**
+(`MovieSetRenameMode`, stored as `MovieSetArtwork/RenameMode`), with the two
+explicit modes available as overrides.  The correct choice is very nearly
+determined by the target version, so most users should never have to
+understand any of the above; the overrides exist for mixed setups and for users
+who want their movie NFOs to stay human-readable.  Coupling set behaviour to
+the Kodi version setting is what psonnosp proposed in #1243 on 2021-04-08 and
+bugwelle agreed to ("Errr... yes of course. :)"), which is the closest thing to
+prior maintainer assent this design has.
+
+**Automatic is not only the Kodi version, and an earlier draft of this section
+said it was.**  A set-file-only rename has to put the display title somewhere,
+and the only place it can go is `set.nfo` — a movie NFO has no element for it.
+Records exist only in the separate-artwork-folder layout with a folder chosen
+(`KodiXml::movieSetRecordsEnabled()`), and the shipping default is artwork next
+to movies (`Settings.h:235`).  With `KodiVersion::latest()` fixed below, a fresh
+install is therefore Kodi 22 *and* has no records — so an Automatic that read
+the version alone would select a rename that cannot run, for every user who has
+never opened the settings.  That is the same regression *What "Read-Only"
+Turned Out To Mean* rejects in its first argument.  Automatic asks both
+questions: set-file-only where the version is 22 **and** records are
+configured, all movie files otherwise.  It never refuses.
+
+`MovieSetModel::resolveRenameMode()` is the one derivation of that, static and
+total in its three inputs, so it can be tested without a settings singleton, a
+media center or a library.  It is asked at the moment of the rename rather than
+cached — the sets tab already follows both of these settings while it is open.
+
+**An explicit set-file-only choice with no record is refused, not downgraded.**
+That is a third answer, `RenameMode::Unavailable`, and it is deliberately not
+one of the setting's three states.  The only fallback available is the
+all-movie-files rename, which rewrites every member's NFO — the heavier and
+irreversible operation this user chose this setting precisely to avoid.  This
+is the same rule as the notice above: the silent fallback is worse than
+refusing, and here it is worse in the strongest form, because it would do the
+opposite of what was asked rather than merely something unexpected.  The
+settings hint says so before the rename as well as after it, since a refusal a
+user only meets once they have typed a new name is a worse refusal than one
+they were warned about.  A set that has no record *yet* is a different case and
+is simply allowed: `saveMovieSet()` can create a first record, so such a rename
+is a rename plus a record creation.
+
+**MediaElch has to hold both strings, and that is what makes any of this
+possible.**  `MovieSet::name()` keeps its meaning exactly — the match key, the
+primary key, `<originaltitle>`, the folder name, the model's key — and
+`title()` is the display title, empty when there is none, with `displayName()`
+the accessor the UI calls.  There is no single-string version of this that
+works: leave the one name alone and the user's rename snaps back in the sets
+tab, and move it and `movieSetNfoFileName()` points at a folder Kodi never
+looks in while `reload()` re-derives the set from the members' `<set><name>`
+and brings the old name back.  So the reader keeps `<title>` rather than
+logging and discarding it; discarding it would make every reload undo the last
+set-file-only rename.
+
+`setName()` clears the title, because an all-movie-files rename rewrites the
+members and `<originaltitle>` alike and re-unifies the two.  A set seeded from
+its members alone never has one, which is right: a display title lives in the
+record and nowhere else.
+
+**Where each string is shown.**  The sets tab shows the display title and keys
+every row on the match key, with a tooltip naming the key whenever the two
+differ, so the divergence is never hidden.  Everywhere else shows the **key**,
+and that is a decision rather than an omission.  The movie widget's set combo
+box is an *editing surface* for `movie->set().name` — it is editable, and
+`MovieWidget::onSetChange()` writes whatever text it holds straight into the
+movie's own value — so showing a display title there would mean the box commits
+a string the movie's file may not carry, and merely tabbing through it would
+rename that movie's set.  The set filter matches on the same per-movie value.
+Both are per-movie surfaces, and the per-movie truth *is* the key.
+
+**An all-movie-files rename moves what the set keeps on disk.**  The match key
+moves, and Kodi derives the movie set information folder from the key —
+`GetMovieSetInfoFolder(tag.m_set.GetTitle())` at
+`xbmc/video/VideoInfoScanner.cpp:839`, called before the record is loaded — so
+the folder Kodi looks in moves too.  Leave the `set.nfo` behind and
+`movieSetsWithRecord()` reports the old name at the next reload, resurrecting
+the set with no members: a ghost in the sets tab, the set combo box and the set
+filter.  `MediaCenterInterface::renameMovieSetFiles()` moves the record and the
+artwork together, before the members are reassigned — in the
+artwork-next-to-movies layout the paths are found through a movie whose
+`set().name` is still the old one.  A move that fails does not undo the rename:
+the movie NFOs are the set's identity, so that is a rename plus a findable
+leftover, and it is reported as one.
+
+Moving the files replaced an in-memory carry-over that read the set's poster and
+backdrop back off the disk and held them until the next save.  That covered two
+of the eight art types Kodi will show for a set and none of the files a user put
+in the folder by hand, it left the originals behind as orphans, and it went
+through `QImage` and `image.save(…, "jpg", 100)` — so a PNG came out a JPEG.
+The save path still re-encodes, which is the separate complaint recorded under
+*Artwork: Two Types, Written by Name*; what changed is that a rename no longer
+does.
+
+**A merge is not a rename and the setting does not govern it.**  Renaming a set
+onto an existing name is a merge, on both sides.  Membership lives in the
+member movies' NFOs (D-A), so moving a movie into another set *is* rewriting
+its `<set><name>`; `set.nfo` cannot say which movies belong to a set.  A "set
+file only" merge would therefore write a display title and quietly not merge,
+which is why a merge is unconditionally the all-movie-files rename.  It asks
+before it acts — it is not undoable and it is one typo in a table cell away —
+which closes a gap this document named for as long as the behaviour existed.
 
 The wart, stated honestly: under set-file-only a member NFO's `<set><name>` no
 longer matches the set's displayed name.  That is correct — it is the key, not
 the label — but it looks wrong to anyone opening the file, and any other tool
-reading movie NFOs will show the old name.  That cost is the reason this is a
-setting rather than unconditional behaviour.
+reading movie NFOs will show the old name.  So will Kodi itself if the user
+switches back to 21 or earlier, which is a real dent in the promise D-A's mirror
+makes for a version change — that a user who changes Kodi version does not
+silently lose their set data.  That cost is the reason
+this is a setting rather than unconditional behaviour.
 
-**`KodiVersion` needs a two-line fix first, and it is part of this work.**
-`KodiVersion::latest()` returns the default-constructed value
-(`src/media_center/KodiVersion.cpp:9-12`) and the constructor's default
-argument is `v20` (`src/media_center/KodiVersion.h:24`), while `isValid()`
-accepts up to 22 (`KodiVersion.cpp:14-17`) and `all()` lists v22 (`:19-22`) —
-a missed bump.  The member initialiser at `KodiVersion.h:37` says `v19`,
-disagreeing with the constructor's default even before v22 enters it.
-"Automatic" reads `KodiSettings::kodiVersion()`, so left alone a fresh install
-would sit at v20 and never select the set-file-only path: the feature's
-default behaviour would be wrong out of the box.  That makes it a dependency
-of this design rather than an unrelated tidy-up, and it is fixed here.
+##### Two Prices Kodi 22 Charges for Set-File-Only, and Why It Is Still the Default
 
-Renaming a set onto an existing name is a merge, on both sides.  The current
-code already performs it (`SetsWidget.cpp:830-839`) without telling the user.
+Both are Kodi's own bugs rather than MediaElch's, both were found by reading
+the 22 source rather than by reasoning from this document, and both are paid
+only once the two names have actually diverged.
+
+**Kodi's own set art picker looks in the display title's folder.**
+`CVideoItemArtworkMovieSetHandler::GetLocalArt` calls
+`GetMovieSetInfoFolder(m_item->GetLabel())`
+(`xbmc/video/VideoItemArtworkHandler.cpp:410`, and `:435` for the file-browser
+sources).  A set item's label is `m_set.GetTitle()`
+(`xbmc/utils/GroupUtils.cpp:76`), filled from `sets.strSet`
+(`xbmc/video/VideoDatabase.cpp:4837`) — the display title.  The folder is
+`legalise(strOriginalSet)`.  So "Choose art" for a renamed set browses a folder
+that does not exist and offers no local art.
+
+**The movie's own `set.*` art lookup uses the display title too.**
+`UpdateSetInTag` overwrites the tag's set title with the record's `<title>`
+(`xbmc/video/VideoInfoScanner.cpp:851-853`) at `:1472`, before `AddVideo` at
+`:1484` reaches `GetArtwork` at `:2149` and
+`GetMovieSetInfoFolder(movieDetails.m_set.GetTitle())` at `:2532`.  Bounded:
+the set itself still gets its artwork, because `UpdateSetInTag` already loaded
+it from the correct folder at `:866` and `AddSet` stores it at `:2106-2110`.
+What is lost is the `set.*` copy hung off the movie.  Kodi is inconsistent
+about this — the movie-with-versions path calls `AddVideo` *before*
+`UpdateSetInTag` (`:1554`, `:1559`) and is unaffected.
+
+**The trade, made deliberately.**  Set-file-only is still what Automatic picks
+on 22, because the alternative costs more.  An all-movie-files rename on 22
+orphans the whole `sets` row: the set loses its id and its artwork rows, and
+only Clean Library clears it.  These two cost a per-use annoyance in one dialog
+and one redundant copy of artwork the set already has by another route.  A
+worse outcome once against a smaller one repeatedly is a judgement, not a free
+lunch, which is why it is written down here rather than left for the next
+reader to rediscover.
+
+**`KodiVersion` needed a fix first, and it was part of this work.**
+`KodiVersion::latest()` returned the default-constructed value, and "the
+default version" was spelled out three separate times: the constructor's
+default argument (`v20`), the member initialiser (`v19`, disagreeing with the
+constructor even before v22 entered it) and `fromInt()`'s out-of-range fallback
+(`v20`).  `isValid()` and `all()` had been bumped to 22 and none of the three
+had — which is exactly how a bump half-happens.  "Automatic" reads
+`KodiSettings::kodiVersion()`, so left alone a fresh install would have sat at
+v20 and never selected the set-file-only path: the feature's default behaviour
+would have been wrong out of the box.  That made it a dependency of this design
+rather than an unrelated tidy-up.
+
+The fix is one constant, `KodiVersion::Latest`, used by all three and by
+`latest()` — not three literals corrected to 22, which is the smaller diff and
+reproduces the defect.  Its blast radius was measured rather than assumed:
+exactly three sites read the version, and both real branches
+(`TvShowXmlWriter.cpp:131` and `:156`) are already false at v20 and stay false
+at v22, so a fresh install's NFO output changes in one element — the
+informational `<kodiversion>` in `KodiXmlWriter.cpp:27`.  Existing installs keep
+their stored version, because `Settings::setDefaultValue()` reads the stored
+value with the default only as a fallback.
 
 ### D-C: Promote `MovieSet` to an Entity, and Give the List a Model
 
@@ -679,13 +833,16 @@ class MovieSet : public QObject
 public:
     explicit MovieSet(QString name, QObject* parent = nullptr);
 
-    ELCH_NODISCARD QString name() const;
+    ELCH_NODISCARD QString name() const;         // the match key (D-B)
+    ELCH_NODISCARD QString title() const;        // display title, empty if none
+    ELCH_NODISCARD QString displayName() const;  // title() ?: name()
     ELCH_NODISCARD TmdbId tmdbId() const;
     ELCH_NODISCARD QString overview() const;
     ELCH_NODISCARD const QVector<Movie*>& movies() const;   // not owned
     ELCH_NODISCARD MovieSetImages& images();
 
-    void setName(QString name);          // rewrites every member
+    void setName(QString name);          // rewrites every member; clears title()
+    void setTitle(QString title);        // the set-file-only rename (D-B)
     void setTmdbId(TmdbId id);
     void setOverview(QString overview);
     void addMovie(Movie* movie);
@@ -868,6 +1025,7 @@ the answer had been "fewer than I thought":
 | **enumerate** the folder | reports a record only if the name in it resolves back to the folder it was found in |
 | **write** a set's record | refuses if a file is already there **and** it names some other set — but *takes* a file that names nobody, see below |
 | **remove** a set's record | refuses unless the file names exactly this set |
+| **move** a set's folder | refuses unless a record there names exactly this set — a folder with no record has no other claimant and moves |
 
 The write is the odd one and the asymmetry is deliberate.  A read may demand a match,
 because a record it cannot find simply does not exist; a write has to be able to create
@@ -886,7 +1044,14 @@ to clear it.  The removal must still refuse, because deleting a file it cannot s
 belong to the set being deleted is precisely the fail-open below.  Both directions are
 pinned by a test.
 
-Two rules hold across all four:
+The move joins the removal's side of that, and for its reason rather than by
+analogy: it is the other path that acts on a file it did not create, and being
+wrong there carries away someone else's folder.  A folder holding *artwork and no
+record* is the one case it treats differently from the removal, because there is
+no record for anyone else to claim it by — nothing else in this design can even
+name such a folder.
+
+Two rules hold across all five:
 
 - **Fail closed.**  A record that cannot be opened yields no owner, and no path may read
   that as permission to proceed.  This bites hardest on removal: unlinking needs write
@@ -938,19 +1103,24 @@ attempt at it had to be reverted.  Until the writer existed nothing called
 from the drop and a set that has ever been renamed is exempt for the rest of the
 session, immune even to `reload()` — which is the mechanism that is supposed to cure
 exactly this.  The observable result is the phantom the whole rule exists to prevent:
-rename a set in the sets tab, do not save, rescan, and the old name comes back from the
-NFOs while the new one is kept forever in the set combo box and the set filter.  The
+rename a set in the sets tab **through the all-movie-files rename**, do not save,
+rescan, and the old name comes back from the NFOs while the new one is kept forever in
+the set combo box and the set filter.  Say which rename, because under set-file-only the
+old name coming back out of the member NFOs is the *correct* outcome and not a phantom:
+that rename never claimed the members, and the display title it did move lives in the
+record, which the reload reads back.  The
 writer has since given the flag its clearing edge — `KodiXml::saveMovieSet()` and
 `loadMovieSet()` both clear it, which is the first time anything ever has — but the flag
 still answers a different question and is still not this one.
 
-Renaming a set is the one place where the record and the set part company.  A rename
-that *merges* into an existing set removes the source set's record, because it goes
-through the deliberate removal path; a plain rename leaves the old `set.nfo` where it was
-and writes a new one under the new name on the next save, exactly as it already leaves
-the old artwork folder behind.  The orphan then shows up as a set with no movies, which
-is findable and removable — but making the record follow the rename is D3a's business,
-not this step's.
+Renaming a set is the one place where the record and the set could part company, and the
+three renames answer it differently.  A rename that *merges* into an existing set removes
+the source set's record, because it goes through the deliberate removal path.  An
+all-movie-files rename moves the record and the artwork together, before the members are
+reassigned, so nothing is left behind for the next enumeration to find and resurrect;
+D-B works through why leaving it there was not survivable.  A set-file-only rename moves
+neither — the key does not change, so the record is already where it belongs and only its
+`<title>` differs on the next save.
 
 A set created by *Add Movie Set* and never filled is dropped by the next re-derivation.
 That is not a new restriction and not a consequence of this rule: it was already true
@@ -1069,7 +1239,7 @@ interface can take a set instead of a name.
 Add the six art types Kodi accepts for a set that MediaElch has no
 representation for, as `ImageType` and `DataFileType` entries, using the names
 MediaElch already uses for the same Kodi art type on movies
-(`src/settings/Settings.cpp:91-95`):
+(`src/settings/Settings.cpp:92-96`):
 
 | New type            | Kodi art type / stem |
 |---------------------|----------------------|
@@ -1087,7 +1257,7 @@ counterpart in MediaElch; it is a textless poster.
 
 **This is coupled to the filename defaults and does not work without them.**
 MediaElch's templates substitute `<setName>`
-(`src/settings/Settings.cpp:96-97`, `src/settings/DataFile.cpp:52-57`), so a
+(`src/settings/Settings.cpp:97-98`, `src/settings/DataFile.cpp:52-57`), so a
 new banner type would be written as `Alien Collection-banner.jpg`.
 `GetMovieSetInfoFolder` returns a path with a trailing slash
 (`VideoInfoScanner.cpp:2450-2452`), which leaves `baseFilename` empty in
@@ -1209,8 +1379,9 @@ with a different failure mode.
    something MediaElch writes.  So `<art>` is one of the two things a record
    buys, not part of the question.
 
-   What a record does buy on 22 is **rename-in-place** and **`<art>`**, and the
-   mechanism is not that a record-less set lacks a `strOriginalSet`.  It has one:
+   What a record does buy on 22 is **rename-in-place**, **a display name of its
+   own** and **`<art>`**, and the mechanism is not that a record-less set lacks a
+   `strOriginalSet`.  It has one:
    `AddSet` substitutes the set's own name whenever the original title is empty,
    in the SELECT and in the INSERT alike
    (`xbmc/video/VideoDatabase.cpp:1536`, `:1544`).  What a record does is
@@ -1236,9 +1407,22 @@ with a different failure mode.
    artwork row means.  So a record buys artwork only for a folder that has no
    image files — real, and narrow.
 
-   That is a real motive for writing records unasked, and it collides with the
-   drop rule: a record is what makes a set permanent, so writing one for every
-   set puts every set that ever loses its last movie into the set combo box and
-   the set filter with no movie answering to it — the same ghost sets the
-   one-shot pass was rejected for.  Any answer has to say which sets earn a
-   record and when, rather than "all of them, always".  Open.
+   The display name is the third thing, and it arrived with the rename setting:
+   a set-file-only rename has nowhere to put the title it moves except a record,
+   which is why such a rename is refused where there are none.  That is a second
+   real motive for writing records unasked, and a stronger one than `<art>`,
+   because a user meets it by typing rather than by having an empty folder.
+
+   Both motives collide with the drop rule: a record is what makes a set
+   permanent, so writing one for every set puts every set that ever loses its
+   last movie into the set combo box and the set filter with no movie answering
+   to it — the same ghost sets the one-shot pass was rejected for.  Any answer
+   has to say which sets earn a record and when, rather than "all of them,
+   always".
+
+   **Still open, and the rename setting deliberately did not close it.**  It
+   answers a narrower question — what to do when a set-file-only rename has no
+   record — with an explicit refusal, and a refusal is not a policy for creating
+   records.  A later step may decide that a set the user renames has thereby
+   earned one; this one does not, because "the user just asked for something
+   that needs a record" is a much smaller warrant than the drop rule needs.
