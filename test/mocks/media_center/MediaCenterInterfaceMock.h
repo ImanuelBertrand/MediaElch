@@ -38,7 +38,7 @@ public:
     void setRemovalRefused(bool refused) { m_removalRefused = refused; }
     /// \brief Makes every record write refuse, as a folder owned by another set does.
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
-    void setRenameRefused(bool refused) { m_renameRefused = refused; }
+    void setRenameResult(MovieSetFileMove result) { m_renameResult = result; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
     /// \brief How often records-are-configured was asked -- the question every other
@@ -87,19 +87,19 @@ public:
         m_records.remove(setName);
         return true;
     }
-    bool renameMovieSetFiles(const QString& oldName, const QString& newName) override
+    MovieSetFileMove renameMovieSetFiles(const QString& oldName, const QString& newName) override
     {
         if (!m_recordsEnabled) {
             // Nothing on disk, so nothing to move and nothing to complain about.
-            return true;
+            return MovieSetFileMove::Moved;
         }
-        if (m_renameRefused) {
-            return false;
+        if (m_renameResult != MovieSetFileMove::Moved) {
+            return m_renameResult;
         }
         if (m_records.contains(oldName)) {
             m_records.insert(newName, m_records.take(oldName));
         }
-        return true;
+        return MovieSetFileMove::Moved;
     }
 
     // Everything below is unused by MovieSetModel and does nothing.
@@ -150,7 +150,7 @@ private:
     bool m_recordsEnabled = true;
     bool m_removalRefused = false;
     bool m_writeRefused = false;
-    bool m_renameRefused = false;
+    MovieSetFileMove m_renameResult = MovieSetFileMove::Moved;
     int m_savedRecordCount = 0;
     int m_listingCount = 0;
     mutable int m_recordsEnabledQueries = 0;

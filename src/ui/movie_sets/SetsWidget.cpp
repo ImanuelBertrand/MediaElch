@@ -271,13 +271,11 @@ void SetsWidget::loadSets()
         ui->sets->insertRow(row);
         ui->sets->setItem(row, 0, new QTableWidgetItem(setRow.second));
         ui->sets->item(row, 0)->setData(Qt::UserRole, setName);
-        if (setRow.second != setName) {
-            // The divergence is never hidden.  A set whose display title is not what its
-            // movie files say is exactly the state a user needs to be able to see, or
-            // "why does Kodi 21 show the old name?" has no answer anywhere in the UI.
-            ui->sets->item(row, 0)->setToolTip(
-                tr("The movie files say: %1\nOnly the movie set file carries the name above.").arg(setName));
-        }
+        // The divergence is never hidden.  A set whose display title is not what its
+        // movie files say is exactly the state a user needs to be able to see, or "why
+        // does Kodi 21 show the old name?" has no answer anywhere in the UI.  The same
+        // helper runs at every rename, so this is not the only place it can appear.
+        applyDivergenceTooltip(ui->sets->item(row, 0), setModel->set(setName));
     }
     ui->sets->blockSignals(false);
 
@@ -326,12 +324,15 @@ void SetsWidget::loadSet(QString set)
 {
     qCDebug(generic) << "Entered, set=" << set;
     clear();
-    ui->setName->setText(set);
+    const MovieSet* movieSet = Manager::instance()->movieSetModel()->set(set);
+    // \p set is the match key, because that is what every caller has to look the set up
+    // by.  The heading is read by a person, so it shows the display title -- the same
+    // split saveSet() makes for its messages.  Leaving the key here put the old name in
+    // the big label while the row above it showed the new one.
+    ui->setName->setText(movieSet != nullptr ? movieSet->displayName() : set);
     ui->buttonPreviewBackdrop->setEnabled(false);
     ui->buttonPreviewPoster->setEnabled(false);
     ui->movies->blockSignals(true);
-
-    const MovieSet* movieSet = Manager::instance()->movieSetModel()->set(set);
     const QVector<Movie*> movies = (movieSet != nullptr) ? movieSet->movies() : QVector<Movie*>();
     for (Movie* movie : movies) {
         int row = ui->movies->rowCount();
@@ -818,9 +819,10 @@ void SetsWidget::onRemoveMovieSet()
 ///          connected to -- without this a refusal would re-enter it and refuse again.
 void SetsWidget::revertSetName(QTableWidgetItem* item, const QString& name)
 {
-    ui->sets->blockSignals(true);
+    // Saved and restored, for the reason spelled out in applyDivergenceTooltip().
+    const bool wasBlocked = ui->sets->blockSignals(true);
     item->setText(name);
-    ui->sets->blockSignals(false);
+    ui->sets->blockSignals(wasBlocked);
 }
 
 void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
@@ -895,38 +897,83 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     }
 }
 
-void SetsWidget::performSetFileOnlyRename(
-    QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
+/// \brief Refuses \p newName if another set already answers to it, by either of its names.
+/// \return Whether the rename was refused; the caller returns without doing anything.
+/// \details The merge check in onSetNameChanged() asks MovieSetModel::set(), which
+///          matches on the **key** alone -- so it catches only a name that is another
+///          set's key, and a name that is another set's *display title* sails past it as
+///          "not a merge".  That is right about Kodi (two sets sharing a display title
+///          are still two sets) and wrong about this tab, which would then show two rows
+///          the user cannot tell apart and could not rename unambiguously.
+///
+///          Both renames need it, not just the set-file-only one.  Under all movie files
+///          the typed name becomes this set's key, and colliding with another set's
+///          display title produces the same two identical rows -- permanently, since the
+///          key is what the next reload rebuilds from.
+bool SetsWidget::refuseIfNameIsTaken(QTableWidgetItem* item, MovieSet* origSet, const QString& newName)
 {
-    if (origSet == nullptr || newName.isEmpty()) {
-        revertSetName(item, origSetName);
-        return;
-    }
-
-    // The match key does not move, so MovieSetModel::set(newName) found nothing and the
-    // merge check above said "not a merge" -- correctly, because two sets may share a
-    // display title without being one set to Kodi.  They may not share one *here*: the
-    // sets tab would show two rows the user cannot tell apart, and the next rename of
-    // either would be ambiguous.  So the collision is checked against both names.
+    const QString origDisplayName = origSet != nullptr ? origSet->displayName() : QString();
     for (const MovieSet* other : Manager::instance()->movieSetModel()->sets()) {
         if (other == origSet) {
             continue;
         }
-        if (other->displayName() == newName || other->name() == newName) {
-            qCWarning(generic) << "[SetsWidget] Movie set" << origSet->displayName() << "was not renamed: another"
-                               << "movie set is already called" << newName;
-            NotificationBox::instance()->showError(
-                tr("<b>\"%1\"</b> was not renamed: another movie set is already called <b>\"%2\"</b>.")
-                    .arg(origSet->displayName(), newName));
-            revertSetName(item, origSet->displayName());
-            return;
+        if (other->displayName() != newName && other->name() != newName) {
+            continue;
         }
+        qCWarning(generic) << "[SetsWidget] Movie set" << origDisplayName << "was not renamed: another"
+                           << "movie set is already called" << newName;
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b> was not renamed: another movie set is already called <b>\"%2\"</b>.")
+                .arg(origDisplayName, newName));
+        revertSetName(item, origDisplayName);
+        return true;
+    }
+    return false;
+}
+
+/// \brief Gives \p item the tooltip naming \p movieSet's key, or clears it.
+/// \details Set wherever the divergence can appear or disappear, not only in loadSets():
+///          a set-file-only rename *creates* the divergence, and a tooltip that only
+///          arrives at the next reload is one the user does not have at the moment they
+///          would ask what just happened.  D-B promises it is never hidden.
+void SetsWidget::applyDivergenceTooltip(QTableWidgetItem* item, const MovieSet* movieSet)
+{
+    const bool diverged = movieSet != nullptr && movieSet->displayName() != movieSet->name();
+    // Save and restore rather than block-then-unblock.  QObject::blockSignals() is a
+    // plain flag, not a counter, so an unconditional unblock here re-enables signals for
+    // whoever was already blocking them -- and loadSets() calls this from inside its own
+    // blocked region, where every following setItem() would then re-enter
+    // onSetNameChanged() and open a merge dialog per row.
+    const bool wasBlocked = ui->sets->blockSignals(true);
+    item->setToolTip(diverged
+                         ? tr("The movie files say: %1\nOnly the movie set file carries the name above.")
+                               .arg(movieSet->name())
+                         : QString());
+    ui->sets->blockSignals(wasBlocked);
+}
+
+void SetsWidget::performSetFileOnlyRename(
+    QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
+{
+    if (origSet == nullptr || newName.isEmpty()) {
+        // The name the row should show, like every other refusal here.  origSetName is
+        // the key, which is the wrong string to put back whenever the two differ.
+        revertSetName(item, origSet != nullptr ? origSet->displayName() : origSetName);
+        return;
+    }
+
+    if (refuseIfNameIsTaken(item, origSet, newName)) {
+        return;
     }
 
     // The whole rename.  No movie is touched -- their `<set><name>` is the join key and
     // stays exactly where it is -- and neither is the set's folder, which Kodi derives
     // from that same key.  What changes is `set.nfo`'s `<title>`, on the next save.
     origSet->setTitle(newName);
+
+    // The divergence exists as of the line above, so the tooltip that explains it does
+    // too, rather than waiting for the next loadSets().
+    applyDivergenceTooltip(item, origSet);
 
     // The row keeps its key.  Only the text moved, and it already has.
     loadSet(origSetName);
@@ -935,6 +982,10 @@ void SetsWidget::performSetFileOnlyRename(
 void SetsWidget::performAllMovieFilesRename(
     QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
 {
+    if (!newName.isEmpty() && refuseIfNameIsTaken(item, origSet, newName)) {
+        return;
+    }
+
     // A second row showing the new name is one left over from a set the model no longer
     // has; the merge case never reaches here.
     for (int i = 0, n = ui->sets->rowCount(); i < n; ++i) {
@@ -951,8 +1002,10 @@ void SetsWidget::performAllMovieFilesRename(
     // not the poster and backdrop this widget happens to know about, and not through a
     // decode and re-encode, which is what carrying them in memory used to cost.
     auto* mediaCenter = Manager::instance()->mediaCenterInterface();
-    const bool filesMoved =
-        origSetName.isEmpty() || newName.isEmpty() || mediaCenter->renameMovieSetFiles(origSetName, newName);
+    using MovieSetFileMove = MediaCenterInterface::MovieSetFileMove;
+    const MovieSetFileMove filesMoved = (origSetName.isEmpty() || newName.isEmpty())
+                                            ? MovieSetFileMove::Moved
+                                            : mediaCenter->renameMovieSetFiles(origSetName, newName);
 
     if (!m_moviesToSave.contains(newName)) {
         m_moviesToSave.insert(newName, QVector<Movie*>());
@@ -984,21 +1037,39 @@ void SetsWidget::performAllMovieFilesRename(
     // of the same row look it up by this role.
     ui->sets->blockSignals(true);
     item->setData(Qt::UserRole, newName);
-    ui->sets->setToolTip(QString());
-    item->setToolTip(QString());
     ui->sets->blockSignals(false);
+    // setName() re-unified the two names, so whatever divergence this row showed is gone.
+    applyDivergenceTooltip(item, origSet);
 
-    if (!filesMoved) {
+    // The rename happened either way.  The movie NFOs are the set's identity, so a rename
+    // whose files could not follow is a rename plus a findable leftover -- the same shape
+    // as the merge leftover below, and for the same reason: undoing it would mean
+    // rewriting every member again, which is larger and riskier than saying so.
+    //
+    // Which leftover, though, is not one sentence.  In the separate-folder layout the
+    // directory rename can succeed and the artwork rename inside it fail, and then the
+    // set's record *is* under the new name -- telling that user their files are "still
+    // stored under the old name" sends them to a folder that no longer exists.
+    switch (filesMoved) {
+    case MovieSetFileMove::Moved: break;
+
+    case MovieSetFileMove::NotMoved:
         qCWarning(generic) << "[SetsWidget] Movie set" << origSetName << "was renamed to" << newName
-                           << "but its movie set file and artwork could not be moved.";
-        // The rename happened.  The movie NFOs are the set's identity, so a rename whose
-        // files could not follow is a rename plus a findable leftover -- the same shape
-        // as the merge leftover below, and for the same reason: undoing it would mean
-        // rewriting every member again, which is larger and riskier than saying so.
+                           << "but its files could not be moved at all; they are still under the old name.";
         NotificationBox::instance()->showWarning(
             tr("<b>\"%1\"</b> was renamed, but its movie set file and artwork could not be moved. They are still "
                "stored under <b>\"%2\"</b>.")
                 .arg(newName, origSetName));
+        break;
+
+    case MovieSetFileMove::PartlyMoved:
+        qCWarning(generic) << "[SetsWidget] Movie set" << origSetName << "was renamed to" << newName
+                           << "but only some of its files moved; part of its artwork still carries the old name.";
+        NotificationBox::instance()->showWarning(
+            tr("<b>\"%1\"</b> was renamed, but only some of its files could be moved. Part of its artwork still "
+               "carries the old name, so MediaElch will not find it. Check the log for which files.")
+                .arg(newName));
+        break;
     }
 
     loadSet(newName);

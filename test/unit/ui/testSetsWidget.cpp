@@ -732,6 +732,32 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
         CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Collection");
     }
 
+    SECTION("the heading shows the display title, not the key")
+    {
+        // loadSet() is always called with the match key, because that is what every
+        // caller can look the set up by -- but the heading is read by a person.  Left as
+        // the key it said "Alien Collection" in the big label above a row that said
+        // "The Alien Saga".
+        auto* heading = widget.findChild<QLabel*>("setName");
+        REQUIRE(heading != nullptr);
+        CHECK(heading->text() == "The Alien Saga");
+    }
+
+    SECTION("the divergence is explained at once, not at the next reload")
+    {
+        // loadSets() was the only place that set this, so the tooltip was missing for
+        // exactly the rename that creates the divergence -- the moment a user would ask
+        // what just happened.  D-B promises it is never hidden.
+        auto* sets = widget.findChild<QTableWidget*>("sets");
+        REQUIRE(sets->rowCount() == 1);
+        CHECK_THAT(sets->item(0, 0)->toolTip(), Contains("Alien Collection"));
+
+        // And it goes away again when the two names are re-unified.
+        Settings::instance()->setMovieSetRenameMode(MovieSetRenameMode::AllMovieFiles);
+        sets->item(0, 0)->setText("Alien Anthology");
+        CHECK(sets->item(0, 0)->toolTip().isEmpty());
+    }
+
     SECTION("the record is written under the key's folder, not the title's")
     {
         // Kodi derives the movie set information folder from the match key, before it
@@ -742,17 +768,39 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
         CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("The Alien Saga/set.nfo")));
     }
 
-    SECTION("it survives a reload, which is the failure the second string exists for")
+    SECTION("it is rebuilt from its file, which is the failure the second string exists for")
     {
-        // The members still name the old set and the reload re-derives from them, so
-        // without the record being read back the rename would simply evaporate here.
+        // The members still name the old set and a rebuild derives from them, so without
+        // the record being read back the rename evaporates here.
+        //
+        // A plain loadSets() does **not** test that, and this test used to do exactly
+        // that and pass for the wrong reason.  reload() keeps the MovieSet objects it
+        // already has and re-reads a record only on a false->true hasRecord transition
+        // (MovieSetModel.cpp:401), and saveSet() has just set that flag -- so the set is
+        // never rebuilt from disk and deleting the reader's setTitle() leaves this
+        // green.  Measured: with the old body, mutating MovieSetXmlReader reddened the
+        // two record tests and not this one.
+        //
+        // So throw the objects away first, which is what a restart does.  The set that
+        // comes back is built from the member NFO, gains its record from the listing,
+        // and takes that false->true branch -- the one that reads `<title>` back.
         widget.saveSet();
+
+        MovieSetModel* setModel = Manager::instance()->movieSetModel();
+        setModel->clear();
+        REQUIRE(setModel->set("Alien Collection") == nullptr);
+
         widget.loadSets();
 
         auto* sets = widget.findChild<QTableWidget*>("sets");
         REQUIRE(sets->rowCount() == 1);
         CHECK(sets->item(0, 0)->text() == "The Alien Saga");
         CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Collection");
+        // And through the model, not only the table, so a widget that happened to cache
+        // the string cannot carry this.
+        MovieSet* rebuilt = setModel->set("Alien Collection");
+        REQUIRE(rebuilt != nullptr);
+        CHECK(rebuilt->title() == "The Alien Saga");
     }
 }
 
@@ -798,7 +846,7 @@ TEST_CASE("A set-file-only rename with nowhere to write it is refused", "[ui][mo
     setModel->reload();
 }
 
-TEST_CASE("A set-file-only rename onto a display title already in use is refused", "[ui][movie][set]")
+TEST_CASE("A rename onto a display title already in use is refused in both modes", "[ui][movie][set]")
 {
     // Typing an existing set's *key* is a merge and is offered as one, whatever the mode.
     // Typing another set's *display title* is not: no set answers to that name, so the
@@ -821,7 +869,6 @@ TEST_CASE("A set-file-only rename onto a display title already in use is refused
     predator->setTitle("The Hunt");
     widget.loadSets();
 
-    test::MessageCapture messages;
     auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(sets != nullptr);
     REQUIRE(sets->rowCount() == 2);
@@ -834,6 +881,15 @@ TEST_CASE("A set-file-only rename onto a display title already in use is refused
         }
     }
     REQUIRE(alienRow >= 0);
+
+    // Both modes, because both produce the same two indistinguishable rows.  Under all
+    // movie files the typed name becomes this set's *key*, so the collision is permanent:
+    // it is what the next reload rebuilds from.
+    const MovieSetRenameMode mode =
+        GENERATE(MovieSetRenameMode::SetFileOnly, MovieSetRenameMode::AllMovieFiles);
+    Settings::instance()->setMovieSetRenameMode(mode);
+
+    test::MessageCapture messages;
     sets->item(alienRow, 0)->setText("The Hunt");
 
     CHECK(messages.contains("was not renamed"));
@@ -842,6 +898,9 @@ TEST_CASE("A set-file-only rename onto a display title already in use is refused
     MovieSet* set = setModel->set("Alien Collection");
     REQUIRE(set != nullptr);
     CHECK(set->displayName() == "Alien Collection");
+    CHECK(sets->item(alienRow, 0)->text() == "Alien Collection");
+    // The other set kept its own name either way.
+    CHECK(setModel->set("The Hunt") == nullptr);
 }
 
 TEST_CASE("An all-movie-files rename moves what the set keeps on disk", "[ui][movie][set]")
@@ -967,6 +1026,51 @@ TEST_CASE("An all-movie-files rename that cannot move its files says so", "[ui][
     // And both folders are exactly as they were.
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/folder.jpg")));
+}
+
+TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[ui][movie][set]")
+{
+    // The separate-folder layout renames the directory and *then* renames the
+    // set-name-derived files inside it, so the folder can move while a file in it does
+    // not.  Telling that user their files are "still stored under the old name" sends
+    // them to a folder that no longer exists -- the record really is at the new name.
+    MovieSetFolderGuard guard;
+    test::DataFileGuard dataFiles;
+    RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+
+    addLibraryMovie("Alien", "Alien Collection");
+    writeRecord(guard.dir(), "Alien Collection");
+
+    QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
+    REQUIRE_FALSE(posterFiles.isEmpty());
+    DataFile posterFile = posterFiles.first();
+    // The shipped name embeds the set's name, so these two are different files.
+    REQUIRE(posterFile.saveFileName("Alien Collection") != posterFile.saveFileName("Alien Anthology"));
+
+    QImage poster(4, 4, QImage::Format_RGB32);
+    poster.fill(Qt::red);
+    REQUIRE(poster.save(
+        guard.dir().absoluteFilePath("Alien Collection/" + posterFile.saveFileName("Alien Collection")), "jpg", 100));
+    // A file already sitting under the name the poster wants after the move, so the
+    // in-folder rename refuses while the directory rename has already succeeded.
+    QFile blocker(guard.dir().absoluteFilePath("Alien Collection/" + posterFile.saveFileName("Alien Anthology")));
+    REQUIRE(blocker.open(QIODevice::WriteOnly));
+    blocker.write("in the way");
+    blocker.close();
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    test::MessageCapture messages;
+    renameFirstSet(widget, "Alien Anthology");
+
+    CHECK(messages.contains("only some of its files moved"));
+    // And *not* the message that would send the user to the old folder.
+    CHECK_FALSE(messages.contains("could not be moved at all"));
+
+    // The folder and the record did move, which is what makes the other message a lie.
+    CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/set.nfo")));
+    CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
 }
 
 TEST_CASE("An all-movie-files rename moves artwork next to the movies too", "[ui][movie][set]")

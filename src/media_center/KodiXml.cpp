@@ -1650,21 +1650,30 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
 namespace {
 
 /// \brief Renames \p dir's set artwork from \p oldName's file names to \p newName's.
-/// \details Artwork file names are user-configurable and may embed the set's name --
-///          "<setName>-folder.jpg" is what the artwork-next-to-movies layout ships with,
-///          and nothing stops a user configuring the same in the other layout.  Moving a
-///          folder does not rename what is inside it, so this runs in both layouts: in
-///          one it is the whole move, in the other it is the part the directory rename
-///          could not do.  Where the configured name carries no placeholder the two file
-///          names are equal and this does nothing, which is the common case.
+/// \details Artwork file names are user-configurable and the shipped ones **do** embed
+///          the set's name: `<setName>-poster.jpg` and `<setName>-fanart.jpg`
+///          (`Settings.cpp:97-98`).  There is one initial list and `Settings::dataFiles()`
+///          never consults the artwork layout, so those are the names in *both* layouts
+///          until the user opens the settings and switches -- at which point
+///          `MovieSettingsWidget::onComboMovieSetArtworkChanged()` rewrites the fields to
+///          "folder.jpg"/"fanart.jpg" for the separate-folder layout.  So this loop does
+///          real work on a default install, and the placeholder-free case is the
+///          configured one rather than the common one.
 ///
-///          These can genuinely half-succeed, one file at a time.  A file that did move
-///          is individually correct, so the ones that did are kept and the caller is told
-///          the whole thing failed; putting them back would be a second batch of renames
-///          with the same failure mode.
-bool renameSetArtworkFilesIn(const QDir& dir, const QString& oldName, const QString& newName)
+///          It runs in both layouts because moving a folder does not rename what is
+///          inside it: in the artwork-next-to-movies layout it is the whole move, in the
+///          separate-folder layout it is the part the directory rename could not do.
+///
+///          These can genuinely half-succeed, one file at a time, so the answer counts
+///          rather than latching a bool.  A file that did move is individually correct,
+///          so the ones that did are kept; putting them back would be a second batch of
+///          renames with the same failure mode.
+MediaCenterInterface::MovieSetFileMove renameSetArtworkFilesIn(
+    const QDir& dir, const QString& oldName, const QString& newName)
 {
-    bool allMoved = true;
+    using Move = MediaCenterInterface::MovieSetFileMove;
+    int moved = 0;
+    int failed = 0;
     for (const DataFileType type : {DataFileType::MovieSetPoster, DataFileType::MovieSetBackdrop}) {
         for (DataFile dataFile : Settings::instance()->dataFiles(type)) {
             const QString oldFileName = dir.absoluteFilePath(dataFile.saveFileName(oldName));
@@ -1675,31 +1684,36 @@ bool renameSetArtworkFilesIn(const QDir& dir, const QString& oldName, const QStr
             if (QFileInfo::exists(newFileName)) {
                 qCWarning(generic) << "[KodiXml] Not moving movie set artwork" << oldFileName << "to" << newFileName
                                    << "-- a file is already there.";
-                allMoved = false;
+                ++failed;
                 continue;
             }
             if (!QFile::rename(oldFileName, newFileName)) {
                 qCWarning(generic) << "[KodiXml] Cannot move movie set artwork" << oldFileName << "to" << newFileName;
-                allMoved = false;
+                ++failed;
+            } else {
+                ++moved;
             }
         }
     }
-    return allMoved;
+    if (failed == 0) {
+        return Move::Moved;
+    }
+    return moved > 0 ? Move::PartlyMoved : Move::NotMoved;
 }
 
 } // namespace
 
-bool KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName)
+KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName)
 {
     if (oldName.isEmpty() || newName.isEmpty()) {
-        return true;
+        return MovieSetFileMove::Moved;
     }
 
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
         if (!movieSetFolderIsConfigured()) {
             // No folder, so no record and no per-set artwork folder: nothing exists to
             // be moved, which is a success and not a refusal.
-            return true;
+            return MovieSetFileMove::Moved;
         }
         const QString oldFolder = mediaelch::kodi::makeLegalFileName(oldName);
         const QString newFolder = mediaelch::kodi::makeLegalFileName(newName);
@@ -1707,11 +1721,11 @@ bool KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName
             // Legalisation is lossy, so two different names can share one folder --
             // "Mission: Impossible" and "Mission_ Impossible".  Renaming between them
             // moves nothing on disk, and trying would rename a directory onto itself.
-            return true;
+            return MovieSetFileMove::Moved;
         }
         QDir msif = Settings::instance()->movieSetArtworkDirectory().dir();
         if (!msif.exists(oldFolder)) {
-            return true;
+            return MovieSetFileMove::Moved;
         }
 
         // The same ownership question removeMovieSetRecord() asks, at the one other
@@ -1727,13 +1741,13 @@ bool KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName
                 qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder
                                    << "-- the record in it cannot be read, so it cannot be shown to belong to"
                                    << oldName;
-                return false;
+                return MovieSetFileMove::NotMoved;
             }
             const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
             if (recordName != oldName) {
                 qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder << "-- its record names"
                                    << recordName << "and not" << oldName;
-                return false;
+                return MovieSetFileMove::NotMoved;
             }
         }
 
@@ -1744,7 +1758,7 @@ bool KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName
             // way to tell afterwards which came from where.
             qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder << "to" << newFolder
                                << "-- something is already there.";
-            return false;
+            return MovieSetFileMove::NotMoved;
         }
 
         // One rename, not a copy-and-delete loop.  Within a file system this cannot half
@@ -1755,12 +1769,20 @@ bool KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName
         if (!msif.rename(oldFolder, newFolder)) {
             qCWarning(generic) << "[KodiXml] Cannot move movie set folder" << msif.absoluteFilePath(oldFolder) << "to"
                                << msif.absoluteFilePath(newFolder);
-            return false;
+            return MovieSetFileMove::NotMoved;
         }
         // The folder moved; what is inside it did not get a new name.  A configured
-        // artwork file name that embeds the set's name would still spell the old one,
-        // and MediaElch would then look for this set's poster where it no longer is.
-        return renameSetArtworkFilesIn(QDir(msif.absoluteFilePath(newFolder)), oldName, newName);
+        // artwork file name that embeds the set's name -- which is what ships -- would
+        // still spell the old one, and MediaElch would then look for this set's poster
+        // where it no longer is.
+        //
+        // The directory has moved by this point, so a failure in there is never
+        // "nothing moved": the record is at the new name and only some artwork is not.
+        // Saying otherwise sends the user to a folder that no longer exists.
+        return renameSetArtworkFilesIn(QDir(msif.absoluteFilePath(newFolder)), oldName, newName)
+                       == MovieSetFileMove::Moved
+                   ? MovieSetFileMove::Moved
+                   : MovieSetFileMove::PartlyMoved;
     }
 
     // Artwork next to movies.  There is no per-set folder here and no record at all; the
@@ -1774,7 +1796,7 @@ bool KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName
     if (anchor.isEmpty()) {
         // No member movie with a file, so this set has no artwork path in this layout at
         // all and there is nothing to move.
-        return true;
+        return MovieSetFileMove::Moved;
     }
     return renameSetArtworkFilesIn(QFileInfo(anchor).dir(), oldName, newName);
 }

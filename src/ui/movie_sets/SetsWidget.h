@@ -9,6 +9,7 @@
 #include <QWidget>
 
 #include "network/DownloadManagerElement.h"
+#include "utils/Meta.h"
 
 class MovieSet;
 
@@ -98,6 +99,8 @@ private:
         const QString& origSetName,
         const QString& newName);
     void revertSetName(QTableWidgetItem* item, const QString& name);
+    ELCH_NODISCARD bool refuseIfNameIsTaken(QTableWidgetItem* item, MovieSet* origSet, const QString& newName);
+    void applyDivergenceTooltip(QTableWidgetItem* item, const MovieSet* movieSet);
     void carrySetArtworkOver(const QString& oldName, const QString& newName);
 
     Ui::SetsWidget* ui;
