@@ -1,11 +1,18 @@
 #include "test/test_helpers.h"
 
 #include "data/movie/MovieSet.h"
+#include "globals/Manager.h"
+#include "media/Path.h"
+#include "media_center/MediaCenterInterface.h"
 #include "media_center/kodi/MovieSetXmlReader.h"
 #include "media_center/kodi/MovieSetXmlWriter.h"
+#include "settings/Settings.h"
 #include "test/helpers/resource_dir.h"
 
+#include <QDir>
 #include <QDomDocument>
+#include <QFile>
+#include <QFileInfo>
 #include <memory>
 
 using namespace mediaelch;
@@ -159,5 +166,144 @@ TEST_CASE("Movie set record names the set it belongs to", "[data][movie][movie_s
     SECTION("Names no set for a document that is not a <set>")
     {
         CHECK(setNameOf("<movie><title>Alien</title></movie>").isEmpty());
+    }
+}
+
+namespace {
+
+/// \brief Points the movie set information folder somewhere and puts it back afterwards.
+/// \details Settings is a singleton shared by every test in this binary.
+class MovieSetFolderGuard
+{
+public:
+    MovieSetFolderGuard() :
+        m_type{Settings::instance()->movieSetArtworkType()}, m_dir{Settings::instance()->movieSetArtworkDirectory()}
+    {
+    }
+    ~MovieSetFolderGuard()
+    {
+        Settings::instance()->setMovieSetArtworkType(m_type);
+        Settings::instance()->setMovieSetArtworkDirectory(m_dir);
+    }
+    MovieSetFolderGuard(const MovieSetFolderGuard&) = delete;
+    MovieSetFolderGuard& operator=(const MovieSetFolderGuard&) = delete;
+
+    static void useFolder(const QDir& dir)
+    {
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(dir));
+    }
+
+private:
+    MovieSetArtworkType m_type;
+    mediaelch::DirectoryPath m_dir;
+};
+
+/// \brief An empty temporary movie set information folder.
+QDir emptyMsif(const QString& name)
+{
+    QDir dir = test::makeTempDir("movie_set/" + name);
+    dir.removeRecursively();
+    QDir().mkpath(dir.absolutePath());
+    return dir;
+}
+
+} // namespace
+
+TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
+{
+    const MovieSetFolderGuard guard;
+    MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
+
+    SECTION("Records are off in the artwork-next-to-movies layout")
+    {
+        // There is no per-set folder in that layout, so there is nowhere a `set.nfo`
+        // could go that Kodi would read.  Sets are read-only; that is the design.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        CHECK_FALSE(mediaCenter->movieSetRecordsEnabled());
+        CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
+
+        MovieSet set("Alien Collection");
+        set.setOverview("Ripley versus the Alien.");
+        CHECK_FALSE(mediaCenter->saveMovieSet(set));
+    }
+
+    SECTION("Records are off when the folder was never chosen")
+    {
+        // The hazard this guards.  DirectoryPath's default constructor leaves isValid()
+        // false around a default QDir, whose absolutePath() is the process's current
+        // working directory, and movieSetFileName() never asks.  Selecting the separate
+        // folder without choosing one must not scatter files into whatever directory
+        // MediaElch was started from.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
+
+        CHECK_FALSE(mediaCenter->movieSetRecordsEnabled());
+
+        MovieSet set("Alien Collection");
+        CHECK_FALSE(mediaCenter->saveMovieSet(set));
+        CHECK_FALSE(mediaCenter->loadMovieSet(set));
+        CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
+        CHECK_FALSE(QFileInfo::exists(QDir::current().absoluteFilePath("Alien Collection/set.nfo")));
+    }
+
+    SECTION("A record is written, listed, read back and removed")
+    {
+        const QDir msif = emptyMsif("roundtrip");
+        MovieSetFolderGuard::useFolder(msif);
+        REQUIRE(mediaCenter->movieSetRecordsEnabled());
+
+        MovieSet written("Alien Collection");
+        written.setOverview("Ripley versus the Alien.");
+        written.setTmdbId(TmdbId("8091"));
+        REQUIRE(mediaCenter->saveMovieSet(written));
+        CHECK(written.hasRecord());
+        // Saving is the one moment at which a set and its file agree, so it is the
+        // clearing edge for the flag nothing used to clear.
+        CHECK_FALSE(written.hasChanged());
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Collection/set.nfo")));
+
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Alien Collection"});
+
+        MovieSet read("Alien Collection");
+        REQUIRE(mediaCenter->loadMovieSet(read));
+        CHECK(read.overview() == "Ripley versus the Alien.");
+        CHECK(read.tmdbId() == TmdbId("8091"));
+        CHECK_FALSE(read.hasChanged());
+
+        REQUIRE(mediaCenter->removeMovieSetRecord("Alien Collection"));
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Alien Collection/set.nfo")));
+        CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
+        // Only the record.  The folder and its artwork are not MediaElch's to delete.
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Collection")));
+    }
+
+    SECTION("A folder with artwork but no record is not a set")
+    {
+        // The record is what makes a set exist in its own right.  Treating a pile of
+        // images as one would resurrect every set a user ever deliberately removed.
+        const QDir msif = emptyMsif("artonly");
+        MovieSetFolderGuard::useFolder(msif);
+        REQUIRE(QDir().mkpath(msif.absoluteFilePath("Predator Collection")));
+        QFile poster(msif.absoluteFilePath("Predator Collection/poster.jpg"));
+        REQUIRE(poster.open(QIODevice::WriteOnly));
+        poster.close();
+
+        CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
+    }
+
+    SECTION("The folder name is legalised; the set's name is not")
+    {
+        // Kodi derives the folder from the set name with MakeLegalFileName, which is
+        // lossy, so the name has to come back out of the file and not out of the folder
+        // -- it must match the member NFOs' <set><name> byte for byte.
+        const QDir msif = emptyMsif("legalise");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Mission: Impossible Collection");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Mission: Impossible Collection"});
     }
 }

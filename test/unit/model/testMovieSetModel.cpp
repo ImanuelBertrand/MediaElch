@@ -1025,3 +1025,57 @@ TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
         CHECK(mediaCenter.hasRecordOnDisk("Alien Collection"));
     }
 }
+
+TEST_CASE("A set with a record but no movie is found at all", "[model][movie][set]")
+{
+    // Membership is only ever the movies, so every other set in this model arrives
+    // because a movie named it.  A set the user curated and has not filled yet, or one
+    // whose last member left in an earlier session, is named by no movie at all and
+    // would simply not exist.  The records are listed so that it does.
+    QObject owner;
+    MovieModel movies;
+    MediaCenterInterfaceMock mediaCenter;
+    MovieSetModel sets;
+
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+    mediaCenter.putRecord("Curated Collection", {"Nothing in it yet.", TmdbId::NoId});
+    sets.setMovieModel(&movies);
+    sets.setRecordSource(&mediaCenter);
+
+    SECTION("The set exists, with its record read")
+    {
+        REQUIRE(sets.set("Curated Collection") != nullptr);
+        CHECK(sets.set("Curated Collection")->movies().isEmpty());
+        CHECK(sets.set("Curated Collection")->overview() == "Nothing in it yet.");
+        CHECK_FALSE(sets.set("Curated Collection")->hasChanged());
+    }
+
+    SECTION("A movie can join it afterwards")
+    {
+        MovieSetInfo curated;
+        curated.name = "Curated Collection";
+        sets.assign(alien, curated);
+        CHECK(sets.set("Curated Collection")->movies() == QVector<Movie*>{alien});
+        // The set object is the one the record was read into, so its overview is still
+        // there: joining a set does not rebuild it.
+        CHECK(sets.set("Curated Collection")->overview() == "Nothing in it yet.");
+    }
+
+    SECTION("Removing it deliberately does not bring it back")
+    {
+        // The sharp edge of listing records: a set whose `set.nfo` outlived it would be
+        // found again on the very next reload.
+        sets.removeSet("Curated Collection");
+        sets.reload();
+        CHECK(sets.set("Curated Collection") == nullptr);
+    }
+
+    SECTION("Nothing is listed when no folder is configured")
+    {
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload();
+        CHECK(sets.set("Curated Collection") == nullptr);
+        CHECK(sets.set("Alien Collection") != nullptr);
+    }
+}

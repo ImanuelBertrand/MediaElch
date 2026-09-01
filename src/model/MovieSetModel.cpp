@@ -296,6 +296,16 @@ void MovieSetModel::reload()
             attachMovie(movie);
         }
     }
+    // A set can have a record and no member movie at all -- one the user curated and
+    // has not filled yet, or one whose last member left.  Nothing else finds it: sets
+    // are otherwise only ever derived from the movies that name them, and Kodi does not
+    // enumerate the folder either (it discovers sets from movies, exactly as this model
+    // did).  addSet() creates the ones that are missing, reading each one's record as it
+    // goes, and returns the ones that already exist untouched.
+    for (const QString& name : recordNames) {
+        addSet(name);
+    }
+
     // Drop the sets that no movie names any more and that have no record to exist by.
     dropEmptySets();
 

@@ -176,7 +176,14 @@ public:
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
     ///          read once, when the set is created, because re-reading would overwrite
-    ///          an overview the user has edited but not saved.
+    ///          an overview the user has edited but not saved.  The one exception is a
+    ///          set that had no record and now has one, which has to be read or it would
+    ///          write the emptiness it was created with over the file.
+    ///
+    ///          It is also where a set that has a record but *no member movie* is found.
+    ///          Such a set has no other way of being noticed -- every other set in this
+    ///          model is derived from the movies that name it -- so the records are
+    ///          listed and the missing sets created from them.
     void reload();
     /// \brief Removes every set.
     void clear();
