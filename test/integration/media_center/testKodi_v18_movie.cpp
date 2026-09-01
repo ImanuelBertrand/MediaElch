@@ -42,11 +42,46 @@ static void parseMovieChildren(Movie& movie, const QString& children)
     REQUIRE(reader.parseNfoDom(doc));
 }
 
+/// Writes a movie that belongs to a set and returns the resulting XML.
+static QString writeMovieInSet(const MovieSetInfo& set)
+{
+    Movie movie;
+    movie.setTitle("Test");
+    movie.setSetInfo(set);
+    mediaelch::kodi::MovieXmlWriterGeneric writer(mediaelch::KodiVersion(18), movie);
+    return writer.getMovieXml(true);
+}
+
 static MovieSetInfo parseMovieSet(const QString& setXml)
 {
     Movie movie;
     parseMovieChildren(movie, setXml);
     return movie.set();
+}
+
+TEST_CASE("Movie set mirror in the movie NFO", "[data][movie][movie_set][kodi][nfo]")
+{
+    SECTION("An empty set overview is not written at all")
+    {
+        // D2a.  An existing-but-empty <overview> is a value to Kodi, not an absence:
+        // XMLUtils::GetString() returns true for it, and the member scanned last then
+        // blanks the whole set's stored overview.  MediaElch used to emit it
+        // unconditionally whenever the movie named a set.
+        MovieSetInfo set;
+        set.name = "Alien Collection";
+        CHECK_THAT(writeMovieInSet(set), Contains("<name>Alien Collection</name>"));
+        CHECK_THAT(writeMovieInSet(set), ContainsNot("<overview>"));
+    }
+
+    SECTION("A set overview is written when there is one")
+    {
+        // The mirror is written on every Kodi version, not just the ones that read it:
+        // 19-21 cannot see `set.nfo` at all, and neither can other tools (D1b).
+        MovieSetInfo set;
+        set.name = "Alien Collection";
+        set.overview = "Ripley versus the Alien.";
+        CHECK_THAT(writeMovieInSet(set), Contains("<overview>Ripley versus the Alien.</overview>"));
+    }
 }
 
 TEST_CASE("Movie XML writer for Kodi v18", "[data][movie][kodi][nfo]")
