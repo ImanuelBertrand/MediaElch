@@ -295,15 +295,19 @@ void MovieSetModel::reload()
     // Which sets have a record is asked once for the whole library, and every set here is
     // told whether it is among the answers.  It is not a cheap question: the media center
     // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names, so this costs one parse per record.  A second parse on top of that for every
-    // set whose record this pass has not read yet, each going through loadMovieSet()
-    // again: the flip branch just below, for a set that already existed and has just
-    // gained a record, and createSet() for every set this pass *builds* -- which is the
-    // attach loop building one from a movie just as much as the enumeration building one
-    // from a record.  When m_sets starts out empty, which is what setMovieModel() and
-    // setRecordSource() both produce, that is every set, so the doubled figure is the
-    // ordinary case rather than the exception.  Either way it is bounded by the number of
-    // sets, not by the size of the library.
+    // names, so this costs one parse per record.  One more parse for each record this
+    // pass actually *reads into* its set, which is what both loadMovieSet() call sites do
+    // -- the flip branch just below and createSet().  At most two parses per record then,
+    // and none at all for a set that has no record, since createSet()'s probe resolves a
+    // path, finds no file and returns without parsing (KodiXml::loadMovieSet()).  The
+    // bound is the number of records, not the number of sets and not the size of the
+    // library.
+    //
+    // Which sets take that second parse is deliberately not enumerated here.  It has been
+    // written down wrongly three times -- the enumeration keeps omitting one of the two
+    // call sites, or overcounting sets that have no record at all -- and the mechanism is
+    // shorter than any correct list of cases: this pass reads a record it had not read
+    // before.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the
@@ -512,12 +516,19 @@ void MovieSetModel::seedFromMembers(MovieSet* movieSet)
     // fills a hole once; it does not track the members.
     //
     // And "missing" is emptiness, not intent.  Once PR-6 lands the overview editor, a user
-    // who *clears* an unbacked set's overview leaves a hole like any other, and the next
-    // movie to join that set fills it again from a member -- with the dirty flag restored
-    // below, so nothing marks it and nothing warns.  A set with a record is safe, because
-    // the guard above stops the seed outright.  An unbacked set is not, and closing that
-    // needs a "deliberately empty" state this object does not have.  Worth knowing before
-    // the editor is written, because the editor is what makes it reachable.
+    // who *clears* the overview of a set with no record leaves a hole like any other, and
+    // the next movie to join fills it again from a member.
+    //
+    // Be exact about what that costs, because the obvious summary is wrong: the set is
+    // dirty and a drop *would* warn -- the user's own clearing edit set the flag, and the
+    // restore below preserves it rather than clearing it.  What the refill destroys is not
+    // the warning but the distinction.  It adds no mark of its own, so nothing tells "the
+    // clear is still pending" apart from "the clear has been silently undone".
+    //
+    // A set that has a record is safe, because the guard above stops the seed outright.
+    // A set with no record is not, and closing it needs a "deliberately empty" state this
+    // object does not have -- PR-6's decision, not this step's.  Worth knowing before the
+    // editor is written, because the editor is what makes it reachable.
     const bool overviewIsMissing = movieSet->overview().isEmpty();
     const bool idIsMissing = !movieSet->tmdbId().isValid();
     if (!overviewIsMissing && !idIsMissing) {

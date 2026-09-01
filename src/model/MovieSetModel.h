@@ -199,14 +199,15 @@ public:
     ///          settings-changed plumbing to keep in step.  The question is asked once
     ///          for the whole library rather than once per set, but it is not cheap:
     ///          answering it means parsing every `set.nfo` in the folder, since only the
-    ///          file says which set it belongs to.  That is one parse per record, plus a
-    ///          second for every set whose record this pass has not read yet: a set that
-    ///          already existed and has just gained one, **and** every set createSet()
-    ///          builds during the pass, whether the attach loop builds it from a movie or
-    ///          the enumeration builds it from a record.  When the model starts out with
-    ///          no sets at all -- which is what setMovieModel() and setRecordSource() both
-    ///          produce -- that is every set, so the doubled figure is the ordinary case
-    ///          rather than the exception, and it is the one to budget for.
+    ///          file says which set it belongs to.  That is one parse per record, plus
+    ///          one more for each record this pass actually *reads into* its set, which
+    ///          both loadMovieSet() call sites below do.  So at most two parses per
+    ///          record, and none at all for a set that has none -- createSet()'s probe
+    ///          resolves a path, finds no file and returns without parsing.  The bound is
+    ///          the number of *records*, not the number of sets and not the size of the
+    ///          library.  Which sets take the second parse has been enumerated wrongly
+    ///          three times and is not worth a fourth attempt: the mechanism is that this
+    ///          pass reads a record it has not read before, and both call sites are that.
     ///
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
@@ -240,19 +241,24 @@ private:
     /// \brief Takes \p movie out of the membership index entry for \p movieSet.
     void unindexMembership(QObject* movie, MovieSet* movieSet);
     /// \brief Fills a record-less set's empty overview and id from its members' NFOs.
-    /// \details A set that has members was learned about from a movie NFO.  Membership
-    ///          lives in the member movies and nowhere else (D-A), so a movie's
-    ///          `<set><name>` is the only thing that can say that movie is in a set at
-    ///          all -- which makes the `movie.nfo` -> set path one that can never be
-    ///          retired, and makes a set with no `set.nfo` the normal first state of a set
-    ///          that has members rather than a leftover to be migrated away.
+    /// \details Membership lives in the member movies and nowhere else (D-A), so a
+    ///          movie's `<set><name>` is the only thing that can say that movie is in a
+    ///          set.  That makes the `movie.nfo` -> set path one that can never be
+    ///          retired, and makes a set with no `set.nfo` the normal first state of a
+    ///          *derived* set rather than a leftover to be migrated away.
     ///
-    ///          Not every set is learned about that way, and the difference is why the
-    ///          record guard below exists: reload() creates the sets that only a record
-    ///          names, and "Add Movie Set" creates one from a click, with no movie and no
-    ///          NFO anywhere.  Neither is derived from anything.
+    ///          Derivation is the axis, not membership.  A set can have members that no
+    ///          movie NFO ever named it in -- "Add Movie Set" creates one from a click and
+    ///          the sets tab assigns movies into it afterwards -- and a set can have no
+    ///          members at all, which is what reload() builds from a record.
     ///
-    ///          A set that *is* derived is built from a name and nothing else, so it was
+    ///          This function does not sort those apart and does not need to.  Its only
+    ///          question is hasRecord(), below.  A set made by "Add Movie Set" is seeded
+    ///          exactly like a derived one, and that is right: its members name it from
+    ///          the moment they are assigned, so they are as good a source as any other
+    ///          member.
+    ///
+    ///          A set with no record is built from a name and nothing else, so it was
     ///          born with an empty overview and no id even when every member NFO carried
     ///          both -- and the first `set.nfo` written for it was written from that
     ///          emptiness, because the writer skips what is not there
@@ -271,14 +277,26 @@ private:
     ///          from outside this model; there is no such caller in `src/` today, and the
     ///          signal is used because it cannot be bypassed, not because one exists.
     ///
-    ///          The cost is one walk of the members per addition, and a set with nothing
-    ///          to seed from never short-circuits, so filling a set of N members is
-    ///          O(N^2) and copies a MovieSetInfo by value at each step (Movie::set()
-    ///          returns by value).  That is the *common* case, since most libraries have
-    ///          nothing to seed from at all.  Accepted rather than overlooked: sets hold a
-    ///          handful of movies each, and walking the members is what makes the rule a
-    ///          property of the set -- "the first member that has a value, in member
-    ///          order" -- rather than of the order in which this happened to be called.
+    ///          The cost is one walk of the members per addition.  A set that has both
+    ///          values short-circuits, so the quadratic case is precisely the set that
+    ///          never gets them: *building up* to N members costs O(N^2) and copies a
+    ///          MovieSetInfo by value at each step (Movie::set() returns by value).
+    ///          Probably the common case, since a library MediaElch has never written
+    ///          carries no set overviews at all -- an estimate about libraries in the
+    ///          wild, not a measurement.  Accepted rather than overlooked: a set holds a
+    ///          handful of movies.
+    ///
+    ///          Walking the members rather than inspecting only the movie that just
+    ///          arrived is *not* about choosing a different winner.  MovieSet::addMovie()
+    ///          appends and emits once per call, so member order is call order and the two
+    ///          would pick the same member every time.  What the walk buys is
+    ///          re-evaluation at a moment when the earlier additions *could not* seed, and
+    ///          there are two: a set whose overview the user clears once PR-6 lands the
+    ///          editor, and a set that held a record while its members joined -- the guard
+    ///          below refused them then -- and has since lost it, which reload() does by
+    ///          clearing the flag at the end of its refresh loop.  Replace this with an
+    ///          O(1) look at the new member and both stop refilling, with nothing to
+    ///          show that they have.
     void seedFromMembers(MovieSet* movieSet);
     /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
