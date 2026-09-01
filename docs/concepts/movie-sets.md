@@ -367,6 +367,18 @@ rather than in each caller: that closes it for all four and for any added
 later.  It still has to come before the path is resolved, for the reason above
 — an empty return means something else in the other layout.
 
+One guard in the media center is not enough, either, and the reason is worth
+keeping.  `DirectoryPath::toNativePathString()` resolves through
+`QDir::absolutePath()`, so an *invalid* path renders as the working directory —
+and the movie settings page displayed that in the movie set directory field and
+read the field back on save.  One press of Save in the settings window, for any
+unrelated reason, therefore stored "the directory MediaElch was started from"
+as a deliberate choice.  After that `movieSetRecordsEnabled()` answers true,
+the path guard has nothing left to refuse, and records and artwork go into the
+working directory after all.  **A guard that is only asked at the point of use
+can be defeated by whatever writes the setting**, so the settings page has to
+refuse to invent one; `testMovieSettingsWidget.cpp` holds both directions.
+
 The refusal then has to be *listened to*, and one caller was not listening.
 `SetsWidget::saveSet()` cleared its pending poster and backdrop unconditionally
 after a `void` save and reported "Saved"; a set's artwork lives nowhere but
