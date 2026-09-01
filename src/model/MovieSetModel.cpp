@@ -325,6 +325,16 @@ void MovieSetModel::reload()
                 // this means an I/O error or a change underneath us -- the set does not
                 // get to claim the record.  Claiming it on a failed read is the same
                 // emptiness hazard by another route.
+                //
+                // Note what that costs, because it is not free: a set with no members
+                // whose read fails is unbacked for the rest of this pass, and
+                // dropEmptySets() at the end of it destroys it.  The enumeration loop
+                // below does not rescue it either -- addSet() finds the set already in
+                // m_sets and returns it without retrying the read.  So a transient error
+                // makes a memberless set vanish from the tab until the next reload, which
+                // reads it again and brings it back.  That is the better half of the
+                // trade: destroying an in-memory object that is rebuilt from disk is
+                // recoverable, and writing an empty overview over a real record is not.
                 hasRecord = m_mediaCenter->loadMovieSet(*movieSet);
             }
             // The other direction is deliberately left alone.  A set whose record has

@@ -704,6 +704,16 @@ was refused, and the removal attempts the record **before** detaching the member
 that a refusal leaves the set, its movies and its file exactly as they were rather than
 half-done.
 
+The compiler cannot be made to hold that invariant for the media center's own three
+refusals, and it is worth writing down why so that nobody spends an afternoon
+rediscovering it: **GCC ignores `[[nodiscard]]` on a call through a virtual function**
+(reproduced on GCC 14.2 with `-Wall -Wextra`; the identical call warns when it is not
+virtual, and is silent through either the base or the derived pointer when it is).
+`MovieSetModel::removeSet()` is real protection because it is non-virtual.  The three
+`MediaCenterInterface` refusals can only be held by tests, which is where they are held:
+a mock that can be told to refuse a write or a removal, and two tests that drive the
+sets tab into each refusal and read the log.
+
 For the same reason the name is **not** trimmed when it is read — nor when `<title>` and
 `<originaltitle>` are compared for a set-file-only rename, or MediaElch's own files
 would look renamed whenever a set's name carries whitespace.  It is a join key that must
