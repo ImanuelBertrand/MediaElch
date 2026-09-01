@@ -290,7 +290,9 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         //
         // movieSetFileName() asks too, and covers the three record paths that build a
         // path through it.  What this predicate covers on its own is movieSetsWithRecord(),
-        // which lists the folder itself and never builds a per-set path.  Its check is below.
+        // which lists the folder itself and never goes through movieSetFileName() -- it
+        // does build a path to each record, but derives it from the listing.  Its check is
+        // below.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());

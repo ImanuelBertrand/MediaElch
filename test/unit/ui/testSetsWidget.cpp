@@ -535,11 +535,18 @@ TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set
         //    dies with SIGSEGV.  Catch reports that as a failed assertion and the binary
         //    exits 139, so ctest fails.  Ugly, but not a hang, and not something this
         //    test can prevent -- the crash happens before any dialog exists.
-        //  - the queued lambda below, which runs inside that nested loop and closes
+        //  - the queued lambda below, which would run inside that nested loop and close
         //    whatever modal it finds.  It is the one that would keep this honest if the
-        //    crash ever went away, and with the guards in place it finds nothing to
-        //    close and does nothing.  It has never been observed to fire; it is
-        //    insurance, and is written down as insurance rather than as the mechanism.
+        //    crash ever went away -- which it does the day any unit test constructs a
+        //    MainWindow.  **It has never executed, so nothing here establishes that it
+        //    works: it is unverified insurance, not the mechanism.**  With the guards in
+        //    place no modal is created and it finds nothing to close.
+        //
+        // It closes whatever modal is active, not one belonging to this widget, so each
+        // one is drained immediately after the call it was posted for.  Left in the
+        // queue it would be consumed by some later processEvents() and could close an
+        // unrelated test's dialog -- which happens to be harmless today only because a
+        // guard's destructor drains it, and that is luck rather than design.
         const auto closeAnyModal = [] {
             QTimer::singleShot(0, qApp, [] {
                 if (QWidget* modal = QApplication::activeModalWidget()) {
@@ -551,8 +558,10 @@ TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set
         test::MessageCapture messages;
         closeAnyModal();
         REQUIRE(QMetaObject::invokeMethod(&widget, "chooseSetPoster"));
+        qApp->processEvents();
         closeAnyModal();
         REQUIRE(QMetaObject::invokeMethod(&widget, "chooseSetBackdrop"));
+        qApp->processEvents();
         CHECK(messages.contains("Not choosing a set poster"));
         CHECK(messages.contains("Not choosing a set backdrop"));
     }

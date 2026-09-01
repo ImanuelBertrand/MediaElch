@@ -1374,12 +1374,13 @@ namespace {
 ///          of the four `set.nfo` paths (the read, the write and the removal) build their
 ///          path through movieSetNfoFileName() and therefore through movieSetFileName(),
 ///          so that guard already covers them.  The fourth, movieSetsWithRecord(), does
-///          not: it lists the folder itself, from movieSetArtworkDirectory().dir(),
-///          without ever building a per-set path.  **That enumeration is what this guard
-///          is for.**  Without it, a `set.nfo` sitting in the working directory would be
-///          reported as a record, and having a record is what decides whether the model
-///          keeps or drops a set.  Both guards are pinned by tests in
-///          testKodi_v22_movie_set.cpp.
+///          not: it lists movieSetArtworkDirectory().dir() itself and never goes through
+///          movieSetFileName().  It does build a path to each record it finds -- that is
+///          how it opens them -- but it derives that path from the listing, so nothing on
+///          that route is guarded.  **That enumeration is what this predicate is for.**
+///          Without it, a `set.nfo` sitting in the working directory would be reported as
+///          a record, and having a record is what decides whether the model keeps or
+///          drops a set.  Both guards are pinned by tests in testKodi_v22_movie_set.cpp.
 bool movieSetFolderIsConfigured()
 {
     return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder
