@@ -294,11 +294,40 @@ TEST_CASE("MovieSet display title", "[data][movie][set]")
         CHECK(set.displayName() == "Alien Anthology");
     }
 
-    SECTION("a key moved onto its own display title still dirties the set")
+    SECTION("an observer of the rename never sees the abolished display title")
     {
-        // The order inside setName() matters: clear the title first, and the set is
-        // still marked as needing to be saved.  Clear it after a no-op check on the
-        // title and this rename would look like nothing happened.
+        // The order inside setName() is load bearing and this is the only thing that
+        // detects it: setChanged() emits sigChanged synchronously, so an observer reads
+        // the set from inside its own slot.  Clear the title *after* the emit and every
+        // observer sees the new key still carrying the old display title -- the name the
+        // rename just abolished -- and paints it back on screen.
+        //
+        // Asserted inside the slot rather than after the call, because after the call
+        // both orders look identical.  An earlier version of this test checked
+        // hasChanged() afterwards and could not tell the two apart at all.
+        MovieSet set{"Alien Collection"};
+        set.setTitle("The Alien Saga");
+        set.setChanged(false);
+
+        int observed = 0;
+        QString seenDisplayName;
+        QString seenTitle;
+        QObject::connect(&set, &MovieSet::sigChanged, [&](MovieSet* changed) {
+            ++observed;
+            seenDisplayName = changed->displayName();
+            seenTitle = changed->title();
+        });
+
+        set.setName("Alien Anthology");
+
+        REQUIRE(observed == 1);
+        CHECK(seenDisplayName == "Alien Anthology");
+        CHECK(seenTitle.isEmpty());
+        CHECK(set.hasChanged());
+    }
+
+    SECTION("a key moved onto its own display title still re-unifies and dirties")
+    {
         MovieSet set{"Alien Collection"};
         set.setTitle("The Alien Saga");
         set.setChanged(false);

@@ -71,11 +71,16 @@ void MovieSet::setName(QString name)
         return;
     }
     m_name = std::move(name);
-    // Moving the key re-unifies the two names; see setName()'s documentation.  Done
-    // before setChanged(true) so that a set whose key moved onto its own display
-    // title -- rename to the very string a set-file-only rename had already put in
-    // the record -- still ends up dirty, which the no-op guard in setTitle() would
-    // otherwise decide against.
+    // Moving the key re-unifies the two names; see setName()'s documentation.
+    //
+    // Before setChanged(true), because that emits sigChanged **synchronously** and every
+    // observer reads the set from inside its own slot.  Clear the title afterwards and
+    // each of them sees the new key carrying the old display title -- the very name this
+    // rename just abolished -- so displayName() answers with it and a repaint puts it
+    // back on screen.  There is no dirty-flag reason for the order: setChanged() assigns
+    // unconditionally, and this function never calls setTitle(), so setTitle()'s no-op
+    // guard is not on this path at all.  An earlier version of this comment said it was,
+    // which was checkable and wrong.
     m_title.clear();
     setChanged(true);
 }
