@@ -25,6 +25,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSet>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -143,28 +144,58 @@ void writeRecord(const QDir& msif, const QString& setName)
     record.close();
 }
 
-/// \brief The text of every notification currently on screen, joined.
+/// \brief The notifications raised while this object was alive, and only those.
 /// \details The user-facing half of a refusal, which the log lines beside it do not
 ///          stand in for: the three-state move exists so that the *message* is true for
 ///          the branch it describes, and a test that only greps the log cannot see the
 ///          sentence the user is shown.  NotificationBox keeps its messages as Message
 ///          widgets, each with one QLabel holding the text.
 ///
-///          Nothing clears them between reads, and nothing should: NotificationBox owns
-///          its Message widgets and hides them on a timer, so deleting them behind its
-///          back leaves dangling pointers in its own list and the next showMessage()
-///          walks them.  Within one test the messages are the ones that test caused, and
-///          every assertion here is a substring match, so extra text is harmless.
-QString notificationText()
+///          Scoped rather than read wholesale, and that is not tidiness.  NotificationBox
+///          is a **singleton**, and its messages are removed only by a timer that never
+///          fires under this harness -- so reading all of them returns everything every
+///          test in the process has ever raised.  Under ctest each case is its own
+///          process and that is invisible; run the binary directly, which is an ordinary
+///          thing to do, and a `ContainsNot` assertion goes red on another test's
+///          message.  A red assertion that is not a defect is worse than no assertion,
+///          because the next person spends the afternoon on a bug that is not there.
+///
+///          The messages are **not** cleared to achieve that: NotificationBox owns those
+///          widgets and deleting them behind its back leaves dangling pointers in its own
+///          list, which the next showMessage() walks.  So the ones already there are
+///          remembered by pointer and skipped.  Nothing deletes them, so no address can
+///          be reused and no stale pointer can match a new message.
+class NotificationWatcher
 {
-    QStringList texts;
-    for (const QLabel* label : NotificationBox::instance()->findChildren<QLabel*>()) {
-        if (!label->text().isEmpty()) {
-            texts << label->text();
+public:
+    NotificationWatcher() : m_before{currentLabels()} {}
+    NotificationWatcher(const NotificationWatcher&) = delete;
+    NotificationWatcher& operator=(const NotificationWatcher&) = delete;
+
+    /// \brief The text of every notification raised since construction, joined.
+    ELCH_NODISCARD QString text() const
+    {
+        QStringList texts;
+        for (const QLabel* label : NotificationBox::instance()->findChildren<QLabel*>()) {
+            if (!m_before.contains(label) && !label->text().isEmpty()) {
+                texts << label->text();
+            }
         }
+        return texts.join("\n");
     }
-    return texts.join("\n");
-}
+
+private:
+    static QSet<const QLabel*> currentLabels()
+    {
+        QSet<const QLabel*> labels;
+        for (const QLabel* label : NotificationBox::instance()->findChildren<QLabel*>()) {
+            labels.insert(label);
+        }
+        return labels;
+    }
+
+    QSet<const QLabel*> m_before;
+};
 
 /// \brief Answers the next modal question box by clicking \p button.
 /// \details Posted before the call that opens the box: QMessageBox::exec() spins a
@@ -1035,13 +1066,14 @@ TEST_CASE("An all-movie-files rename that cannot move its files says so", "[ui][
     SetsWidget widget;
     widget.loadSets();
 
+    const NotificationWatcher notifications;
     test::MessageCapture messages;
     renameFirstSet(widget, "Alien Anthology");
 
     CHECK(messages.contains("could not be moved"));
     // And the user is told they are still under the old name, which for this branch --
     // nothing moved at all -- is true.
-    const QString shown = notificationText();
+    const QString shown = notifications.text();
     CHECK_THAT(shown, Contains("could not be moved"));
     CHECK_THAT(shown, Contains("Alien Collection"));
 
@@ -1090,6 +1122,7 @@ TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[
     SetsWidget widget;
     widget.loadSets();
 
+    const NotificationWatcher notifications;
     test::MessageCapture messages;
     renameFirstSet(widget, "Alien Anthology");
 
@@ -1099,7 +1132,7 @@ TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[
 
     // The sentence the user is actually shown, which is the whole point of the three
     // states: the log line is not what tells them where their artwork went.
-    const QString shown = notificationText();
+    const QString shown = notifications.text();
     CHECK_THAT(shown, Contains("only some of its files could be moved"));
     CHECK_THAT(shown, Contains("still"));
     // It must not claim the set is stored under the old name -- the folder moved.
@@ -1232,12 +1265,13 @@ TEST_CASE("Clearing a set name is refused and takes no movie with it", "[ui][mov
     SetsWidget widget;
     widget.loadSets();
 
+    const NotificationWatcher notifications;
     test::MessageCapture messages;
     renameFirstSet(widget, "");
 
     CHECK(messages.contains("was not renamed"));
     CHECK(messages.contains("empty name"));
-    CHECK_THAT(notificationText(), Contains("cannot have an empty name"));
+    CHECK_THAT(notifications.text(), Contains("cannot have an empty name"));
 
     // The set is intact and still findable by its key.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();

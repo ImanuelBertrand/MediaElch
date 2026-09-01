@@ -862,8 +862,10 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     // every member NFO, with the MovieSet still in the model and its row no longer
     // findable by anything.  Silently.
     //
-    // Below the merge check on purpose: `MovieSetModel::addSet()` refuses the empty name,
-    // so no set is ever keyed by it and an empty name can never be a merge target.
+    // Above the merge check, and safe there: `MovieSetModel::addSet()` refuses the empty
+    // name, so no set is ever keyed by it and an empty name can never be a merge target.
+    // Nothing below is skipped by moving it up, which is why it can sit where it covers
+    // all three operations at once.
     if (origSet == nullptr) {
         // A row for a set the model no longer has.  Not the user's doing and there is
         // nothing to rename, so this reverts quietly.
@@ -934,22 +936,12 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     }
 }
 
-/// \brief Refuses \p newName if another set already answers to it, by either of its names.
-/// \return Whether the rename was refused; the caller returns without doing anything.
-/// \details The merge check in onSetNameChanged() asks MovieSetModel::set(), which
-///          matches on the **key** alone -- so it catches only a name that is another
-///          set's key, and a name that is another set's *display title* sails past it as
-///          "not a merge".  That is right about Kodi (two sets sharing a display title
-///          are still two sets) and wrong about this tab, which would then show two rows
-///          the user cannot tell apart and could not rename unambiguously.
-///
-///          Both renames need it, not just the set-file-only one.  Under all movie files
-///          the typed name becomes this set's key, and colliding with another set's
-///          display title produces the same two identical rows -- permanently, since the
-///          key is what the next reload rebuilds from.
 /// \brief Whether any set other than \p except answers to \p name, by either of its names.
-/// \details One derivation, used by the rename refusal and by *Add Movie Set*'s
-///          uniquifier.  Two of them is how they came apart in the first place.
+/// \details One derivation, used by refuseIfNameIsTaken() below and by *Add Movie Set*'s
+///          uniquifier.  Two of them is how they came apart in the first place: the
+///          uniquifier asked MovieSetModel::set(), which matches keys only, so a set whose
+///          *display title* was already "New Movie Set" let it create the very pair of
+///          indistinguishable rows the rename refusal exists to prevent.
 ///
 ///          Deliberately **not** applied to the paths that merely reflect what the files
 ///          already say -- MovieSetXmlReader, MovieSetModel::reload() and
@@ -971,6 +963,19 @@ bool SetsWidget::setNameIsTaken(const QString& name, const MovieSet* except) con
     return false;
 }
 
+/// \brief Refuses \p newName if another set already answers to it, by either of its names.
+/// \return Whether the rename was refused; the caller returns without doing anything.
+/// \details The merge check in onSetNameChanged() asks MovieSetModel::set(), which
+///          matches on the **key** alone -- so it catches only a name that is another
+///          set's key, and a name that is another set's *display title* sails past it as
+///          "not a merge".  That is right about Kodi (two sets sharing a display title
+///          are still two sets) and wrong about this tab, which would then show two rows
+///          the user cannot tell apart and could not rename unambiguously.
+///
+///          Both renames need it, not just the set-file-only one.  Under all movie files
+///          the typed name becomes this set's key, and colliding with another set's
+///          display title produces the same two identical rows -- permanently, since the
+///          key is what the next reload rebuilds from.
 bool SetsWidget::refuseIfNameIsTaken(QTableWidgetItem* item, MovieSet* origSet, const QString& newName)
 {
     // origSet is never null: onSetNameChanged() has established that before dispatching.
