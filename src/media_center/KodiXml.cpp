@@ -1393,6 +1393,19 @@ QStringList KodiXml::movieSetsWithRecord()
             qCWarning(generic) << "[KodiXml] Movie set record names no set:" << file.fileName();
             continue;
         }
+        // And only if the name resolves back to the folder it was found in.  This is
+        // half of the one question every path here asks -- "is there a record whose
+        // <originaltitle> is this name, where that name's own path puts it?" -- and
+        // loadMovieSet() asks the other half.  Both halves are needed: a record reported
+        // from a folder the name does not resolve to would be looked for elsewhere by
+        // loadMovieSet(), written a second time elsewhere by saveMovieSet() and not
+        // removed at all by removeMovieSetRecord(), so the set would flip between having
+        // a record and not having one from one reload to the next.
+        if (mediaelch::kodi::makeLegalFileName(setName) != folder) {
+            qCWarning(generic) << "[KodiXml] Ignoring movie set record" << file.fileName() << "-- it names" << setName
+                               << "but that set's folder would be" << mediaelch::kodi::makeLegalFileName(setName);
+            continue;
+        }
         setNames.append(setName);
     }
     return setNames;
@@ -1411,6 +1424,27 @@ bool KodiXml::loadMovieSet(MovieSet& set)
     QDomDocument domDoc;
     domDoc.setContent(file.readAll());
     file.close();
+
+    // Checked *before* anything is applied to the set.  The path is derived from the set
+    // name through a lossy legalisation, so the file sitting there is not necessarily
+    // this set's: two names can share one folder ("Mission: Impossible" and
+    // "Mission_ Impossible" both legalise to the latter), a case-insensitive file system
+    // hands back a folder whose name differs in case, and a folder can be renamed by
+    // hand.  Answering "found" for someone else's record would read their overview and
+    // id into this set and, worse, mark this set as having a record -- which is what
+    // decides whether it survives losing its last member and whether removeSet() deletes
+    // a file.
+    const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
+    if (recordName.isEmpty()) {
+        qCWarning(generic) << "[KodiXml] Movie set record names no set:" << fileName;
+        return false;
+    }
+    if (recordName != set.name()) {
+        qCWarning(generic) << "[KodiXml] Movie set record" << fileName << "names" << recordName << "and not"
+                           << set.name() << "-- the two names share one folder; treating" << set.name()
+                           << "as having no record.";
+        return false;
+    }
 
     mediaelch::kodi::MovieSetXmlReader reader(set);
     if (!reader.parseNfoDom(domDoc)) {
@@ -1457,6 +1491,22 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
     if (!file.exists()) {
         // Already gone, which is what the caller wanted.
         return true;
+    }
+    // The same lossy legalisation that loadMovieSet() guards against, at the one place
+    // where being wrong destroys a file: two set names can share a folder, and only one
+    // of them owns the record in it.  The caller only asks when the model believes this
+    // set has a record, so this should never fire -- which is exactly why it is cheap to
+    // keep, and why it refuses rather than warns and proceeds.
+    if (file.open(QIODevice::ReadOnly)) {
+        QDomDocument domDoc;
+        domDoc.setContent(file.readAll());
+        file.close();
+        const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
+        if (recordName != setName) {
+            qCWarning(generic) << "[KodiXml] Not removing movie set record" << fileName << "-- it names" << recordName
+                               << "and not" << setName;
+            return false;
+        }
     }
     if (!file.remove()) {
         qCWarning(generic) << "[KodiXml] Cannot remove movie set record" << fileName;

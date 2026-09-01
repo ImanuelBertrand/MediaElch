@@ -299,6 +299,70 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
     }
 
+    SECTION("A record belongs to the set it names, not to the folder it sits in")
+    {
+        // The path is derived from the set name through Kodi's legalisation, which is
+        // lossy: "Mission: Impossible" and "Mission_ Impossible" resolve to one folder.
+        // Only one of them owns the record in it, and every path has to agree about
+        // which -- otherwise a set flips between having a record and not having one from
+        // one reload to the next, and Delete Movie Set removes another set's file.
+        const QDir msif = emptyMsif("collision");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet owner("Mission: Impossible Collection");
+        owner.setOverview("Ethan Hunt runs.");
+        REQUIRE(mediaCenter->saveMovieSet(owner));
+
+        // The listing reports the set the file names, and only that one.
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Mission: Impossible Collection"});
+
+        // The other name resolves to the same file and must not be given it.
+        MovieSet lodger("Mission_ Impossible Collection");
+        CHECK_FALSE(mediaCenter->loadMovieSet(lodger));
+        CHECK(lodger.overview().isEmpty());
+
+        // And must not be able to delete it.
+        CHECK_FALSE(mediaCenter->removeMovieSetRecord("Mission_ Impossible Collection"));
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
+
+        // The set that does own it still can.
+        CHECK(mediaCenter->removeMovieSetRecord("Mission: Impossible Collection"));
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
+    }
+
+    SECTION("A record in a folder its own name does not resolve to is ignored")
+    {
+        // Reporting it would name a set whose every write path looks somewhere else:
+        // loadMovieSet() would not find it, saveMovieSet() would write a second file in
+        // the right folder and removeMovieSetRecord() would remove neither.
+        const QDir msif = emptyMsif("misfiled");
+        MovieSetFolderGuard::useFolder(msif);
+        REQUIRE(QDir().mkpath(msif.absoluteFilePath("Alien")));
+        QFile record(msif.absoluteFilePath("Alien/set.nfo"));
+        REQUIRE(record.open(QIODevice::WriteOnly));
+        record.write(R"(<set><originaltitle>Alien Collection</originaltitle></set>)");
+        record.close();
+
+        CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
+    }
+
+    SECTION("A name whose whitespace matters round-trips")
+    {
+        // The name is a join key that has to be byte-identical to the member NFOs'
+        // <set><name>, so the reader does not trim it.  Trimming would report this set
+        // under one spelling and look it up under another, because Kodi's legalisation
+        // chops only *trailing* whitespace.
+        const QDir msif = emptyMsif("whitespace");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set(" Alien Collection");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{" Alien Collection"});
+
+        MovieSet read(" Alien Collection");
+        CHECK(mediaCenter->loadMovieSet(read));
+    }
+
     SECTION("The folder name is legalised; the set's name is not")
     {
         // Kodi derives the folder from the set name with MakeLegalFileName, which is

@@ -18,6 +18,20 @@ QString childText(const QDomElement& parent, const QString& tagName)
     return child.isNull() ? QString() : child.text().trimmed();
 }
 
+/// \brief The text of \p parent's first \p tagName child, **not** trimmed.
+/// \details Used for the set's name and nothing else.  The name is a join key that has
+///          to be byte-identical to the `<set><name>` in every member movie's NFO, and
+///          the movie NFO reader does not trim that either
+///          (`MovieXmlReader::movieSet()`).  Normalising it here would silently fork the
+///          two apart, and it would fork this reader from the folder name as well, since
+///          Kodi's legalisation chops only *trailing* whitespace -- a name with a leading
+///          space would be reported under one spelling and looked up under another.
+QString untrimmedChildText(const QDomElement& parent, const QString& tagName)
+{
+    const QDomElement child = parent.firstChildElement(tagName);
+    return child.isNull() ? QString() : child.text();
+}
+
 /// \brief The TMDB collection id of a `<set>` element, or NoId.
 /// \details Only `<uniqueid type="tmdb">` is accepted.  Unlike the movie NFO, which has
 ///          to read three historical spellings because other tools wrote them, this file
@@ -52,7 +66,7 @@ bool MovieSetXmlReader::parseNfoDom(const QDomDocument& domDoc)
         return false;
     }
 
-    const QString originalTitle = childText(setElement, "originaltitle");
+    const QString originalTitle = untrimmedChildText(setElement, "originaltitle");
     const QString title = childText(setElement, "title");
     if (!originalTitle.isEmpty() && !title.isEmpty() && originalTitle != title) {
         // A set-file-only rename: Kodi 22 displays <title> and matches on
@@ -81,14 +95,14 @@ QString MovieSetXmlReader::setNameOf(const QDomDocument& domDoc)
     if (setElement.isNull() || setElement.tagName() != "set") {
         return {};
     }
-    const QString originalTitle = childText(setElement, "originaltitle");
+    const QString originalTitle = untrimmedChildText(setElement, "originaltitle");
     if (!originalTitle.isEmpty()) {
         return originalTitle;
     }
     // <originaltitle> is what a member NFO's <set><name> has to match, so it is the
     // name.  A file that has only <title> was not written by MediaElch; take it rather
     // than ignoring the set, since the alternative is a set the user cannot see at all.
-    return childText(setElement, "title");
+    return untrimmedChildText(setElement, "title");
 }
 
 } // namespace kodi
