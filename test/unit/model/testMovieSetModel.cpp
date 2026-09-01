@@ -1574,3 +1574,58 @@ TEST_CASE("A set with members survives a reload in every configuration", "[model
         CHECK(mediaCenter.savedRecordCount() == 0);
     }
 }
+
+TEST_CASE("MovieSetModel lets go of the library before it is torn down", "[model][movie][set]")
+{
+    // The application's shutdown in miniature: the model outlives the movies and the
+    // media center, but not Settings behind it, so a movie destroyed during teardown
+    // must not reach the media center from here.  Manager::~Manager() detaches first.
+    QObject owner;
+    MovieModel movies;
+    MovieSetModel sets;
+    MediaCenterInterfaceMock mediaCenter;
+    mediaCenter.setRecordsEnabled(true);
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+    sets.setMovieModel(&movies);
+    sets.setRecordSource(&mediaCenter);
+    REQUIRE(sets.sets().size() == 1);
+
+    SECTION("detaching drops the sets and the record source")
+    {
+        sets.detachFromLibrary();
+
+        CHECK(sets.sets().isEmpty());
+        CHECK_FALSE(sets.recordsAreConfigured());
+    }
+
+    SECTION("a movie destroyed after detaching does not reach the media center")
+    {
+        sets.detachFromLibrary();
+        const int queriesBefore = mediaCenter.recordsEnabledQueryCount();
+
+        delete alien;
+
+        CHECK(mediaCenter.recordsEnabledQueryCount() == queriesBefore);
+        CHECK(sets.sets().isEmpty());
+    }
+
+    SECTION("a movie destroyed while still attached does reach it")
+    {
+        // The path that aborted MediaElch on exit.  Without this the section above would
+        // still pass if detachFromLibrary() were never called from anywhere.
+        const int queriesBefore = mediaCenter.recordsEnabledQueryCount();
+
+        delete alien;
+
+        CHECK(mediaCenter.recordsEnabledQueryCount() > queriesBefore);
+    }
+
+    SECTION("detaching twice is a no-op")
+    {
+        sets.detachFromLibrary();
+        sets.detachFromLibrary();
+
+        CHECK(sets.sets().isEmpty());
+    }
+}

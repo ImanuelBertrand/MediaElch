@@ -47,7 +47,7 @@ class Manager : public QObject
 
 public:
     explicit Manager(QObject* parent = nullptr);
-    ~Manager() override = default;
+    ~Manager() override;
 
     static Manager* instance();
     ELCH_NODISCARD mediaelch::ScraperManager& scrapers();

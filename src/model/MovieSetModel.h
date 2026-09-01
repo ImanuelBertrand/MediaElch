@@ -85,6 +85,12 @@ public:
     ///          set information folder.
     void setRecordSource(MediaCenterInterface* mediaCenter);
 
+    /// \brief Stops following the library, for good.  Called from Manager::~Manager().
+    /// \details The model outlives Settings -- which the media center asks and which the
+    ///          QApplication destroys first -- so a movie destroyed during teardown must
+    ///          not reach recordsAreConfigured() from here.  Idempotent.
+    void detachFromLibrary();
+
     /// \brief All sets, in the order they were first seen.  Owned by this model.
     /// \details A set is never dropped for merely having no members -- an edit that
     ///          empties one leaves it standing, and one created by addSet() and never

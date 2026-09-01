@@ -261,6 +261,26 @@ void MovieSetModel::dropEmptySets()
     }
 }
 
+void MovieSetModel::detachFromLibrary()
+{
+    // The record source first: every path below could still run once more, and each of
+    // them ends in recordsAreConfigured(), which is what reaches Settings.
+    m_mediaCenter = nullptr;
+
+    if (m_movieModel != nullptr) {
+        m_movieModel->disconnect(this);
+        m_movieModel = nullptr;
+    }
+    // The index names exactly the movies this model attached, and still does now that
+    // the movie model has been dropped.
+    for (auto it = m_setNameByMovie.cbegin(), end = m_setNameByMovie.cend(); it != end; ++it) {
+        it.key()->disconnect(this);
+    }
+    // Destroyed, not merely emptied: that takes the sets' own destroyed() connections
+    // to the movies with them.
+    clear();
+}
+
 bool MovieSetModel::recordsAreConfigured() const
 {
     return m_mediaCenter != nullptr && m_mediaCenter->movieSetRecordsEnabled();

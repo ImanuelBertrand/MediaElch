@@ -59,6 +59,16 @@ Manager::Manager(QObject* parent) : QObject(parent)
     m_csvExportModule->onInit();
 }
 
+Manager::~Manager()
+{
+    // Runs before the children go, and they go in creation order: m_movieFileSearcher --
+    // the parent of every Movie -- dies first, and each movie's destroyed() would reach
+    // the set model, which asks the media center, which asks Settings::instance().
+    // Settings is an older child of the QApplication and gone by then; that read
+    // corrupted the heap and aborted MediaElch on exit.
+    m_movieSetModel->detachFromLibrary();
+}
+
 Manager* Manager::instance()
 {
     static auto* s_instance = new Manager(QApplication::instance());

@@ -40,10 +40,17 @@ public:
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
+    /// \brief How often records-are-configured was asked -- the question every other
+    ///        one here goes through, so zero means the media center was not touched.
+    ELCH_NODISCARD int recordsEnabledQueryCount() const { return m_recordsEnabledQueries; }
 
     // The movie set record calls: the four MovieSetModel uses, plus saveMovieSet(),
     // which is SetsWidget's.
-    ELCH_NODISCARD bool movieSetRecordsEnabled() const override { return m_recordsEnabled; }
+    ELCH_NODISCARD bool movieSetRecordsEnabled() const override
+    {
+        ++m_recordsEnabledQueries;
+        return m_recordsEnabled;
+    }
     ELCH_NODISCARD QStringList movieSetsWithRecord() override
     {
         ++m_listingCount;
@@ -130,4 +137,5 @@ private:
     bool m_writeRefused = false;
     int m_savedRecordCount = 0;
     int m_listingCount = 0;
+    mutable int m_recordsEnabledQueries = 0;
 };
