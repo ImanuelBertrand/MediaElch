@@ -12,7 +12,6 @@
 #include "model/MovieSetModel.h"
 #include "settings/DataFile.h"
 #include "settings/Settings.h"
-#include "test/helpers/message_capture.h"
 #include "test/helpers/movie_set_settings.h"
 #include "test/helpers/resource_dir.h"
 
@@ -69,11 +68,12 @@ TEST_CASE("Movie set record round trip", "[data][movie][movie_set][kodi][nfo]")
         test::compareXmlAgainstResourceFile(QString::fromUtf8(writer.getMovieSetXml()).trimmed(), filename);
     }
 
-    SECTION("<originaltitle> is the join key and equals <title> on write")
+    SECTION("<originaltitle> is the join key and equals <title> until a rename")
     {
         // The member NFOs carry <set><name>; this file carries <title> and
-        // <originaltitle>, and Kodi 22 matches on <originaltitle>.  Write them apart
-        // and Kodi keys the set's row off a name no movie NFO mentions.
+        // <originaltitle>, and Kodi 22 matches on <originaltitle>.  For a set that has
+        // had no set-file-only rename the two are one string, so writing them apart here
+        // would key Kodi's row off a name no movie NFO mentions.
         MovieSet set("Alien Collection");
         const kodi::MovieSetXmlWriter writer(set);
         const QString xml = QString::fromUtf8(writer.getMovieSetXml());
@@ -82,6 +82,20 @@ TEST_CASE("Movie set record round trip", "[data][movie][movie_set][kodi][nfo]")
         CHECK_THAT(xml, Contains("<originaltitle>Alien Collection</originaltitle>"));
         // Not <name>, which is the movie NFO's spelling for the same thing.
         CHECK_THAT(xml, ContainsNot("<name>"));
+    }
+
+    SECTION("A set-file-only rename writes the two apart, key first")
+    {
+        // The other half of the same rule: after such a rename <title> is what Kodi 22
+        // displays and <originaltitle> is still what it matches on, so the key must not
+        // follow the title.  This is the only file in the design that can hold both.
+        MovieSet set("Alien Collection");
+        set.setTitle("The Alien Saga");
+        const kodi::MovieSetXmlWriter writer(set);
+        const QString xml = QString::fromUtf8(writer.getMovieSetXml());
+
+        CHECK_THAT(xml, Contains("<title>The Alien Saga</title>"));
+        CHECK_THAT(xml, Contains("<originaltitle>Alien Collection</originaltitle>"));
     }
 
     SECTION("An empty overview is never written")
@@ -124,16 +138,39 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
         CHECK(set->tmdbId() == TmdbId::NoId);
     }
 
-    SECTION("Never renames the set")
+    SECTION("Never moves the set's key, and keeps the display title beside it")
     {
-        // A <title> that has moved away from <originaltitle> is a set-file-only rename,
-        // which is D3a's business.  MediaElch has one name per set, and it is the join
-        // key the member movies use.
+        // A <title> that has moved away from <originaltitle> is a set-file-only rename.
+        // The key stays exactly where the member movies' NFOs put it; the title is what
+        // moved, and it is kept -- dropping it, which this reader used to do, makes every
+        // reload undo the last set-file-only rename.
         const auto set = parseSet(R"(<set>
             <title>The Alien Saga</title>
             <originaltitle>Alien Collection</originaltitle>
         </set>)");
         CHECK(set->name() == "Alien Collection");
+        CHECK(set->title() == "The Alien Saga");
+        CHECK(set->displayName() == "The Alien Saga");
+    }
+
+    SECTION("A record with no divergence has no display title of its own")
+    {
+        const auto set = parseSet(R"(<set>
+            <title>Alien Collection</title>
+            <originaltitle>Alien Collection</originaltitle>
+        </set>)");
+        CHECK(set->title().isEmpty());
+        CHECK(set->displayName() == "Alien Collection");
+    }
+
+    SECTION("A record with only <title> is a name, not a rename")
+    {
+        // setNameOf() falls back to <title> for a file MediaElch did not write, so the
+        // set's key is already that string; a display title would duplicate it.
+        const auto set = parseSet("<set><title>Alien Collection</title></set>");
+        CHECK(set->name() == "Alien Collection");
+        CHECK(set->title().isEmpty());
+        CHECK(set->displayName() == "Alien Collection");
     }
 
     SECTION("The reader alone leaves the set marked as changed")
@@ -167,29 +204,29 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
 
 TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][nfo]")
 {
-    // The detector's only observable is a log line, which is why it went unpinned for a
-    // round.  It is assertable with the same fixture that pins the model's discard
-    // warning, so there is no excuse: a message that should not be there is as much a
-    // defect as a missing one.
-    SECTION("MediaElch's own record is never reported as renamed")
+    // This used to assert on a log line, because dropping the display title left nothing
+    // else to observe.  The title is kept now, so the observable is the set itself --
+    // which is a stronger assertion about the same question and does not go quiet if
+    // somebody changes the wording of a message.
+    SECTION("MediaElch's own record is never read as a rename")
     {
-        // The writer emits <title> and <originaltitle> from one name, so they can only
-        // differ if something else wrote the file.  Reading one trimmed and the other not
-        // made every set whose name carries whitespace look renamed.
-        test::MessageCapture messages;
+        // The writer emits <title> and <originaltitle> from one name unless there really
+        // is a divergence, so they can only differ here if something else wrote the file.
+        // Reading one trimmed and the other not made every set whose name carries
+        // whitespace look renamed -- and would now give it a display title it never had.
         MovieSet set(" Alien Collection");
         QDomDocument doc;
         doc.setContent(QString::fromUtf8(kodi::MovieSetXmlWriter(set).getMovieSetXml()));
         kodi::MovieSetXmlReader reader(set);
         REQUIRE(reader.parseNfoDom(doc));
 
-        CHECK_FALSE(messages.contains("is displayed as"));
+        CHECK(set.title().isEmpty());
+        CHECK(set.displayName() == " Alien Collection");
     }
 
     SECTION("A record that really was renamed in the set file still says so")
     {
-        // And the fix must not have bought that silence by blunting the signal D3a needs.
-        test::MessageCapture messages;
+        // And the fix must not have bought that silence by blunting the signal.
         MovieSet set("Alien Collection");
         QDomDocument doc;
         doc.setContent(
@@ -197,8 +234,40 @@ TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][n
         kodi::MovieSetXmlReader reader(set);
         REQUIRE(reader.parseNfoDom(doc));
 
-        CHECK(messages.contains("is displayed as"));
         CHECK(set.name() == "Alien Collection");
+        CHECK(set.title() == "The Alien Saga");
+    }
+
+    SECTION("Whitespace alone is a real divergence and survives untrimmed")
+    {
+        // The reader compares both elements untrimmed, so this is a rename rather than
+        // noise, and the display title keeps the space that makes it one.
+        MovieSet set("Alien Collection");
+        QDomDocument doc;
+        doc.setContent(
+            QStringLiteral("<set><title>Alien Collection </title><originaltitle>Alien Collection</originaltitle></set>"));
+        kodi::MovieSetXmlReader reader(set);
+        REQUIRE(reader.parseNfoDom(doc));
+
+        CHECK(set.name() == "Alien Collection");
+        CHECK(set.title() == "Alien Collection ");
+    }
+
+    SECTION("A set-file-only rename round-trips through the writer and back")
+    {
+        // The whole point of holding both strings: a reload must not undo the rename.
+        MovieSet set("Alien Collection");
+        set.setTitle("The Alien Saga");
+
+        QDomDocument doc;
+        doc.setContent(QString::fromUtf8(kodi::MovieSetXmlWriter(set).getMovieSetXml()));
+
+        MovieSet readBack("Alien Collection");
+        kodi::MovieSetXmlReader reader(readBack);
+        REQUIRE(reader.parseNfoDom(doc));
+
+        CHECK(readBack.name() == "Alien Collection");
+        CHECK(readBack.title() == "The Alien Saga");
     }
 }
 

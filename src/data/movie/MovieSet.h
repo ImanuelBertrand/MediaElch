@@ -31,7 +31,21 @@ public:
     explicit MovieSet(QString name, QObject* parent = nullptr);
     ~MovieSet() override = default;
 
+    /// \brief The set's match key: what identifies it, everywhere and to everyone.
+    /// \details This is the string that has to be byte-identical to the `<set><name>`
+    ///          in every member movie's NFO, that Kodi 22 matches a set on
+    ///          (`set.nfo`'s `<originaltitle>`), that names the set's folder on disk,
+    ///          and that MovieSetModel keys its sets by.  It is **not** necessarily
+    ///          what the user sees: after a set-file-only rename the two part company,
+    ///          and displayName() is the one to show.  See D-B.
     ELCH_NODISCARD QString name() const;
+    /// \brief The set's display title, or empty if it has none of its own.
+    /// \details Prefer displayName(); this raw accessor exists for the record writer,
+    ///          which has to know whether to emit a `<title>` that differs from
+    ///          `<originaltitle>` at all.
+    ELCH_NODISCARD QString title() const;
+    /// \brief What to show the user: title() where there is one, otherwise name().
+    ELCH_NODISCARD QString displayName() const;
     ELCH_NODISCARD TmdbId tmdbId() const;
     ELCH_NODISCARD QString overview() const;
     /// \brief The set's member movies.  Not owned.
@@ -39,16 +53,36 @@ public:
     ELCH_NODISCARD MovieSetImages& images();
     ELCH_NODISCARD const MovieSetImages& constImages() const;
 
-    /// \brief Sets the set's name, its primary key (D-B).
+    /// \brief Sets the set's match key (D-B).
     /// \details Assigning the value the set already has does nothing at all: it
     ///          neither dirties the set nor emits sigChanged.  That guarantee is
-    ///          scoped to these three scalar setters; MovieSetImages::setImage()
+    ///          scoped to these four scalar setters; MovieSetImages::setImage()
     ///          and setChanged() below both fire unconditionally.
+    ///
+    ///          Moving the key **re-unifies** the two names, so this clears
+    ///          title(): an all-movie-files rename rewrites every member's
+    ///          `<set><name>` and the record's `<originaltitle>` alike, after which
+    ///          there is no separate display title left to hold.  A set-file-only
+    ///          rename does not come through here at all -- it moves the display
+    ///          title and leaves the key where it is, which is the whole point of
+    ///          it -- so this clearing cannot swallow one.
     /// \warning Nothing here checks that no other set is called \p name, and the
     ///          model cannot check afterwards either.  MovieSetModel::addSet() is
     ///          the only uniqueness guard, so a caller renaming a set has to ask
     ///          MovieSetModel::set() first and treat a hit as a merge.
     void setName(QString name);
+    /// \brief Sets the set's display title, the half a set-file-only rename moves.
+    /// \details Empty means "the same as name()", which is what every set that has
+    ///          never had a set-file-only rename carries, so the divergence costs
+    ///          nothing until it exists.  A display title lives in the set's record
+    ///          and nowhere else: a member movie's NFO has no element for it (see
+    ///          the mirror table in D-A), which is why a set with no record cannot
+    ///          have one and why MovieSetModel::seedFromMembers() never sets it.
+    /// \warning Like setName(), this checks nothing about other sets.  Two sets may
+    ///          not share a display title either -- the sets tab would show two
+    ///          identical rows -- and SetsWidget::onSetNameChanged() is what guards
+    ///          it.
+    void setTitle(QString title);
     void setTmdbId(TmdbId id);
     void setOverview(QString overview);
 
@@ -132,6 +166,8 @@ private slots:
 
 private:
     QString m_name;
+    /// \brief The display title, or empty when it is the same as m_name; see title().
+    QString m_title;
     TmdbId m_tmdbId{TmdbId::NoId};
     QString m_overview;
     /// \brief Member movies.  Not owned; owned by MovieModel.

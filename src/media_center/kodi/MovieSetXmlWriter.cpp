@@ -20,10 +20,12 @@ QByteArray MovieSetXmlWriter::getMovieSetXml() const
 
     xml.writeStartElement("set");
 
-    // <title> is what Kodi 22 displays, <originaltitle> is what it matches on, and it
-    // has to be byte-identical to the <set><name> in every member movie's NFO.  Both
-    // are the set's one name until D3a makes a set-file-only rename possible.
-    xml.writeTextElement("title", m_set.name());
+    // <title> is what Kodi 22 displays, <originaltitle> is what it matches on, and the
+    // latter has to be byte-identical to the <set><name> in every member movie's NFO.
+    // For a set that has never had a set-file-only rename the two are the same string;
+    // after one they part company, and this file is the only place that divergence can
+    // live, because a movie NFO has no element for a display title.  See D-B.
+    xml.writeTextElement("title", m_set.displayName());
     xml.writeTextElement("originaltitle", m_set.name());
 
     // Never written empty (D2a).  XMLUtils::GetString() returns true for an

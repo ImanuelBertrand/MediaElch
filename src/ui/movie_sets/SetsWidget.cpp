@@ -232,24 +232,44 @@ void SetsWidget::loadSets()
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     setModel->reload();
 
-    QStringList setNames;
+    // Two strings per row, and which is which decides whether this tab works at all.
+    // Qt::UserRole carries the set's **match key** -- what the member NFOs say, what
+    // names the folder on disk, what MovieSetModel is keyed by -- and every lookup in
+    // this widget goes through it.  The cell *text* is the display title, which is the
+    // same string until a set-file-only rename and a different one after (D-B).  The
+    // widget's three maps are keyed by the match key, like the model.
+    QVector<QPair<QString, QString>> setRows; // (match key, display title)
     for (const MovieSet* movieSet : setModel->sets()) {
         if (m_showOnlyEmptySets && !movieSet->movies().isEmpty()) {
             continue;
         }
-        setNames.append(movieSet->name());
+        setRows.append({movieSet->name(), movieSet->displayName()});
     }
-    setNames.sort();
+    // Sorted by what the user reads, with the key breaking a tie so that the order is
+    // total: two sets may not share a display title, but they may while one is being
+    // renamed onto the other's, and an unstable sort of equal keys would reorder rows
+    // under the user mid-edit.
+    std::sort(setRows.begin(), setRows.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.second != rhs.second ? lhs.second < rhs.second : lhs.first < rhs.first;
+    });
 
-    for (const QString& setName : asConst(setNames)) {
+    for (const auto& setRow : asConst(setRows)) {
+        const QString& setName = setRow.first;
         m_moviesToSave.insert(setName, QVector<Movie*>());
         m_setPosters.insert(setName, QImage());
         m_setBackdrops.insert(setName, QImage());
 
         int row = ui->sets->rowCount();
         ui->sets->insertRow(row);
-        ui->sets->setItem(row, 0, new QTableWidgetItem(setName));
+        ui->sets->setItem(row, 0, new QTableWidgetItem(setRow.second));
         ui->sets->item(row, 0)->setData(Qt::UserRole, setName);
+        if (setRow.second != setName) {
+            // The divergence is never hidden.  A set whose display title is not what its
+            // movie files say is exactly the state a user needs to be able to see, or
+            // "why does Kodi 21 show the old name?" has no answer anywhere in the UI.
+            ui->sets->item(row, 0)->setToolTip(
+                tr("The movie files say: %1\nOnly the movie set file carries the name above.").arg(setName));
+        }
     }
     if (ui->sets->rowCount() > 0 && currentRow < ui->sets->rowCount()) {
         ui->sets->setCurrentItem(ui->sets->item(currentRow, 0));
@@ -270,7 +290,7 @@ void SetsWidget::onSetSelected()
         return;
     }
 
-    QString setName = ui->sets->item(ui->sets->currentRow(), 0)->text();
+    QString setName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
     loadSet(setName);
 }
 
@@ -416,7 +436,9 @@ void SetsWidget::onAddMovie()
         return;
     }
 
-    QString setName = ui->sets->item(ui->sets->currentRow(), 0)->text();
+    // The match key, because this value is written onto the movie's own NFO as
+    // `<set><name>`; the display title is not a name any movie file may carry.
+    QString setName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     for (Movie* movie : asConst(movies)) {
         if (movie->set().name == setName) {
@@ -555,10 +577,13 @@ void SetsWidget::saveSet()
         return;
     }
 
-    QStringList setNames;
-    setNames << ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
-    setNames << ui->sets->item(ui->sets->currentRow(), 0)->text();
-    setNames.removeDuplicates();
+    // The match key alone.  All three of this widget's maps are keyed by it, and the
+    // cell's text is now the *display* title, which after a set-file-only rename is a
+    // string no map here has ever held -- so adding it would index three maps into
+    // existence with nothing in them and flush an empty list of movies.  It used to be
+    // added because the row's two strings could disagree only transiently, mid-rename;
+    // they can disagree permanently now, and the key is the half that identifies.
+    const QStringList setNames{ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString()};
 
     // The artwork writes can refuse, and the refusal decides whether the image may be
     // let go of.  A set's poster and backdrop live nowhere but the two maps below until
@@ -609,8 +634,17 @@ void SetsWidget::saveSet()
     //
     // The current name, not the pre-rename one: a record under the old name would be a
     // record for a set that no longer exists.
-    const QString currentName = ui->sets->item(ui->sets->currentRow(), 0)->text();
+    //
+    // Looked up by the **match key**, which is what the model is keyed by.  Asking for
+    // the displayed title instead finds nothing after a set-file-only rename, and a
+    // null set here makes recordSaved true by short circuit -- so the record would
+    // never be written and the rename would be silently lost at the next reload, which
+    // is the one failure this whole feature exists to avoid.
+    const QString currentName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
     MovieSet* movieSet = Manager::instance()->movieSetModel()->set(currentName);
+    // What the user is shown.  The messages below name a set the user has to recognise,
+    // and after a set-file-only rename that is the title, not the key.
+    const QString displayedName = movieSet != nullptr ? movieSet->displayName() : currentName;
     // "There are no records here" is not a failed write, and the media center cannot
     // tell the two apart: saveMovieSet() answers false for both, because that is what
     // its own callers in the model need to hear.  Asked without this, every Save in the
@@ -632,7 +666,7 @@ void SetsWidget::saveSet()
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b>: the movies were saved, but the artwork and the movie set file could not be "
                "written.")
-                .arg(currentName));
+                .arg(displayedName));
         return;
     }
     if (!recordSaved) {
@@ -640,18 +674,19 @@ void SetsWidget::saveSet()
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
                            << "was saved only in part: its movie set file could not be written.";
         NotificationBox::instance()->showError(
-            tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.").arg(currentName));
+            tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.")
+                .arg(displayedName));
         return;
     }
     if (!artworkSaved) {
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
                            << "was saved only in part: its artwork could not be written.";
         NotificationBox::instance()->showError(
-            tr("<b>\"%1\"</b>: the movies were saved, but the artwork could not be written.").arg(currentName));
+            tr("<b>\"%1\"</b>: the movies were saved, but the artwork could not be written.").arg(displayedName));
         return;
     }
 
-    NotificationBox::instance()->showSuccess(tr("<b>\"%1\"</b> Saved").arg(currentName));
+    NotificationBox::instance()->showSuccess(tr("<b>\"%1\"</b> Saved").arg(displayedName));
 }
 
 /**
@@ -760,8 +795,11 @@ void SetsWidget::onRemoveMovieSet()
         movie->setSortTitle("");
     }
     ui->sets->removeRow(ui->sets->currentRow());
-    m_setPosters.remove(setName);
-    m_setBackdrops.remove(setName);
+    // By the match key: `setName` above is what the cell displays, and the two are
+    // different strings after a set-file-only rename, so removing by it would leave
+    // this set's artwork in the maps under a name nothing looks up again.
+    m_setPosters.remove(origSetName);
+    m_setBackdrops.remove(origSetName);
 }
 
 void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
@@ -896,7 +934,7 @@ void SetsWidget::onDownloadFinished(DownloadManagerElement elem)
             m_setPosters[setName] = QImage::fromData(elem.data);
         }
         if (ui->sets->currentRow() >= 0 && ui->sets->currentRow() < ui->sets->rowCount()
-            && ui->sets->item(ui->sets->currentRow(), 0)->text() == setName) {
+            && ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString() == setName) {
             loadSet(setName);
         }
     } else if (elem.imageType == ImageType::MovieSetBackdrop) {
@@ -904,7 +942,7 @@ void SetsWidget::onDownloadFinished(DownloadManagerElement elem)
             m_setBackdrops[setName] = QImage::fromData(elem.data);
         }
         if (ui->sets->currentRow() >= 0 && ui->sets->currentRow() < ui->sets->rowCount()
-            && ui->sets->item(ui->sets->currentRow(), 0)->text() == setName) {
+            && ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString() == setName) {
             loadSet(setName);
         }
     }

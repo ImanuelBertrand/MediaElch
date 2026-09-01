@@ -215,6 +215,11 @@ TEST_CASE("MovieSet change notification", "[data][movie][set]")
         set.setName("Alien Collection");
         set.setOverview("A science fiction horror film franchise.");
         set.setTmdbId(TmdbId::NoId);
+        // The fourth scalar setter.  Empty is what a set with no display title of its
+        // own already holds, and setting the title *to the name* normalises to empty --
+        // so neither is a change.
+        set.setTitle(QString());
+        set.setTitle("Alien Collection");
 
         CHECK(changes == 0);
         CHECK_FALSE(set.hasChanged());
@@ -233,6 +238,76 @@ TEST_CASE("MovieSet change notification", "[data][movie][set]")
 
         CHECK(changes == 2);
         CHECK_FALSE(set.hasChanged());
+    }
+}
+
+TEST_CASE("MovieSet display title", "[data][movie][set]")
+{
+    SECTION("a new set is displayed under its key")
+    {
+        MovieSet set{"Alien Collection"};
+        CHECK(set.title().isEmpty());
+        CHECK(set.displayName() == "Alien Collection");
+    }
+
+    SECTION("a set-file-only rename moves the title and leaves the key alone")
+    {
+        MovieSet set{"Alien Collection"};
+        set.setTitle("The Alien Saga");
+
+        CHECK(set.name() == "Alien Collection");
+        CHECK(set.title() == "The Alien Saga");
+        CHECK(set.displayName() == "The Alien Saga");
+        CHECK(set.hasChanged());
+    }
+
+    SECTION("clearing the title puts the display name back on the key")
+    {
+        MovieSet set{"Alien Collection"};
+        set.setTitle("The Alien Saga");
+        set.setTitle(QString());
+
+        CHECK(set.displayName() == "Alien Collection");
+        CHECK(set.title().isEmpty());
+    }
+
+    SECTION("a title equal to the key is stored as no title at all")
+    {
+        // One representation for "there is no divergence", or the writer would emit a
+        // redundant <title> that the reader then declines to read back, and the two
+        // would disagree about what an un-renamed set looks like.
+        MovieSet set{"Alien Collection"};
+        set.setTitle("Alien Collection");
+        CHECK(set.title().isEmpty());
+    }
+
+    SECTION("moving the key re-unifies the two names")
+    {
+        // An all-movie-files rename rewrites every member's <set><name> and the record's
+        // <originaltitle> alike, so there is no separate display title left to hold.
+        MovieSet set{"Alien Collection"};
+        set.setTitle("The Alien Saga");
+        set.setName("Alien Anthology");
+
+        CHECK(set.name() == "Alien Anthology");
+        CHECK(set.title().isEmpty());
+        CHECK(set.displayName() == "Alien Anthology");
+    }
+
+    SECTION("a key moved onto its own display title still dirties the set")
+    {
+        // The order inside setName() matters: clear the title first, and the set is
+        // still marked as needing to be saved.  Clear it after a no-op check on the
+        // title and this rename would look like nothing happened.
+        MovieSet set{"Alien Collection"};
+        set.setTitle("The Alien Saga");
+        set.setChanged(false);
+
+        set.setName("The Alien Saga");
+
+        CHECK(set.name() == "The Alien Saga");
+        CHECK(set.title().isEmpty());
+        CHECK(set.hasChanged());
     }
 }
 
