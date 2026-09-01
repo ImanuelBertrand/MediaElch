@@ -732,14 +732,25 @@ per-movie truth *is* the key.
 
 The set artwork choosers are **not** covered by that argument and need their own.
 `SetsWidget::chooseSetPoster()` and `chooseSetBackdrop()` seed `ImageDialog` from
-the key, and this is a per-set surface a person reads — the dialog's title shows
-that string.  It stays the key anyway, because the name travels through the
-download as `DownloadManagerElement::movie->title()` and comes back to
+the key, and this is a per-set surface a person reads — not as a heading, which
+is the static "Choose an Image" (`src/ui/image/ImageDialog.ui:17`), but as the
+**search term**: the name is put into `ui->searchTerm`
+(`src/ui/image/ImageDialog.cpp:118`) and handed to `searchMovie()` (`:808`), as
+*There Is No Set Scraper* above already sets out.
+
+It stays the key anyway, because the name travels through the download as
+`DownloadManagerElement::movie->title()` and comes back to
 `onDownloadFinished()`, which uses it to index `m_setPosters` — a map keyed by
 the match key like every other in that widget.  Passing the display title would
-return an image under a key nothing looks up.  The cost is a dialog heading that
-can disagree with the row above it, and it is a real cost, recorded here rather
-than covered by the per-movie argument that does not reach it.
+return an image under a key nothing looks up.
+
+The cost is therefore sharper than a mislabelled window.  After a set-file-only
+rename, opening the poster chooser for *The Alien Saga* pre-fills the search box
+with `Alien Collection` and, unless the user edits it, runs a scraper query for
+that string — the movie-title search that is the whole of #1746 and #642, now
+also asking under a name the user has stopped using.  That is a real cost,
+recorded here rather than covered by the per-movie argument, which does not
+reach it.
 
 `MovieSetModel` splits the two by role: `Qt::DisplayRole` is the display title
 and `NameRole` is the key.  No view reads this model yet — the sets tab is a
