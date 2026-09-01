@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QDomDocument>
 #include <QFile>
+#include <QFileDevice>
 #include <QFileInfo>
 #include <memory>
 
@@ -328,6 +329,86 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         // The set that does own it still can.
         CHECK(mediaCenter->removeMovieSetRecord("Mission: Impossible Collection"));
         CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
+    }
+
+    SECTION("Saving a set never overwrites another set's record")
+    {
+        // The writer is a path to this file too, and for two rounds it was the one that
+        // was not asking the question.  "Alien Collection" and "Alien Collection " share
+        // a folder, because legalisation chops the trailing space -- and the padded name
+        // is not exotic: the movie NFO reader does not trim `<set><name>` either, so a
+        // sloppy member NFO produces it as a set of its own.
+        const QDir msif = emptyMsif("overwrite");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet owner("Alien Collection");
+        owner.setOverview("Ripley versus the Alien.");
+        owner.setTmdbId(TmdbId("8091"));
+        REQUIRE(mediaCenter->saveMovieSet(owner));
+
+        MovieSet lodger("Alien Collection ");
+        lodger.setOverview("Not Ripley at all.");
+        CHECK_FALSE(mediaCenter->saveMovieSet(lodger));
+        CHECK_FALSE(lodger.hasRecord());
+
+        // The owner's record is untouched -- overview, id and all.
+        MovieSet reread("Alien Collection");
+        REQUIRE(mediaCenter->loadMovieSet(reread));
+        CHECK(reread.overview() == "Ripley versus the Alien.");
+        CHECK(reread.tmdbId() == TmdbId("8091"));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Alien Collection"});
+    }
+
+    SECTION("Saving still creates a record where there is no file")
+    {
+        // The writer's guard is "a file is there and it names another set", not "the file
+        // names this set".  Demanding a match would make the first record for any set
+        // impossible to write, which would disable the feature rather than protect it.
+        const QDir msif = emptyMsif("firstwrite");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        CHECK(mediaCenter->saveMovieSet(set));
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Collection/set.nfo")));
+        // And saving the same set again is an update, not a collision.
+        set.setOverview("Ripley versus the Alien.");
+        CHECK(mediaCenter->saveMovieSet(set));
+        MovieSet reread("Alien Collection");
+        REQUIRE(mediaCenter->loadMovieSet(reread));
+        CHECK(reread.overview() == "Ripley versus the Alien.");
+    }
+
+    SECTION("A record that cannot be read is not removed")
+    {
+        // Unlinking needs write permission on the *directory* and nothing on the file, so
+        // an unreadable `set.nfo` is perfectly deletable.  Skipping the ownership check
+        // when the open fails therefore deletes a file whose owner was never established
+        // -- and reports success for it.
+        const QDir msif = emptyMsif("unreadable");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        const QString fileName = msif.absoluteFilePath("Alien Collection/set.nfo");
+        REQUIRE(QFileInfo::exists(fileName));
+
+        QFile record(fileName);
+        REQUIRE(record.setPermissions(QFileDevice::Permissions()));
+
+        QFile probe(fileName);
+        if (probe.open(QIODevice::ReadOnly)) {
+            // The platform does not enforce the permissions -- Windows, or running as
+            // root.  There is no unreadable file to test with, so there is nothing here
+            // to assert; the guard is about the case where the open genuinely fails.
+            probe.close();
+            WARN("Skipped: this file system does not enforce the permission change");
+        } else {
+            CHECK_FALSE(mediaCenter->removeMovieSetRecord("Alien Collection"));
+            CHECK(QFileInfo::exists(fileName));
+        }
+
+        // Restore, or the next run of emptyMsif() cannot clear the folder.
+        record.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     }
 
     SECTION("A record in a folder its own name does not resolve to is ignored")

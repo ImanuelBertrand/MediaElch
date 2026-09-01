@@ -1346,6 +1346,36 @@ bool KodiXml::movieSetRecordsEnabled() const
            && Settings::instance()->movieSetArtworkDirectory().isValid();
 }
 
+namespace {
+
+/// \brief Opens and parses the movie set record at \p fileName.
+/// \return false if it could not be opened, which is the caller's cue to refuse.
+/// \details Every path that touches a `set.nfo` -- the read, the write, the removal and
+///          the enumeration -- goes through this one function, so that they cannot drift
+///          into asking different questions about the same file.  There are exactly four
+///          of them and each one has to establish, before it acts, which set the file it
+///          is about to touch belongs to; the answer is
+///          MovieSetXmlReader::setNameOf(domDoc).
+///
+///          A file that cannot be opened yields *no* answer, and no caller may treat
+///          that as permission to proceed.  On Unix, unlinking needs write permission on
+///          the containing directory and nothing at all on the file, so a `set.nfo` that
+///          cannot be read can still be deleted -- which is precisely the case where
+///          falling through would destroy a file whose owner was never established.
+bool readMovieSetRecord(const QString& fileName, QDomDocument& domDoc)
+{
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qCWarning(generic) << "[KodiXml] Cannot read movie set record" << fileName;
+        return false;
+    }
+    domDoc.setContent(file.readAll());
+    file.close();
+    return true;
+}
+
+} // namespace
+
 QString KodiXml::movieSetNfoFileName(const QString& setName)
 {
     if (setName.isEmpty() || !movieSetRecordsEnabled()) {
@@ -1373,24 +1403,21 @@ QStringList KodiXml::movieSetsWithRecord()
         // A folder holding artwork but no `set.nfo` is not a set.  The record is what
         // makes a set exist in its own right; treating a pile of images as one would
         // resurrect every set a user ever deliberately removed.
-        QFile file(msif.absoluteFilePath(folder) + "/set.nfo");
-        if (!file.exists()) {
-            continue;
-        }
-        if (!file.open(QIODevice::ReadOnly)) {
-            qCWarning(generic) << "[KodiXml] Cannot read movie set record" << file.fileName();
+        const QString fileName = msif.absoluteFilePath(folder) + "/set.nfo";
+        if (!QFileInfo::exists(fileName)) {
             continue;
         }
         QDomDocument domDoc;
-        domDoc.setContent(file.readAll());
-        file.close();
+        if (!readMovieSetRecord(fileName, domDoc)) {
+            continue;
+        }
         // Read from the file, not taken from the folder name: the folder name is the
         // set name run through Kodi's legalisation, which is lossy -- a set called
         // "Mission: Impossible" lives in "Mission_ Impossible" -- and the name has to
         // match the member NFOs' <set><name> byte for byte.
         const QString setName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
         if (setName.isEmpty()) {
-            qCWarning(generic) << "[KodiXml] Movie set record names no set:" << file.fileName();
+            qCWarning(generic) << "[KodiXml] Movie set record names no set:" << fileName;
             continue;
         }
         // And only if the name resolves back to the folder it was found in.  This is
@@ -1402,7 +1429,7 @@ QStringList KodiXml::movieSetsWithRecord()
         // removed at all by removeMovieSetRecord(), so the set would flip between having
         // a record and not having one from one reload to the next.
         if (mediaelch::kodi::makeLegalFileName(setName) != folder) {
-            qCWarning(generic) << "[KodiXml] Ignoring movie set record" << file.fileName() << "-- it names" << setName
+            qCWarning(generic) << "[KodiXml] Ignoring movie set record" << fileName << "-- it names" << setName
                                << "but that set's folder would be" << mediaelch::kodi::makeLegalFileName(setName);
             continue;
         }
@@ -1417,13 +1444,13 @@ bool KodiXml::loadMovieSet(MovieSet& set)
     if (fileName.isEmpty()) {
         return false;
     }
-    QFile file(fileName);
-    if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
+    if (!QFileInfo::exists(fileName)) {
         return false;
     }
     QDomDocument domDoc;
-    domDoc.setContent(file.readAll());
-    file.close();
+    if (!readMovieSetRecord(fileName, domDoc)) {
+        return false;
+    }
 
     // Checked *before* anything is applied to the set.  The path is derived from the set
     // name through a lossy legalisation, so the file sitting there is not necessarily
@@ -1467,6 +1494,38 @@ bool KodiXml::saveMovieSet(MovieSet& set)
                            << "-- no movie set information folder is configured.";
         return false;
     }
+    // The writer is the fourth path to this file and the last one to be brought under the
+    // same question, which is how it managed to be the one that destroyed data: it
+    // resolved the path and wrote whatever was there.  Two names can share one folder --
+    // "Alien Collection" and "Alien Collection ", since legalisation chops the trailing
+    // space, and a sloppy member NFO produces the padded one because the movie NFO reader
+    // does not trim `<set><name>` either -- so saving the second silently replaced the
+    // first's overview and id.  The owner's own read then failed the name check and the
+    // enumeration reported the lodger, so the owner lost its record flag and became
+    // droppable.
+    //
+    // The question is asked the other way round here, and the difference is not
+    // cosmetic.  loadMovieSet() may demand that the file names this set, because a record
+    // it cannot find simply does not exist.  A *write* has to be able to create a record
+    // where there is no file at all, so the refusal is "a file is already there and it
+    // names some other set" -- not "the file names this set".  Requiring a match would
+    // make it impossible to write the first record for any set.
+    if (QFileInfo::exists(fileName)) {
+        QDomDocument existing;
+        if (!readMovieSetRecord(fileName, existing)) {
+            // Ownership cannot be established, so it is not ours to overwrite.
+            qCWarning(generic) << "[KodiXml] Not saving the record of movie set" << set.name() << "--" << fileName
+                               << "is already there and cannot be read.";
+            return false;
+        }
+        const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(existing);
+        if (!recordName.isEmpty() && recordName != set.name()) {
+            qCWarning(generic) << "[KodiXml] Not saving the record of movie set" << set.name() << "--" << fileName
+                               << "is the record of" << recordName << "; the two names share one folder.";
+            return false;
+        }
+    }
+
     const mediaelch::kodi::MovieSetXmlWriter writer(set);
     if (!saveFile(fileName, writer.getMovieSetXml())) {
         qCWarning(generic) << "[KodiXml] Cannot write movie set record" << fileName;
@@ -1494,19 +1553,28 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
     }
     // The same lossy legalisation that loadMovieSet() guards against, at the one place
     // where being wrong destroys a file: two set names can share a folder, and only one
-    // of them owns the record in it.  The caller only asks when the model believes this
-    // set has a record, so this should never fire -- which is exactly why it is cheap to
-    // keep, and why it refuses rather than warns and proceeds.
-    if (file.open(QIODevice::ReadOnly)) {
-        QDomDocument domDoc;
-        domDoc.setContent(file.readAll());
-        file.close();
-        const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
-        if (recordName != setName) {
-            qCWarning(generic) << "[KodiXml] Not removing movie set record" << fileName << "-- it names" << recordName
-                               << "and not" << setName;
-            return false;
-        }
+    // of them owns the record in it.
+    //
+    // This is a live guard, not a belt-and-braces one.  MovieSet::setName() does not
+    // clear hasRecord(), and making the record follow a rename is deferred to D3a, so
+    // renaming a set in the sets tab and then deleting it arrives here with a stale flag
+    // and a name whose folder holds somebody else's file.  Do not read it as dead code.
+    //
+    // And it fails *closed*.  A record that cannot be opened yields no owner, and on Unix
+    // unlinking needs write permission on the directory and nothing on the file, so an
+    // unreadable `set.nfo` is perfectly deletable -- proceeding would destroy a file
+    // whose owner was never established, and report success for it.
+    QDomDocument domDoc;
+    if (!readMovieSetRecord(fileName, domDoc)) {
+        qCWarning(generic) << "[KodiXml] Not removing movie set record" << fileName
+                           << "-- it cannot be read, so it cannot be shown to belong to" << setName;
+        return false;
+    }
+    const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
+    if (recordName != setName) {
+        qCWarning(generic) << "[KodiXml] Not removing movie set record" << fileName << "-- it names" << recordName
+                           << "and not" << setName;
+        return false;
     }
     if (!file.remove()) {
         qCWarning(generic) << "[KodiXml] Cannot remove movie set record" << fileName;
