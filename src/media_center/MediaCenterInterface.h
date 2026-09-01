@@ -105,6 +105,27 @@ public:
     ///          whose record outlived it would be found again by movieSetsWithRecord()
     ///          and come back, so a deliberate removal has to take the record with it.
     virtual bool removeMovieSetRecord(const QString& setName) = 0;
+    /// \brief Moves everything a set keeps on disk from \p oldName's place to \p newName's.
+    /// \details The set's `set.nfo` **and** its artwork, together, because an
+    ///          all-movie-files rename moves the match key and Kodi derives the movie set
+    ///          information folder from that key
+    ///          (`VideoInfoScanner.cpp:839`, before the record is even loaded).  Leave the
+    ///          record behind and `movieSetsWithRecord()` reports the old name at the next
+    ///          reload, resurrecting the set as a memberless ghost; leave the artwork
+    ///          behind and Kodi finds an empty folder for the renamed set.
+    ///
+    ///          Returns whether the move succeeded **or there was nothing to move** --
+    ///          no folder configured, no files under the old name, or a name that
+    ///          legalises to the same path.  False means files exist and are still where
+    ///          they were, which the caller must report: the rename itself is not undone,
+    ///          because the movie NFOs are the set's identity and a rename whose artwork
+    ///          move failed is still a rename that happened.
+    ///
+    /// \warning Must be called **before** the members are reassigned.  In the
+    ///          artwork-next-to-movies layout the paths are found through a movie whose
+    ///          `set().name` is still the old one, so afterwards there is nothing left to
+    ///          resolve them from and the artwork is orphaned silently.
+    virtual bool renameMovieSetFiles(const QString& oldName, const QString& newName) = 0;
 
     // concerts
     virtual bool saveConcert(Concert* concert) = 0;
