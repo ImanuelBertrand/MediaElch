@@ -55,9 +55,9 @@ left to be inferred from the shape of the citation.
 ### A Set Has No Existence of Its Own
 
 `MovieSet` is a struct of three fields, `tmdbId`, `name` and `overview`
-(`src/data/movie/MovieSet.h:8-17`), stored by value on each `Movie`
-(`src/data/movie/Movie.h:272`).  Its translation unit contains a comment and
-nothing else (`src/data/movie/MovieSet.cpp:3`).
+(`master`'s `src/data/movie/MovieSet.h:8-17`), stored by value on each `Movie`
+(`master`'s `src/data/movie/Movie.h:272`).  Its translation unit contains a
+comment and nothing else (`master`'s `src/data/movie/MovieSet.cpp:3`).
 
 There is no list of sets anywhere.  It is recomputed, from scratch, in three
 unrelated places, each walking the whole movie model and grouping by
@@ -84,9 +84,9 @@ back, and the images are gone with no indication that anything happened.
 
 Because there is no set object, the set the UI is operating on is identified by
 the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:252` and
-`:724`).  Four call sites read it back as the set's identity:
+`:726`).  Four call sites read it back as the set's identity:
 `chooseSetPoster()` (`:483`), `chooseSetBackdrop()` (`:523`),
-`onRemoveMovieSet()` (`:737`) and `onSetNameChanged()` (`:768`).  A fifth,
+`onRemoveMovieSet()` (`:739`) and `onSetNameChanged()` (`:770`).  A fifth,
 `saveSet()`, hedges: it reads the role *and* the displayed text and iterates
 both (`:558-561`), which is only necessary because the two are known to
 disagree.  Renaming a row never updates the role, so on `master` they diverge
@@ -466,15 +466,65 @@ answers above rather than from a third look at the settings:
   the settings sees this line, and none of them has done anything wrong.
 - **a directory configured** — nothing.
 
-#### Migration Is Not Optional
+#### A Set Is Born From Its Movies
 
-Today every set comes from movie NFOs.  An existing user who upgrades and
-configures a folder must find their sets already there, not gone.  So the
-first use of a configured folder runs a one-shot pass that materialises every
-set MediaElch can see in the movie NFOs into a `set.nfo`, carrying whatever
-overview and id those NFOs already hold.  Without that pass this design
-silently empties the sets tab for every existing user, which is a worse first
-impression than the bug it fixes.
+An existing user who upgrades and configures a folder must find their sets
+already there, not gone.  That requirement stands.  What meets it is the drop
+rule, not a migration: sets are re-derived from the movie NFOs on every
+`reload()`, and a set is dropped only when it has **neither** members **nor** a
+record (`MovieSetModel.cpp:255`), so a set with members survives in every
+configuration — no media center at all, no folder configured, and a folder
+freshly configured with no records in it yet.  A test case named for that
+property, with one section per configuration, says so; it was covered only as a
+side effect of two tests about other things until then.
+
+And this is not an upgrade path that ages out.  Membership lives in the member
+movies and nowhere else, so a movie NFO is the only place MediaElch ever learns
+that a set exists at all: `movie.nfo` to set is how *every* set that has ever
+existed came into being, and it stays valid however many records a library
+accumulates.  `set.nfo` is where a set's attributes become authoritative once
+the set has one; it is never where a set is discovered, and the folder
+enumeration above finds only the sets that no movie derives.  A set with no
+record is therefore the normal first state of a set, not an anomaly to be
+migrated away.
+
+A one-shot pass that materialised every derived set into a `set.nfo` was
+considered and rejected.  Giving every set a record makes every set permanent,
+since a record is precisely what lets a set outlive its last member — so every
+set that ever lost its last movie would sit in the set combo box and the set
+filter with no movie answering to it (`MovieSetModel.cpp:247`), which is the
+outcome the drop rule exists to prevent.  It would also write unprompted into a
+directory the user has just named, possibly by typo or on a drive that is not
+mounted, to fix a problem that does not exist.  A set gets its record when the
+user saves it (`SetsWidget.cpp:624`), which is the gesture that says the set is
+worth keeping.
+
+What such a pass would genuinely have carried forward — *whatever overview and
+id those NFOs already hold* — is carried forward on the read side instead, and
+no file is written for it.  A set with no record takes its overview and its
+collection id from its members (`MovieSetModel.cpp:479`).  Without that it is
+built from a name alone: the entity is blank while the mirror in every member
+NFO holds the data, and the first `set.nfo` written for it is written from that
+emptiness, because the writer skips an empty overview
+(`MovieSetXmlWriter.cpp:32-34`) and an invalid id (`:38-43`).  That is the table
+above inverted, and it turns destructive as soon as an edited overview is
+mirrored back down into every member — the `UPDATE sets SET strOverview = ''`
+hazard set out below.
+
+Three rules the seed follows, each load-bearing:
+
+- **Never over a record** (`MovieSetModel.cpp:484`).  A set that has read a
+  `set.nfo` already holds the authoritative values, and the members hold a
+  mirror of them; a mirror is not a source.
+- **Seeding is not an edit** (`:541`).  It is the value the library already
+  held, read into the object that was missing it, so the set must not be left
+  marked as needing to be saved — nor may an unsaved edit already waiting on it
+  be forgotten.
+- **Members may legitimately disagree**, and the winner is the first member
+  with a non-empty value in member order (`:502`), with overview and id decided
+  independently.  Nothing in MediaElch has ever forced the "identical text in
+  every member" rule below, so a library assembled by other tools has sets whose
+  members differ; first-wins is what Kodi 19 and 20 do with the same input.
 
 #### Two Rules About the Overview That Still Bind
 
@@ -580,7 +630,7 @@ default behaviour would be wrong out of the box.  That makes it a dependency
 of this design rather than an unrelated tidy-up, and it is fixed here.
 
 Renaming a set onto an existing name is a merge, on both sides.  The current
-code already performs it (`SetsWidget.cpp:828-837`) without telling the user.
+code already performs it (`SetsWidget.cpp:830-839`) without telling the user.
 
 ### D-C: Promote `MovieSet` to an Entity, and Give the List a Model
 
@@ -913,9 +963,10 @@ are independent of each other:
 
 First, **lifetime**.  A `MovieSet` holding `QVector<Movie*>` has to survive a
 library reload, and nothing today makes that safe.  `MovieModel` has no
-`beginResetModel`/`endResetModel` at all — only `beginInsertRows` (`:29`,
-`:37`) and `beginRemoveRows` (`:283`) — so there is no reset to rebuild on,
-and `MovieModel::clear()` (`:278-289`) calls `movie->deleteLater()` on every
+`beginResetModel`/`endResetModel` at all — only `beginInsertRows`
+(`src/model/MovieModel.cpp:29`, `:37`) and `beginRemoveRows` (`:283`) — so
+there is no reset to rebuild on, and `MovieModel::clear()` (`:278-289`) calls
+`movie->deleteLater()` on every
 element while `Movie::sigChanged` never fires on destruction.  The existing
 code already knows this hazard and works around it by having no long-lived
 state at all: the comment at `SetsWidget.cpp:208-209` says the maps must be
@@ -927,7 +978,7 @@ there is a single place to solve it.
 Second, **duplicated state**.  The value/entity split alone does not remove
 it.  `Movie::set()` returns by value (`src/data/movie/Movie.h:95`,
 `src/data/movie/Movie.cpp:469`) and the value stays a plain member
-(`Movie.h:272`), so every member movie keeps a mutable copy of the set's name,
+(`Movie.h:284`), so every member movie keeps a mutable copy of the set's name,
 overview and id alongside the entity's.  Two writers, no reconciliation.  Only
 removing the movie-side setter closes that.
 
@@ -939,7 +990,7 @@ distinction is made by a caller two or three frames further up that the writer c
 see:
 
 - `MovieXmlReader.cpp:157` and `:226` write onto `KodiXml::loadMovie()`'s argument
-  (`KodiXml.cpp:321`).  That is a not-yet-library movie during a scan
+  (`KodiXml.cpp:325`).  That is a not-yet-library movie during a scan
   (`MovieDirectorySearcher.cpp:284`, `:382`, `:448`, handed to `MovieModel` afterwards
   at `MovieFileSearcher.cpp:128`) **and** a library movie on the reload path
   (`MovieWidget.cpp:424`).
@@ -1109,8 +1160,19 @@ with a different failure mode.
    to a class the module-system concept wants to shrink; the alternative is a
    `MovieSetModule` in the sense of `docs/concepts/module-system.md`, a better
    fit for where MediaElch is going and a worse fit for where it is.
-4. **How hard is the folder requirement?**  D-A guards the sets tab behind a
-   configured MSIF.  Whether that also means refusing to *read* sets from
-   movie NFOs — i.e. showing an empty tab plus a warning rather than a
-   read-only list — is a UX call with a migration consequence, since the
-   one-shot materialisation pass has to run from somewhere.
+4. ~~**How hard is the folder requirement?**~~  **Answered 2026-09-01 (user's
+   call), and both halves of the question are gone.**  Sets are read from the
+   movie NFOs and shown whether or not a folder is configured; only the write
+   paths that actually need one are disabled, as *The Cost: Without a Folder,
+   Sets Are Read-Only* sets out.  The migration consequence went with it: there
+   is no one-shot materialisation pass to find a home for, because nothing has
+   to be materialised — see *A Set Is Born From Its Movies*.
+5. **Should MediaElch ever write a `set.nfo` the user did not ask for?**  Kodi
+   22 reads a set's overview and title from the record, so a library MediaElch
+   has never explicitly saved gives Kodi 22 nothing to read, and writing records
+   automatically is the obvious answer.  It collides with the drop rule: a
+   record is what makes a set permanent, so writing one for every set puts every
+   set that ever loses its last movie into the set combo box and the set filter
+   with no movie answering to it — the same ghost sets the one-shot pass was
+   rejected for.  Any answer has to say which sets earn a record and when,
+   rather than "all of them, always".  Open.
