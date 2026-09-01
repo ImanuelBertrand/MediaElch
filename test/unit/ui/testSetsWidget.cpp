@@ -14,6 +14,7 @@
 #include "ui/movie_sets/SetsWidget.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -22,6 +23,7 @@
 #include <QLabel>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 
 namespace {
 
@@ -196,16 +198,20 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
     sets->item(0, 0)->setText("Alien Anthology");
 
     // Now take the movie set information folder away, so the pending poster has nowhere
-    // to go.  The set's own record has nowhere to go either -- with no folder there is
-    // no record, by design -- so both halves of the save refuse and the user is told so.
+    // to go.  The set's own record is *not* also a failure here: with no folder there
+    // are no records at all, which saveSet() tells apart from a record that could not be
+    // written, so this lands in the artwork-only branch of the three.
     Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
     REQUIRE_FALSE(Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled());
 
     {
         test::MessageCapture messages;
         widget.saveSet();
-        CHECK(messages.contains("artwork"));
-        CHECK(messages.contains("could not be written"));
+        CHECK(messages.contains("its artwork could not be written"));
+        // Which branch it is, not merely that something complained: all three failure
+        // branches contain "could not be written", so a bare substring check would go
+        // green for a save that failed in a different way than this test set up.
+        CHECK_FALSE(messages.contains("movie set file"));
     }
 
     // And the image was kept rather than dropped: with the folder back, the next save
@@ -516,14 +522,93 @@ TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set
         CHECK_FALSE(poster->isEnabled());
         CHECK_FALSE(backdrop->isEnabled());
 
-        // And the slots behind those labels refuse as well.  This can only pin that the
-        // refusal is *there*, by the line it logs: a run with the guard removed would
-        // reach ImageDialog::execWithType() and block on a modal dialog, so the failure
-        // mode of deleting that guard is this test hanging rather than failing.  Said
-        // out loud because a hang reads like a broken test rather than a broken guard.
+        // And the slots behind those labels refuse as well, each one on its own: the two
+        // log different lines, so removing one guard and leaving the other cannot pass.
+        //
+        // Removing a guard has to make this *fail*, not hang, because a hang reads like
+        // a broken test rather than a broken guard.  Without the guard the slot reaches
+        // ImageDialog, which enters a nested event loop and waits for a user who is not
+        // there.  Two things stop that being a hang, and only one of them was designed:
+        //
+        //  - measured, and it is what actually happens in this binary: ImageDialog is
+        //    constructed with MainWindow::instance(), which is null here, and the run
+        //    dies with SIGSEGV.  Catch reports that as a failed assertion and the binary
+        //    exits 139, so ctest fails.  Ugly, but not a hang, and not something this
+        //    test can prevent -- the crash happens before any dialog exists.
+        //  - the queued lambda below, which runs inside that nested loop and closes
+        //    whatever modal it finds.  It is the one that would keep this honest if the
+        //    crash ever went away, and with the guards in place it finds nothing to
+        //    close and does nothing.  It has never been observed to fire; it is
+        //    insurance, and is written down as insurance rather than as the mechanism.
+        const auto closeAnyModal = [] {
+            QTimer::singleShot(0, qApp, [] {
+                if (QWidget* modal = QApplication::activeModalWidget()) {
+                    modal->close();
+                }
+            });
+        };
+
         test::MessageCapture messages;
+        closeAnyModal();
         REQUIRE(QMetaObject::invokeMethod(&widget, "chooseSetPoster"));
+        closeAnyModal();
         REQUIRE(QMetaObject::invokeMethod(&widget, "chooseSetBackdrop"));
-        CHECK(messages.contains("nowhere to be written"));
+        CHECK(messages.contains("Not choosing a set poster"));
+        CHECK(messages.contains("Not choosing a set backdrop"));
     }
+}
+
+TEST_CASE("A save that fails on both halves says which", "[ui][movie][set]")
+{
+    // The third of saveSet()'s three failure branches, and the one with no test of its
+    // own: records *are* configured, and both the artwork and the set's own file fail to
+    // be written.  A read-only or broken mount does this.  The "no directory configured"
+    // case used to cover it, and stopped once saveSet() learned to tell "there are no
+    // records here" apart from "the record could not be written".
+    MovieSetFolderGuard guard;
+    test::DataFileGuard dataFiles;
+
+    addLibraryMovie("Alien", "Alien Collection");
+
+    // A pending poster, carried in by a rename, exactly as in the test above -- which
+    // needs the directory to be usable, so it is broken afterwards rather than before.
+    QImage poster(4, 4, QImage::Format_RGB32);
+    poster.fill(Qt::red);
+    const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
+    REQUIRE_FALSE(posterFiles.isEmpty());
+    REQUIRE(QDir().mkpath(guard.dir().absoluteFilePath("Alien Collection")));
+    for (DataFile dataFile : posterFiles) {
+        REQUIRE(poster.save(
+            guard.dir().absoluteFilePath("Alien Collection/" + dataFile.saveFileName("Alien Collection")), "jpg", 100));
+    }
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 1);
+    sets->item(0, 0)->setText("Alien Anthology");
+
+    // A plain file standing where the movie set information directory should be.  It is
+    // a valid DirectoryPath, so records stay enabled and this is not the "no directory"
+    // case -- but nothing can be created underneath it, so mkpath() fails for the
+    // artwork and QFile::open() fails for the record.  A regular file rather than a
+    // chmod, because a chmod proves nothing when the tests happen to run as root.
+    const QString blockerPath = guard.dir().absoluteFilePath("blocker");
+    QFile blocker(blockerPath);
+    REQUIRE(blocker.open(QIODevice::WriteOnly));
+    blocker.close();
+    Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(QDir(blockerPath)));
+    REQUIRE(Manager::instance()->movieSetModel()->recordsAreConfigured());
+
+    test::MessageCapture messages;
+    widget.saveSet();
+
+    // Named separately, because "something could not be written" is what all three
+    // branches say and only this one says both.
+    CHECK(messages.contains("its artwork could not be written"));
+    CHECK(messages.contains("neither could its movie set file"));
+    // The phrase an operator greps for is in this line too; it was the one branch of the
+    // three that did not have it.
+    CHECK(messages.contains("could not be written"));
 }

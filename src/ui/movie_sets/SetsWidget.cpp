@@ -473,9 +473,10 @@ void SetsWidget::chooseSetPoster()
         // applyWriteAccess() has already disabled the label this is reached from; this
         // is the same refusal at the action rather than at the affordance, so that a
         // download is never started for an image that could not be written afterwards.
-        // Logged at info rather than debug so that a test can see it: removing this
-        // guard to watch a test fail would open a modal dialog and hang instead.
-        qCInfo(generic) << "[SetsWidget] Not choosing set artwork: it has nowhere to be written.";
+        // Logged at info rather than debug, because the log line is all a test can hold
+        // this refusal by: removing the guard sends the slot into ImageDialog, which no
+        // test can answer.  See testSetsWidget.cpp for what that costs.
+        qCInfo(generic) << "[SetsWidget] Not choosing a set poster: set artwork has nowhere to be written.";
         return;
     }
 
@@ -515,7 +516,7 @@ void SetsWidget::chooseSetBackdrop()
     }
     if (!Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled()) {
         // See chooseSetPoster().
-        qCInfo(generic) << "[SetsWidget] Not choosing set artwork: it has nowhere to be written.";
+        qCInfo(generic) << "[SetsWidget] Not choosing a set backdrop: set artwork has nowhere to be written.";
         return;
     }
 
@@ -624,8 +625,8 @@ void SetsWidget::saveSet()
     // failed is what tells the user where to look, and a translator needs the sentence.
     if (!recordSaved && !artworkSaved) {
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
-                           << "was saved only in part: its movies were written, but neither its artwork nor its"
-                           << "movie set file could be written.";
+                           << "was saved only in part: its artwork could not be written, and neither could its"
+                           << "movie set file.";
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b>: the movies were saved, but the artwork and the movie set file could not be "
                "written.")
