@@ -295,19 +295,18 @@ void MovieSetModel::reload()
     // Which sets have a record is asked once for the whole library, and every set here is
     // told whether it is among the answers.  It is not a cheap question: the media center
     // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names, so this costs one parse per record.  One more parse for each record this
-    // pass actually *reads into* its set, which is what both loadMovieSet() call sites do
-    // -- the flip branch just below and createSet().  At most two parses per record then,
-    // and none at all for a set that has no record, since createSet()'s probe resolves a
-    // path, finds no file and returns without parsing (KodiXml::loadMovieSet()).  The
-    // bound is the number of records, not the number of sets and not the size of the
-    // library.
+    // names.  That is one parse per `set.nfo`, plus one for every set whose legalised path
+    // lands on a file -- normally just the sets that have a record, and one more for each
+    // name that shares a folder with another.  KodiXml::loadMovieSet() cannot avoid that
+    // second parse: it has to read the document before it can ask which set the document
+    // names, and a set whose path lands on a neighbour's record parses the file and then
+    // answers false.  A set whose path resolves to no file at all costs nothing.
     //
-    // Which sets take that second parse is deliberately not enumerated here.  It has been
-    // written down wrongly three times -- the enumeration keeps omitting one of the two
-    // call sites, or overcounting sets that have no record at all -- and the mechanism is
-    // shorter than any correct list of cases: this pass reads a record it had not read
-    // before.
+    // Which sets take that second parse is deliberately not enumerated.  It has been
+    // written down wrongly four times -- omitting one of the two loadMovieSet() call
+    // sites, and then claiming a set with no record never parses -- and the mechanism is
+    // shorter than any correct list of cases: a parse happens wherever a set's path
+    // resolves to a file, whoever owns it.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the

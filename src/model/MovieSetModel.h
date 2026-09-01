@@ -199,15 +199,15 @@ public:
     ///          settings-changed plumbing to keep in step.  The question is asked once
     ///          for the whole library rather than once per set, but it is not cheap:
     ///          answering it means parsing every `set.nfo` in the folder, since only the
-    ///          file says which set it belongs to.  That is one parse per record, plus
-    ///          one more for each record this pass actually *reads into* its set, which
-    ///          both loadMovieSet() call sites below do.  So at most two parses per
-    ///          record, and none at all for a set that has none -- createSet()'s probe
-    ///          resolves a path, finds no file and returns without parsing.  The bound is
-    ///          the number of *records*, not the number of sets and not the size of the
-    ///          library.  Which sets take the second parse has been enumerated wrongly
-    ///          three times and is not worth a fourth attempt: the mechanism is that this
-    ///          pass reads a record it has not read before, and both call sites are that.
+    ///          file says which set it belongs to.  That is one parse per `set.nfo`,
+    ///          plus one for every set whose legalised path lands on a file -- normally
+    ///          just the sets that have a record, and one more for each name that shares
+    ///          a folder with another.  loadMovieSet() cannot avoid that second parse:
+    ///          it has to read the document before it can ask which set the document
+    ///          names, and asking those two in the other order is what once let a set
+    ///          claim its neighbour's record.  A set whose path resolves to no file at
+    ///          all costs nothing.  Bounded by the folder, in either case, and not by
+    ///          the size of the library.
     ///
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
@@ -290,13 +290,18 @@ private:
     ///          arrived is *not* about choosing a different winner.  MovieSet::addMovie()
     ///          appends and emits once per call, so member order is call order and the two
     ///          would pick the same member every time.  What the walk buys is
-    ///          re-evaluation at a moment when the earlier additions *could not* seed, and
-    ///          there are two: a set whose overview the user clears once PR-6 lands the
-    ///          editor, and a set that held a record while its members joined -- the guard
-    ///          below refused them then -- and has since lost it, which reload() does by
-    ///          clearing the flag at the end of its refresh loop.  Replace this with an
-    ///          O(1) look at the new member and both stop refilling, with nothing to
-    ///          show that they have.
+    ///          re-evaluation at a moment when a member that was *already there* could not
+    ///          be read, and the reachable one is PR-6's: a user clears the overview of a
+    ///          set with no record, and the next movie to join refills it from the members
+    ///          that were there all along.  An O(1) look at the arriving movie would not,
+    ///          and would leave nothing to show that it had stopped.
+    ///
+    ///          One more such moment exists with no caller in `src/` today, named so that
+    ///          the first is not mistaken for the whole reason: a movie put into this set
+    ///          through the public MovieSet::addMovie() while its own `<set><name>` still
+    ///          pointed elsewhere is passed over by the name guard below, and reassigning
+    ///          it to this set afterwards announces nothing, because addMovie() returns
+    ///          early for a movie that is already a member.  Only a later walk sees it.
     void seedFromMembers(MovieSet* movieSet);
     /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
