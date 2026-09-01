@@ -22,6 +22,7 @@ target_sources(
     globals/testHelper.cpp
     media/testFilenameUtils.cpp
     media/testPath.cpp
+    media_center/testKodiVersion.cpp
     media_center/testMakeLegalFileName.cpp
     model/testMovieModel.cpp
     model/testMovieSetModel.cpp
