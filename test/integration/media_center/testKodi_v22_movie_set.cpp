@@ -7,6 +7,7 @@
 #include "media_center/kodi/MovieSetXmlReader.h"
 #include "media_center/kodi/MovieSetXmlWriter.h"
 #include "settings/Settings.h"
+#include "test/helpers/message_capture.h"
 #include "test/helpers/resource_dir.h"
 
 #include <QDir>
@@ -153,6 +154,43 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
         doc.setContent(QStringLiteral("<movie><title>Alien</title></movie>"));
         kodi::MovieSetXmlReader reader(set);
         CHECK_FALSE(reader.parseNfoDom(doc));
+    }
+}
+
+TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][nfo]")
+{
+    // The detector's only observable is a log line, which is why it went unpinned for a
+    // round.  It is assertable with the same fixture that pins the model's discard
+    // warning, so there is no excuse: a message that should not be there is as much a
+    // defect as a missing one.
+    SECTION("MediaElch's own record is never reported as renamed")
+    {
+        // The writer emits <title> and <originaltitle> from one name, so they can only
+        // differ if something else wrote the file.  Reading one trimmed and the other not
+        // made every set whose name carries whitespace look renamed.
+        test::MessageCapture messages;
+        MovieSet set(" Alien Collection");
+        QDomDocument doc;
+        doc.setContent(QString::fromUtf8(kodi::MovieSetXmlWriter(set).getMovieSetXml()));
+        kodi::MovieSetXmlReader reader(set);
+        REQUIRE(reader.parseNfoDom(doc));
+
+        CHECK_FALSE(messages.contains("is displayed as"));
+    }
+
+    SECTION("A record that really was renamed in the set file still says so")
+    {
+        // And the fix must not have bought that silence by blunting the signal D3a needs.
+        test::MessageCapture messages;
+        MovieSet set("Alien Collection");
+        QDomDocument doc;
+        doc.setContent(
+            QStringLiteral("<set><title>The Alien Saga</title><originaltitle>Alien Collection</originaltitle></set>"));
+        kodi::MovieSetXmlReader reader(set);
+        REQUIRE(reader.parseNfoDom(doc));
+
+        CHECK(messages.contains("is displayed as"));
+        CHECK(set.name() == "Alien Collection");
     }
 }
 

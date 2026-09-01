@@ -7,6 +7,7 @@
 #include "model/MovieModel.h"
 #include "model/MovieSetModel.h"
 #include "scrapers/movie/MovieMerger.h"
+#include "test/helpers/message_capture.h"
 #include "test/mocks/media_center/MediaCenterInterfaceMock.h"
 #include "test/unit/scrapers/custom_movie_scraper/StubMovieScraper.h"
 
@@ -39,39 +40,6 @@ void moveToSet(Movie* movie, const QString& setName)
     movie->setSetInfo(info);
 }
 
-/// \brief Captures qWarning() output for as long as it is in scope.
-/// \details MovieSetModel's only signal that it is throwing a set's own record away is
-///          a log line, so a test that does not read the log cannot tell the warning
-///          from its absence.
-class WarningCapture
-{
-public:
-    WarningCapture() : m_previous{qInstallMessageHandler(&WarningCapture::handle)} { s_messages = &m_messages; }
-    ~WarningCapture()
-    {
-        qInstallMessageHandler(m_previous);
-        s_messages = nullptr;
-    }
-    WarningCapture(const WarningCapture&) = delete;
-    WarningCapture& operator=(const WarningCapture&) = delete;
-
-    const QStringList& messages() const { return m_messages; }
-
-private:
-    static void handle(QtMsgType type, const QMessageLogContext& context, const QString& message)
-    {
-        Q_UNUSED(context)
-        if (type == QtWarningMsg && s_messages != nullptr) {
-            s_messages->append(message);
-        }
-    }
-
-    QStringList m_messages;
-    QtMessageHandler m_previous = nullptr;
-    static QStringList* s_messages;
-};
-
-QStringList* WarningCapture::s_messages = nullptr;
 
 } // namespace
 
@@ -721,7 +689,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         // deleting it would otherwise cost nothing that any test can see.
         sets.addSet("Alien Collection")->setOverview("A science fiction horror film franchise.");
 
-        WarningCapture warnings;
+        test::MessageCapture warnings;
         sets.removeSet("Alien Collection");
 
         REQUIRE(warnings.messages().size() == 1);
@@ -732,7 +700,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
     {
         REQUIRE(sets.addSet("Alien Collection") != nullptr);
 
-        WarningCapture warnings;
+        test::MessageCapture warnings;
         sets.removeSet("Alien Collection");
 
         CHECK(warnings.messages().isEmpty());
@@ -744,7 +712,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         sets.addSet("Predator Collection")->setTmdbId(TmdbId(399));
         sets.addSet("Rocky Collection");
 
-        WarningCapture warnings;
+        test::MessageCapture warnings;
         sets.clear();
 
         REQUIRE(warnings.messages().size() == 2);
