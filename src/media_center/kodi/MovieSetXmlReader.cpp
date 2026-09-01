@@ -66,8 +66,12 @@ bool MovieSetXmlReader::parseNfoDom(const QDomDocument& domDoc)
         return false;
     }
 
+    // Both read the same way.  Comparing an untrimmed <originaltitle> against a trimmed
+    // <title> makes every set whose name carries leading or trailing whitespace look like
+    // a set-file-only rename -- in MediaElch's *own* files, where the writer emits both
+    // from the same name -- and log that Kodi displays something else, which is false.
     const QString originalTitle = untrimmedChildText(setElement, "originaltitle");
-    const QString title = childText(setElement, "title");
+    const QString title = untrimmedChildText(setElement, "title");
     if (!originalTitle.isEmpty() && !title.isEmpty() && originalTitle != title) {
         // A set-file-only rename: Kodi 22 displays <title> and matches on
         // <originaltitle>.  MediaElch has one name per set and no way to hold both
