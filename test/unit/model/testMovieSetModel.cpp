@@ -1650,7 +1650,7 @@ TEST_CASE("Manager detaches its set model from the library before it dies", "[mo
 {
     // The production wiring, which the four sections above do **not** pin: every one of
     // them calls detachFromLibrary() itself, so removing the call from ~Manager
-    // (`Manager.cpp:69`) leaves all four green.  Measured, not assumed -- an earlier
+    // (`Manager::~Manager`, `Manager.cpp:75`) leaves all four green.  Measured, not assumed -- an earlier
     // commit message claimed one of them would catch it and none did.
     //
     // Pinned here through a Manager of this test's own, because the singleton cannot be

@@ -136,9 +136,8 @@ public:
     ///          -- no folder configured, no files under the old name, or a name that
     ///          legalises to the same path.  The other two mean files exist and are not
     ///          all where the new name says, which the caller must report: the rename
-    ///          itself is not undone,
-    ///          because the movie NFOs are the set's identity and a rename whose artwork
-    ///          move failed is still a rename that happened.
+    ///          itself is not undone, because the movie NFOs are the set's identity and a
+    ///          rename whose artwork move failed is still a rename that happened.
     ///
     /// \warning Must be called **before** the members are reassigned.  In the
     ///          artwork-next-to-movies layout the paths are found through a movie whose

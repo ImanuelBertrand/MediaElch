@@ -38,7 +38,6 @@ public:
     void setRemovalRefused(bool refused) { m_removalRefused = refused; }
     /// \brief Makes every record write refuse, as a folder owned by another set does.
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
-    void setRenameResult(MovieSetFileMove result) { m_renameResult = result; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
     /// \brief How often records-are-configured was asked -- the question every other
@@ -87,14 +86,20 @@ public:
         m_records.remove(setName);
         return true;
     }
+    /// \brief Always succeeds, and moves the record to match.
+    /// \details There is no failure knob, deliberately.  One existed and had no caller in
+    ///          any test, and it returned the failure *before* moving the record -- so a
+    ///          PartlyMoved through this mock left the record under the old name, which is
+    ///          the opposite of what PartlyMoved means (MediaCenterInterface.h).  The
+    ///          failure branches are exercised against the real KodiXml in
+    ///          testSetsWidget.cpp, where folders and files actually exist and the two
+    ///          layouts differ; a mock that can only assert its own return value adds
+    ///          nothing and can contradict the contract it stands in for.
     MovieSetFileMove renameMovieSetFiles(const QString& oldName, const QString& newName) override
     {
         if (!m_recordsEnabled) {
             // Nothing on disk, so nothing to move and nothing to complain about.
             return MovieSetFileMove::Moved;
-        }
-        if (m_renameResult != MovieSetFileMove::Moved) {
-            return m_renameResult;
         }
         if (m_records.contains(oldName)) {
             m_records.insert(newName, m_records.take(oldName));
@@ -150,7 +155,6 @@ private:
     bool m_recordsEnabled = true;
     bool m_removalRefused = false;
     bool m_writeRefused = false;
-    MovieSetFileMove m_renameResult = MovieSetFileMove::Moved;
     int m_savedRecordCount = 0;
     int m_listingCount = 0;
     mutable int m_recordsEnabledQueries = 0;
