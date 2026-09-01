@@ -42,6 +42,7 @@ public:
     bool saveMovie(Movie* movie) override;
     bool loadMovie(Movie* movie, QString initialNfoContent = "") override;
     // movie images (e.g. posters)
+    ELCH_NODISCARD bool movieSetArtworkEnabled() const override;
     QImage movieSetPoster(QString setName) override;
     QImage movieSetBackdrop(QString setName) override;
     void saveMovieSetPoster(QString setName, QImage poster) override;

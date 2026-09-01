@@ -1185,6 +1185,21 @@ QStringList KodiXml::extraFanartNames(Artist* artist)
     return files;
 }
 
+bool KodiXml::movieSetArtworkEnabled() const
+{
+    // A disjunction, and it *calls* movieSetRecordsEnabled() rather than repeating its
+    // condition, so that the record predicate stays the only place that decides what a
+    // configured movie set information folder is.
+    //
+    // Artwork resolves in both layouts: "artwork next to movies" finds a member movie
+    // and writes beside its folder (movieSetFileName() below), which is what MediaElch
+    // ships with and what most users have.  A record resolves in one.  So the one
+    // configuration where artwork has nowhere to go is the separate folder with no
+    // folder chosen -- which is exactly what movieSetRecordsEnabled() already refuses.
+    return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies
+           || movieSetRecordsEnabled();
+}
+
 QImage KodiXml::movieSetPoster(QString setName)
 {
     return movieSetImage(setName, DataFileType::MovieSetPoster);
@@ -1604,7 +1619,24 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
 QString KodiXml::movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise)
 {
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
-        QDir dir = Settings::instance()->movieSetArtworkDirectory().dir();
+        const mediaelch::DirectoryPath msif = Settings::instance()->movieSetArtworkDirectory();
+        if (!msif.isValid()) {
+            // The separate folder is selected and no folder was ever chosen.
+            // DirectoryPath's default constructor leaves isValid() false around a
+            // default QDir, whose absolutePath() is the *process's current working
+            // directory*, so without this the line below hands back a real, writable
+            // path in whatever directory MediaElch was started from -- and every caller
+            // acts on it.  The savers mkpath() and write there; the reader displays
+            // whatever it happens to find there as this set's artwork.
+            //
+            // Refused here, where the path is built, rather than in each caller: that
+            // closes it for all four of them and for any added later.  It is the second
+            // half of movieSetRecordsEnabled()'s conjunction and not a second answer to
+            // the same question -- inside this branch the layout is already known, so
+            // isValid() is all that is left to ask.
+            return {};
+        }
+        QDir dir = msif.dir();
         // Kodi legalises only the folder component of this path, so the file name keeps using
         // MediaElch's own sanitiser.  The two are intentionally different.
         QString fileName = dataFile->saveFileName(setName);

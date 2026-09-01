@@ -30,6 +30,25 @@ public:
     virtual bool saveMovie(Movie* movie) = 0;
     virtual bool loadMovie(Movie* movie, QString nfoContent = "") = 0;
     // movie images (e.g. posters)
+
+    /// \brief Whether set artwork has somewhere to go, i.e. whether the layout resolves.
+    /// \details **Deliberately not the same question as movieSetRecordsEnabled().**  A
+    ///          set's *record* only ever lives in the movie set information folder, but
+    ///          its *artwork* lives in both layouts: "artwork next to movies" writes it
+    ///          beside the movie folders, and that is MediaElch's shipping default.
+    ///          Gating artwork on the record predicate would therefore take set artwork
+    ///          away from every user who has never opened the settings.
+    ///
+    ///          The only configuration with nowhere to put artwork is the separate
+    ///          folder selected without a folder having been chosen, which used to
+    ///          resolve to the process's working directory.
+    ///
+    ///          An implementation must answer this by *calling* movieSetRecordsEnabled()
+    ///          rather than repeating its condition, so that the two cannot drift apart.
+    ///          That the two are different questions, and which configurations separate
+    ///          them, is pinned by the truth-table section of
+    ///          test/integration/media_center/testKodi_v22_movie_set.cpp.
+    ELCH_NODISCARD virtual bool movieSetArtworkEnabled() const = 0;
     virtual QImage movieSetPoster(QString setName) = 0;
     virtual QImage movieSetBackdrop(QString setName) = 0;
     virtual void saveMovieSetPoster(QString setName, QImage poster) = 0;

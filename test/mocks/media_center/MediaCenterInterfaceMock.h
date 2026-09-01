@@ -30,6 +30,10 @@ public:
 
     /// \brief Whether a movie set information folder is configured.
     void setRecordsEnabled(bool enabled) { m_recordsEnabled = enabled; }
+    /// \brief Whether set artwork has somewhere to go.  Independent of the records here.
+    /// \details KodiXml derives one from the other; this mock lets a test set them apart,
+    ///          which is how the two layouts are told apart without a real Settings.
+    void setArtworkEnabled(bool enabled) { m_artworkEnabled = enabled; }
     /// \brief Puts a `set.nfo` for \p setName on the pretend disk.
     void putRecord(const QString& setName, Record record) { m_records.insert(setName, record); }
     void putRecord(const QString& setName) { putRecord(setName, Record()); }
@@ -83,6 +87,7 @@ public:
     // Everything below is unused by MovieSetModel and does nothing.
     bool saveMovie(Movie* /*movie*/) override { return false; }
     bool loadMovie(Movie* /*movie*/, QString /*nfoContent*/ = "") override { return false; }
+    ELCH_NODISCARD bool movieSetArtworkEnabled() const override { return m_artworkEnabled; }
     QImage movieSetPoster(QString /*setName*/) override { return {}; }
     QImage movieSetBackdrop(QString /*setName*/) override { return {}; }
     void saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override {}
@@ -123,6 +128,7 @@ public:
 private:
     QHash<QString, Record> m_records;
     bool m_recordsEnabled = true;
+    bool m_artworkEnabled = true;
     bool m_removalRefused = false;
     bool m_writeRefused = false;
     int m_savedRecordCount = 0;
