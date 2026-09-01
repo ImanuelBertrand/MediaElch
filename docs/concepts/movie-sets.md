@@ -1,7 +1,7 @@
 # Movie Sets
 
 __Status__: Concept, work in progress  
-__Last Updated on__: 2026-08-31
+__Last Updated on__: 2026-09-01
 
 Two invitations stand open in the issue tracker.  bugwelle in #1747,
 2024-05-18:
@@ -236,6 +236,15 @@ That gives a clean division:
 | Artwork | MSIF folder files | — | Kodi 19-22 |
 | TMDB id | `set.nfo` | every member | MediaElch only (#2012) |
 
+Read that row for artwork carefully: it is the **image files** in the folder
+that are authoritative, not `set.nfo`'s `<art>` block.  Kodi 19-22 all read
+the files first and fall back to `<art>` only when the folder has none
+(`VideoInfoScanner.cpp:866-869`).  MediaElch writes the files, so writing
+`<art>` as well would be a second source of truth for the same images — it is
+read and ignored, and never written.  Any one-line summary of this decision
+that says "overview, artwork and id are authoritative in `set.nfo`" is loose
+and this table is what it means.
+
 The join between the two halves is the name, and it has to be exact: the
 member NFOs' `<set><name>` and `set.nfo`'s `<originaltitle>` must be the same
 string, because that string is what lands in `strOriginalSet`.  Point them at
@@ -256,32 +265,73 @@ movie joins it, because Kodi discovers sets only from movies, and the UI
 should say so rather than pretending otherwise.  The artwork folder likewise
 stops being a pile of images with nothing to explain what they are for.
 
-#### The Cost: the Folder Becomes Mandatory
+MediaElch, unlike Kodi, therefore **does** enumerate the movie-set information
+folder: it lists the records, and creates the sets that no movie derives.
+Nothing else could find them, because every other set in the model exists
+because a movie's NFO names it.  A folder holding artwork but **no** `set.nfo`
+is deliberately not a set — the record is what makes a set exist in its own
+right, and treating a pile of images as one would resurrect every set a user
+ever deliberately removed.  The name is read out of the file's
+`<originaltitle>` and never taken from the folder name, which is the set name
+put through Kodi's legalisation and therefore lossy.
 
-This design does not work without a configured movie-set information folder,
-so **set functionality is guarded behind a warning that tells the user to
-configure one**, and MediaElch offers no sets at all until they do.  That is a
-deliberate reversal of today's situation, where the folder is optional and off
-by default, and it is exactly the objection bugwelle raised in #1243 on
-2021-04-06 against changing the artwork default:
+The corollary is that a deliberate removal has to delete the record.  A
+`set.nfo` that outlived its set would be found again by the next reload and
+bring the set back, so *Delete Movie Set* would delete nothing that lasted.
+
+#### The Cost: Without a Folder, Sets Are Read-Only
+
+~~This design does not work without a configured movie-set information
+folder, so set functionality is guarded behind a warning and MediaElch offers
+no sets at all until one is configured.~~ **Revised 2026-09-01 (user's
+call).**  Refusing outright was the earlier decision and it was too harsh:
+reading costs nothing and keeps the sets tab useful for everyone who has never
+configured the folder.
+
+**With no folder configured, sets are still read from the movie NFOs and
+shown, but read-only** — editing, artwork download, *Add Movie Set* and every
+write path are disabled, behind a warning that says what is off and why.
+Applying that everywhere is its own step; what this step establishes is only
+*whether* a folder is configured.
+
+This still answers the objection bugwelle raised in #1243 on 2021-04-06
+against changing the artwork default:
 
 > The default is "Artwork next to movies" simply because otherwise the user
 > would have to configure a directory first. And MediaElch does not yet have a
 > "Quick Start" dialog or similar.
 
-The objection is right, and the answer here is the explicit warning rather
-than a silent fallback — because the silent fallback is worse than refusing.
-With no folder configured, `Settings::movieSetArtworkDirectory()` returns a
+The objection is right, and the answer is the explicit warning rather than a
+silent fallback — because the silent fallback is worse than refusing.  With no
+folder configured, `Settings::movieSetArtworkDirectory()` returns a
 `DirectoryPath` built from an empty string, which is `isValid() == false`
 wrapping `QDir("")` (`src/media/Path.h:26`,
 `src/settings/Settings.cpp:305-306`), and `KodiXml::movieSetFileName` never
-checks `isValid()` before calling
-`dir.absolutePath()` (`src/media_center/KodiXml.cpp:1311-1315`).
+checks `isValid()` before calling `dir.absolutePath()`.
 `QDir("").absolutePath()` resolves to the *process's current working
 directory* (verified against Qt 6.8), so today a user who selects the
 separate-folder mode without setting a folder scatters set artwork next to
-wherever MediaElch happened to be launched from.  Refusing to operate is
-strictly better than that.
+wherever MediaElch happened to be launched from.
+
+**`set.nfo` is therefore a separate-artwork-folder feature, and that is the
+design rather than a gap.**  `KodiXml::movieSetRecordsEnabled()` is the one
+place that decides, and it tests *both* the layout and `isValid()`, because
+the mode alone is what walks into the working directory.  It gates reading as
+well as writing: a `set.nfo` read out of the working directory would mark a
+set as having a record, and that is what decides whether the model keeps or
+drops the set.
+
+The gate has to come **before** the path is resolved, not be inferred from an
+empty result.  In the artwork-next-to-movies layout `movieSetFileName()` does
+not resolve to nothing: for a set that has members it walks the movie model,
+finds one, and returns `<that movie's folder>/set.nfo` — a real, writable path
+that Kodi never reads.  The empty return happens only for a set with no
+members at all.
+
+The artwork paths (`movieSetPoster()`, `movieSetBackdrop()` and their two
+savers) still call `movieSetFileName()` unguarded and still have the working
+directory exposure described above.  That is deliberate and belongs to the
+read-only guard step, not to the record reader and writer.
 
 #### Migration Is Not Optional
 
@@ -544,21 +594,51 @@ the model, and both apply the same test — no members left:
   movie there rather than assuming the set's own handler for the same signal has
   already run, since slot order follows connection order.
 
-Until `set.nfo` exists, "no members left" is the whole test, because a set has no
-record apart from the movies that name it — which is exactly what the three grouping
-sites assumed.  When D-A's record lands, the test becomes "no members *and* no
-`set.nfo`", and nothing else about the rule changes.
+~~Until `set.nfo` exists, "no members left" is the whole test~~ — **the record
+landed, so the test is now "no members *and* no `set.nfo`"**, and nothing else about
+the rule changed.  A set with a record of its own is not derived from anything: its
+overview, collection id and artwork belong to the set and not to any movie.  A set
+without one is nothing but the grouping of its movies and still goes when the grouping
+does.  This is a relaxation of one predicate, not new machinery.
 
-**That second half cannot be approximated with `MovieSet::hasChanged()` before the
-writer exists**, and one attempt at it has already had to be reverted.  Nothing calls
-`MovieSet::setChanged(false)`, so the flag is a one-way latch: exempt a changed set
+Whether a set has a record is a fact about the file system, and it is treated as one:
+established when the set is created, before the object is visible to anything —
+`dropEmptySets()` must never see a set whose record has not been looked for yet —
+and refreshed on every `reload()` from a single directory listing rather than a probe
+per set.  Refreshing it is what heals a `set.nfo` deleted behind MediaElch's back or a
+folder pointed somewhere else, with no settings-changed plumbing to keep in step.  Only
+the record's *existence* is refreshed; its contents are read once, at creation, because
+re-reading would overwrite an overview the user has edited and not saved.  The one
+exception is a set that had no record and now has one, which must be read or it would
+write the emptiness it was created with over the file.
+
+The predicate is also gated, live, on whether records are configured at all.  A user who
+goes back to "artwork next to movies" has no folder, so no set has a record, and every
+set is its movies again at once rather than at the next reload; going back restores every
+set's answer, because nothing cleared the flags and nothing on disk was touched.
+
+**That second half could not be approximated with `MovieSet::hasChanged()`**, and one
+attempt at it had to be reverted.  Until the writer existed nothing called
+`MovieSet::setChanged(false)`, so the flag was a one-way latch: exempt a changed set
 from the drop and a set that has ever been renamed is exempt for the rest of the
 session, immune even to `reload()` — which is the mechanism that is supposed to cure
 exactly this.  The observable result is the phantom the whole rule exists to prevent:
 rename a set in the sets tab, do not save, rescan, and the old name comes back from the
 NFOs while the new one is kept forever in the set combo box and the set filter.  The
-exemption belongs with the `set.nfo` writer and a clearing edge on the flag, in the
-same step, not before.
+writer has since given the flag its clearing edge — `KodiXml::saveMovieSet()` and
+`loadMovieSet()` both clear it, which is the first time anything ever has — but the flag
+still answers a different question and is still not this one.
+
+A set created by *Add Movie Set* and never filled is dropped by the next re-derivation.
+That is not a new restriction and not a consequence of this rule: it was already true
+when "no members left" was the whole test, and the sets tab has always said so.  What
+changed is that the user can now do something about it — saving the set writes its
+record, and a set with a record survives.
+
+The compensating control is in the sets tab: a set that survives with no members is
+indistinguishable from any other by looking, so the tab can filter the list down to the
+sets that have no movies.  Without it the relaxed rule turns curated sets into
+invisible clutter.
 
 An earlier draft of this section had a set dropped the moment it lost its last movie,
 whoever removed it.  That was forced by the movie widget's set combo box, which was

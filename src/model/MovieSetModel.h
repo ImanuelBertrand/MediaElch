@@ -151,16 +151,16 @@ public:
     ///          the members' set names as it goes.
     void syncMovie(Movie* movie);
 
-    /// \brief Removes the set called \p name and detaches its movies.
+    /// \brief Removes the set called \p name, its record and its movies' membership.
     /// \details This is the deliberate removal, movies and all; nothing else destroys
-    ///          a set that still has members.  Detaching a movie is an edit that has to
-    ///          reach disk -- membership lives in the member movies' NFOs (D-A) -- and
-    ///          neither MovieSet nor this model marks anything dirty for a membership
-    ///          change on its own, so this marks the former members changed itself --
-    ///          through assign(), and so only those whose set value actually had
-    ///          something in it to clear.  A member whose own value was already empty is
-    ///          detached without being dirtied, because for that movie nothing about
-    ///          the file on disk has changed.
+    ///          a set that still has members, and nothing else deletes a set's
+    ///          `set.nfo`.  Deleting it is not optional: a record that outlived its set
+    ///          would be found again by the next reload() and bring the set back.  Detaching a movie is an edit that
+    ///          has to reach disk -- membership lives in the member movies' NFOs (D-A) -- and neither MovieSet nor this
+    ///          model marks anything dirty for a membership change on its own, so this marks the former members changed
+    ///          itself -- through assign(), and so only those whose set value actually had something in it to clear.  A
+    ///          member whose own value was already empty is detached without being dirtied, because for that movie
+    ///          nothing about the file on disk has changed.
     void removeSet(const QString& name);
 
     /// \brief Regroups every movie of the movie model into sets.

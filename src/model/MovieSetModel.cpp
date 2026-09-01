@@ -255,8 +255,10 @@ void MovieSetModel::warnIfRecordIsLost(const MovieSet* movieSet) const
     if (!movieSet->hasChanged()) {
         return;
     }
-    // Deliberate removal takes the record with it, but it must not do so quietly:
-    // once `set.nfo` is written this is a lost file, not a lost object.
+    // Deliberate removal takes the record with it, but it must not do so quietly.
+    // The flag means "this set differs from what is stored on disk", and since the
+    // `set.nfo` writer gave it a clearing edge it means that literally: what is being
+    // discarded is an edit the user has not saved into the set's file.
     qCWarning(generic) << "[MovieSetModel] Discarding unsaved changes to movie set" << movieSet->name();
 }
 
