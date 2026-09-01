@@ -177,6 +177,18 @@ public:
     ///         set that does not exist is true: there is nothing left to remove.
     ELCH_NODISCARD bool removeSet(const QString& name);
 
+    /// \brief Whether sets can have a record at all, i.e. whether a folder is configured.
+    /// \details Public because the sets tab has to ask the same question this model
+    ///          answers, and asking the media center directly would not be the same
+    ///          question: this one also covers a model with no media center, which is
+    ///          how the tests build it and what dropEmptySets() actually decides by.
+    ///          Two answers to one question is how a guard and the rule it guards drift
+    ///          apart, so there is one.
+    ///
+    ///          Asked live rather than remembered, so that changing the setting takes
+    ///          effect at once instead of at the next reload.
+    ELCH_NODISCARD bool recordsAreConfigured() const;
+
     /// \brief Regroups every movie of the movie model into sets.
     /// \details Existing MovieSet objects are kept, so a set's own record survives; a
     ///          set that ends up with neither members nor a `set.nfo` is dropped.
@@ -223,8 +235,6 @@ private:
     void unindexMembership(QObject* movie, MovieSet* movieSet);
     /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
-    /// \brief Whether sets can have a record at all, i.e. whether a folder is configured.
-    ELCH_NODISCARD bool recordsAreConfigured() const;
     /// \brief Whether \p movieSet has a `set.nfo` of its own.
     /// \details Two questions, and the configuration one is asked live rather than
     ///          remembered.  A user who goes back to "artwork next to movies" has no

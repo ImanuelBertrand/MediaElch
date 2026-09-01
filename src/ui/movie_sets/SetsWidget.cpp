@@ -56,18 +56,23 @@ SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget
 
     ui->sets->setContextMenuPolicy(Qt::CustomContextMenu);
     m_tableContextMenu = new QMenu(ui->sets);
-    auto* actionAddSet = new QAction(tr("Add Movie Set"), this);
+    // A disabled action's tooltip is only shown if the menu is asked to show tooltips at
+    // all, and *Add Movie Set* is disabled for a reason the user cannot otherwise see.
+    m_tableContextMenu->setToolTipsVisible(true);
+    m_actionAddSet = new QAction(tr("Add Movie Set"), this);
+    m_actionAddSet->setObjectName("actionAddMovieSet");
     auto* actionDeleteSet = new QAction(tr("Delete Movie Set"), this);
+    actionDeleteSet->setObjectName("actionDeleteMovieSet");
     // A set with a `set.nfo` stays in the list after its last movie leaves it, so the
     // list can hold sets nothing in the library points at.  Nothing about a row says so,
     // and a user with a hundred sets cannot find them by opening each one.
     auto* actionOnlyEmptySets = new QAction(tr("Show Only Empty Movie Sets"), this);
     actionOnlyEmptySets->setCheckable(true);
-    m_tableContextMenu->addAction(actionAddSet);
+    m_tableContextMenu->addAction(m_actionAddSet);
     m_tableContextMenu->addAction(actionDeleteSet);
     m_tableContextMenu->addSeparator();
     m_tableContextMenu->addAction(actionOnlyEmptySets);
-    connect(actionAddSet, &QAction::triggered, this, &SetsWidget::onAddMovieSet);
+    connect(m_actionAddSet, &QAction::triggered, this, &SetsWidget::onAddMovieSet);
     connect(actionDeleteSet, &QAction::triggered, this, &SetsWidget::onRemoveMovieSet);
     connect(actionOnlyEmptySets, &QAction::toggled, this, &SetsWidget::onShowOnlyEmptySets);
     connect(ui->sets, &QWidget::customContextMenuRequested, this, &SetsWidget::showSetsContextMenu);
@@ -83,6 +88,39 @@ SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget
                           .scaled(QSize(160, 72) * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
     pixmap2.setDevicePixelRatio(devicePixelRatioF());
     ui->backdrop->setPixmap(pixmap2);
+
+    applyWriteAccess();
+}
+
+void SetsWidget::applyWriteAccess()
+{
+    // Asked of the model, not of the media center directly.  The model's answer also
+    // covers "no media center at all", which is what its own drop rule decides by, and
+    // a guard that asked a second, subtly different question would come apart from the
+    // rule it is guarding.
+    const bool recordsEnabled = Manager::instance()->movieSetModel()->recordsAreConfigured();
+    // Asked of the media center, which is the object that would have to write the file.
+    // Not the same question: artwork resolves in both layouts, a record in one.
+    const bool artworkEnabled = Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled();
+
+    m_actionAddSet->setEnabled(recordsEnabled);
+    m_actionAddSet->setToolTip(recordsEnabled
+                                   ? QString()
+                                   : tr("A movie set needs a movie set directory to be remembered in. Choose one "
+                                        "under Settings, Movies, Movie Set Artwork."));
+
+    // A disabled widget receives no mouse events, so this is what stops the artwork
+    // dialogs from opening.  chooseSetPoster() and chooseSetBackdrop() refuse as well:
+    // the affordance and the action are guarded separately on purpose, because a
+    // download that cannot be saved wastes the user's time either way.
+    ui->poster->setEnabled(artworkEnabled);
+    ui->backdrop->setEnabled(artworkEnabled);
+    const QString artworkTooltip =
+        artworkEnabled ? QString()
+                       : tr("Set artwork cannot be saved: a separate artwork directory is selected but none has "
+                            "been chosen. Choose one under Settings, Movies, Movie Set Artwork.");
+    ui->poster->setToolTip(artworkTooltip);
+    ui->backdrop->setToolTip(artworkTooltip);
 }
 
 /**
@@ -116,6 +154,7 @@ void SetsWidget::showSetsContextMenu(QPoint point)
  */
 void SetsWidget::loadSets()
 {
+    applyWriteAccess();
     m_moviesToSave.clear();
     m_setPosters.clear();
     m_setBackdrops.clear();
@@ -374,6 +413,13 @@ void SetsWidget::chooseSetPoster()
         qCDebug(generic) << "[SetsWidget] Invalid current row in sets";
         return;
     }
+    if (!Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled()) {
+        // applyWriteAccess() has already disabled the label this is reached from; this
+        // is the same refusal at the action rather than at the affordance, so that a
+        // download is never started for an image that could not be written afterwards.
+        qCDebug(generic) << "[SetsWidget] Not choosing a set poster: set artwork has nowhere to be written.";
+        return;
+    }
 
     QString setName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
     auto* movie = new Movie(QStringList());
@@ -407,6 +453,11 @@ void SetsWidget::chooseSetBackdrop()
 {
     if (ui->sets->currentRow() < 0 || ui->sets->currentRow() >= ui->sets->rowCount()) {
         qCDebug(generic) << "Invalid current row in sets";
+        return;
+    }
+    if (!Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled()) {
+        // See chooseSetPoster().
+        qCDebug(generic) << "[SetsWidget] Not choosing a set backdrop: set artwork has nowhere to be written.";
         return;
     }
 
@@ -561,6 +612,22 @@ void SetsWidget::onPreviewPoster()
 void SetsWidget::onAddMovieSet()
 {
     m_tableContextMenu->close();
+    // Behind the disabled action, not instead of it.  A set created here has no members
+    // and no `set.nfo`, and with no movie set information folder it can never get one,
+    // so the next reload() drops it (MovieSetModel::dropEmptySets()) and the user
+    // watches a set they just made disappear.  **This is also what keeps read-only mode
+    // from accumulating memberless sets**, which is the property the whole design rests
+    // on -- so this guard is load-bearing rather than defensive, and both halves of it
+    // are pinned by a test in test/unit/ui/testSetsWidget.cpp.
+    //
+    // Naming a *new* set on a movie is a different thing and stays allowed: that set has
+    // a member from the moment it exists, so nothing drops it, and membership is
+    // authoritative in the movie files with or without a folder (D1a).
+    if (!Manager::instance()->movieSetModel()->recordsAreConfigured()) {
+        qCDebug(generic) << "[SetsWidget] Not adding a movie set: no movie set directory is configured, so the"
+                         << "set could not be remembered and would go at the next reload.";
+        return;
+    }
     // Asked of the model, not of the table.  The table is a filtered view of the model --
     // "Show Only Empty Movie Sets" hides every set that has movies, and a set can also be
     // missing from it because the list has not been rebuilt since -- so a name absent

@@ -13,6 +13,7 @@
 #include "test/helpers/movie_set_settings.h"
 #include "ui/movie_sets/SetsWidget.h"
 
+#include <QAction>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -199,4 +200,84 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
     DataFile posterFile = posterFiles.first();
     CHECK(QFileInfo::exists(
         guard.dir().absoluteFilePath("Alien Anthology/" + posterFile.saveFileName("Alien Anthology"))));
+}
+
+TEST_CASE("Add Movie Set is off without a movie set directory", "[ui][movie][set]")
+{
+    // The load-bearing half of the read-only guard.  With no movie set information
+    // folder a set can have no `set.nfo`, and a set with neither members nor a record is
+    // dropped by the next reload -- so *Add Movie Set* would offer the user something
+    // that silently disappears.  It is also the only path that can create such a set, so
+    // disabling it is what keeps read-only mode from accumulating them, which the rest
+    // of the design depends on.  Delete this guard and the third section below starts
+    // describing what users see.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    auto* addSet = widget.findChild<QAction*>("actionAddMovieSet");
+    REQUIRE(addSet != nullptr);
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+
+    SECTION("With a directory it is offered, and it adds a set")
+    {
+        widget.loadSets();
+        CHECK(addSet->isEnabled());
+        REQUIRE(QMetaObject::invokeMethod(&widget, "onAddMovieSet"));
+        CHECK(setModel->set("New Movie Set") != nullptr);
+    }
+
+    SECTION("Without one it is not offered, and it does not add a set")
+    {
+        // Both halves: the action the user can reach is disabled, and the slot behind it
+        // refuses on its own, so a future rearrangement of the menu cannot reopen this.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        widget.loadSets();
+        CHECK_FALSE(addSet->isEnabled());
+        REQUIRE(QMetaObject::invokeMethod(&widget, "onAddMovieSet"));
+        CHECK(setModel->set("New Movie Set") == nullptr);
+    }
+
+    SECTION("Because such a set does not survive the next reload")
+    {
+        // The reason, stated as a fact rather than as a comment.  This is what the user
+        // would be shown if the guard above were removed as over-cautious.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        widget.loadSets();
+        REQUIRE(setModel->addSet("New Movie Set") != nullptr);
+        widget.loadSets();
+        CHECK(setModel->set("New Movie Set") == nullptr);
+    }
+}
+
+TEST_CASE("A set named on a movie is created without a movie set directory", "[ui][movie][set]")
+{
+    // The complement, and it is why the guard above is on *Add Movie Set* rather than on
+    // set creation.  Naming a set on a movie -- the movie widget's set box, or Add Movie
+    // here -- creates a set that has a member from the moment it exists, so nothing
+    // drops it and it comes back from the movie's own NFO on every reload.  Membership
+    // is authoritative in the movie files with or without a folder (D1a).
+    //
+    // Closing this "back door" would break assigning movies to sets in the shipping
+    // default configuration, which is the larger bug by far.
+    MovieSetFolderGuard guard;
+    Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+
+    addLibraryMovie("Alien", "");
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    REQUIRE_FALSE(setModel->recordsAreConfigured());
+    REQUIRE(setModel->set("Alien Collection") == nullptr);
+
+    const QVector<Movie*> movies = Manager::instance()->movieModel()->movies();
+    REQUIRE(movies.size() == 1);
+    MovieSetInfo info;
+    info.name = "Alien Collection";
+    setModel->assign(movies.first(), info);
+    REQUIRE(setModel->set("Alien Collection") != nullptr);
+
+    widget.loadSets();
+    CHECK(setModel->set("Alien Collection") != nullptr);
 }
