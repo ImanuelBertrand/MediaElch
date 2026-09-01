@@ -624,8 +624,8 @@ void SetsWidget::saveSet()
     // failed is what tells the user where to look, and a translator needs the sentence.
     if (!recordSaved && !artworkSaved) {
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
-                           << "was not saved: its artwork could not be written, and neither could its movie"
-                           << "set file.";
+                           << "was saved only in part: its movies were written, but neither its artwork nor its"
+                           << "movie set file could be written.";
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b>: the movies were saved, but the artwork and the movie set file could not be "
                "written.")
@@ -635,14 +635,14 @@ void SetsWidget::saveSet()
     if (!recordSaved) {
         // The movies and the artwork above were saved; only the set's own file was not.
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
-                           << "was not saved: its movie set file could not be written.";
+                           << "was saved only in part: its movie set file could not be written.";
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.").arg(currentName));
         return;
     }
     if (!artworkSaved) {
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
-                           << "was not saved: its artwork could not be written.";
+                           << "was saved only in part: its artwork could not be written.";
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b>: the movies were saved, but the artwork could not be written.").arg(currentName));
         return;

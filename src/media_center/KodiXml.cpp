@@ -1254,7 +1254,10 @@ bool KodiXml::saveMovieSetBackdrop(QString setName, QImage backdrop)
 }
 
 /// \brief Writes \p image under every file name configured for \p type.
-/// \return Whether the image is on disk under every one of them.
+/// \return Whether the image reached the disk under every name that resolved to a path,
+///         and at least one did.  A configured name that resolves to nothing is skipped
+///         rather than counted as a failure, so this can be true while the image is not
+///         on disk under every *configured* name.
 /// \details "Nothing was attempted" is a failure, not a success.  It means either that
 ///          movieSetFileName() refused -- the separate artwork folder selected with no
 ///          folder chosen -- or that the set has no path in this layout at all, and in
@@ -1349,18 +1352,37 @@ mediaelch::DirectoryPath KodiXml::getPath(const Concert* concert)
     return mediaelch::DirectoryPath(fi.dir());
 }
 
-bool KodiXml::movieSetRecordsEnabled() const
+namespace {
+
+/// \brief Whether a movie set information folder is configured: the layout *and* a folder.
+/// \details The one place either half of this is derived.  Both halves are load-bearing.
+///
+///          The layout, because a `set.nfo` and a per-set artwork folder only exist in
+///          that layout at all.
+///
+///          The folder, because DirectoryPath's default constructor leaves isValid()
+///          false around a *default* QDir, whose absolutePath() is the process's current
+///          working directory.  "Separate folder selected, folder never chosen" therefore
+///          names a real, writable path in whatever directory MediaElch was started from.
+///          movieSetFileName() refuses that path too now, and this is still not
+///          redundant with it: that refusal is what stops a file being *written* there,
+///          while this one is what stops a `set.nfo` found there from marking a set as
+///          having a record -- which is what decides whether the model keeps or drops the
+///          set, and happens before any path is built.  Neither guard covers the other's
+///          case, and both are pinned by tests in testKodi_v22_movie_set.cpp.
+bool movieSetFolderIsConfigured()
 {
-    // Two conditions, and the second one is not decoration.  DirectoryPath's default
-    // constructor leaves isValid() false around a default QDir, whose absolutePath() is
-    // the *process's current working directory*, and movieSetFileName() below calls
-    // .dir() without ever asking.  So "separate folder selected, folder never chosen"
-    // resolves to a real, writable path in whatever directory MediaElch was started
-    // from.  Refusing is the only correct answer: a record written there is invisible to
-    // Kodi, and -- worse -- a `set.nfo` *read* from there would mark a set as having a
-    // record, which is what decides whether the model keeps or drops it.
     return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder
            && Settings::instance()->movieSetArtworkDirectory().isValid();
+}
+
+} // namespace
+
+bool KodiXml::movieSetRecordsEnabled() const
+{
+    // A record lives in the movie set information folder and nowhere else, so having one
+    // configured is the whole question.
+    return movieSetFolderIsConfigured();
 }
 
 namespace {
@@ -1621,24 +1643,24 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
 QString KodiXml::movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise)
 {
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
-        const mediaelch::DirectoryPath msif = Settings::instance()->movieSetArtworkDirectory();
-        if (!msif.isValid()) {
-            // The separate folder is selected and no folder was ever chosen.
-            // DirectoryPath's default constructor leaves isValid() false around a
-            // default QDir, whose absolutePath() is the *process's current working
-            // directory*, so without this the line below hands back a real, writable
-            // path in whatever directory MediaElch was started from -- and every caller
-            // acts on it.  The savers mkpath() and write there; the reader displays
-            // whatever it happens to find there as this set's artwork.
+        if (!movieSetFolderIsConfigured()) {
+            // Inside this branch that is exactly "no folder was ever chosen", and it is
+            // asked through the shared predicate rather than by testing isValid() again,
+            // so that there is one derivation of it and not two.
+            //
+            // Without it the line below hands back a real, writable path in whatever
+            // directory MediaElch was started from -- see movieSetFolderIsConfigured() --
+            // and every caller acts on it: the savers mkpath() and write there, and the
+            // reader displays whatever it happens to find there as this set's artwork.
             //
             // Refused here, where the path is built, rather than in each caller: that
-            // closes it for all four of them and for any added later.  It is the second
-            // half of movieSetRecordsEnabled()'s conjunction and not a second answer to
-            // the same question -- inside this branch the layout is already known, so
-            // isValid() is all that is left to ask.
+            // closes it for all four of them and for any added later.  It has to come
+            // *before* the path is resolved and cannot be inferred from an empty result,
+            // because the other layout below returns an empty string for an entirely
+            // different reason.
             return {};
         }
-        QDir dir = msif.dir();
+        QDir dir = Settings::instance()->movieSetArtworkDirectory().dir();
         // Kodi legalises only the folder component of this path, so the file name keeps using
         // MediaElch's own sanitiser.  The two are intentionally different.
         QString fileName = dataFile->saveFileName(setName);

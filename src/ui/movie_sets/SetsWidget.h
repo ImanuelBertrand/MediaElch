@@ -33,6 +33,8 @@ public slots:
     void loadSets();
     void saveSet();
     QSplitter* splitter();
+
+public:
     /// \brief Enables or disables the actions that need a movie set information folder.
     /// \details Two questions, and they are deliberately different ones.  *Add Movie
     ///          Set* needs a **record**: a set with no members and no `set.nfo` is
