@@ -9,9 +9,10 @@
 #include <QStringList>
 
 /// \brief A MediaCenterInterface that stores movie set records in memory.
-/// \details MovieSetModel asks a media center which sets have a `set.nfo` and reads and
-///          writes those records through it.  Everything else on the interface is a
-///          no-op here: the model uses five of its forty methods.
+/// \details MovieSetModel asks a media center which sets have a `set.nfo` and reads
+///          those records through it; it uses four of the interface's forty methods.
+///          The fifth implemented here, saveMovieSet(), is SetsWidget's -- the model
+///          never writes a record, only reads and removes.  Everything else is a no-op.
 ///
 ///          The records are a QHash, not files, so a test can say "this set has a record
 ///          on disk" without a movie set information folder, a Settings singleton or a
@@ -36,7 +37,8 @@ public:
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
 
-    // movie set records -- the five methods MovieSetModel actually uses
+    // The movie set record calls: the four MovieSetModel uses, plus saveMovieSet(),
+    // which is SetsWidget's.
     ELCH_NODISCARD bool movieSetRecordsEnabled() const override { return m_recordsEnabled; }
     ELCH_NODISCARD QStringList movieSetsWithRecord() override
     {

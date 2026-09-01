@@ -1016,13 +1016,25 @@ TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
     SECTION("An automatic drop never removes a record")
     {
         // The only path in the model that deletes a file is removeSet(), the deliberate
-        // one.  dropEmptySets() destroys objects; a library re-derivation must never
-        // cost the user a file.
-        mediaCenter.setRecordsEnabled(false);
-        sets.assign(alien, MovieSetInfo{});
-        sets.reload();
-        REQUIRE(sets.set("Alien Collection") == nullptr);
-        CHECK(mediaCenter.hasRecordOnDisk("Alien Collection"));
+        // one.  dropEmptySets() destroys objects; a library re-derivation must never cost
+        // the user a file.
+        //
+        // The state is the reachable one that lets the fence bite: records are *enabled*,
+        // and a record exists for a set whose flag is still false because no reload has
+        // run since it appeared.  So the set is dropped -- correctly, on what the model
+        // knows -- while a file for it is on disk and removable.  Turning records off
+        // instead would prove nothing: the media center refuses every removal while they
+        // are off, so the file would survive however wrong the model was.
+        sets.addSet("Predator Collection");
+        REQUIRE(sets.set("Predator Collection") != nullptr);
+        REQUIRE_FALSE(sets.set("Predator Collection")->hasRecord());
+        mediaCenter.putRecord("Predator Collection");
+
+        movies.clear();
+        qApp->processEvents();
+
+        REQUIRE(sets.set("Predator Collection") == nullptr);
+        CHECK(mediaCenter.hasRecordOnDisk("Predator Collection"));
     }
 }
 
