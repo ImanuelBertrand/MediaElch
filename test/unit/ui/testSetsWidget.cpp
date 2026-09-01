@@ -12,6 +12,7 @@
 #include "test/helpers/message_capture.h"
 #include "test/helpers/movie_set_settings.h"
 #include "ui/movie_sets/SetsWidget.h"
+#include "ui/notifications/NotificationBox.h"
 
 #include <QAction>
 #include <QApplication>
@@ -140,6 +141,29 @@ void writeRecord(const QDir& msif, const QString& setName)
     REQUIRE(record.open(QIODevice::WriteOnly));
     record.write(QString("<set><title>%1</title><originaltitle>%1</originaltitle></set>").arg(setName).toUtf8());
     record.close();
+}
+
+/// \brief The text of every notification currently on screen, joined.
+/// \details The user-facing half of a refusal, which the log lines beside it do not
+///          stand in for: the three-state move exists so that the *message* is true for
+///          the branch it describes, and a test that only greps the log cannot see the
+///          sentence the user is shown.  NotificationBox keeps its messages as Message
+///          widgets, each with one QLabel holding the text.
+///
+///          Nothing clears them between reads, and nothing should: NotificationBox owns
+///          its Message widgets and hides them on a timer, so deleting them behind its
+///          back leaves dangling pointers in its own list and the next showMessage()
+///          walks them.  Within one test the messages are the ones that test caused, and
+///          every assertion here is a substring match, so extra text is harmless.
+QString notificationText()
+{
+    QStringList texts;
+    for (const QLabel* label : NotificationBox::instance()->findChildren<QLabel*>()) {
+        if (!label->text().isEmpty()) {
+            texts << label->text();
+        }
+    }
+    return texts.join("\n");
 }
 
 /// \brief Answers the next modal question box by clicking \p button.
@@ -776,9 +800,9 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
         // A plain loadSets() does **not** test that, and this test used to do exactly
         // that and pass for the wrong reason.  reload() keeps the MovieSet objects it
         // already has and re-reads a record only on a false->true hasRecord transition
-        // (MovieSetModel.cpp:401), and saveSet() has just set that flag -- so the set is
-        // never rebuilt from disk and deleting the reader's setTitle() leaves this
-        // green.  Measured: with the old body, mutating MovieSetXmlReader reddened the
+        // (MovieSetModel::reload(), MovieSetModel.cpp:407), and saveSet() has just set that
+        // flag -- so the set is never rebuilt from disk and deleting the reader's setTitle()
+        // leaves this green.  Measured: with the old body, mutating MovieSetXmlReader reddened
         // two record tests and not this one.
         //
         // So throw the objects away first, which is what a restart does.  The set that
@@ -1015,6 +1039,11 @@ TEST_CASE("An all-movie-files rename that cannot move its files says so", "[ui][
     renameFirstSet(widget, "Alien Anthology");
 
     CHECK(messages.contains("could not be moved"));
+    // And the user is told they are still under the old name, which for this branch --
+    // nothing moved at all -- is true.
+    const QString shown = notificationText();
+    CHECK_THAT(shown, Contains("could not be moved"));
+    CHECK_THAT(shown, Contains("Alien Collection"));
 
     // The rename still happened: the movie NFOs are the set's identity, so undoing it
     // would mean rewriting every member again -- larger and riskier than a leftover the
@@ -1067,6 +1096,14 @@ TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[
     CHECK(messages.contains("only some of its files moved"));
     // And *not* the message that would send the user to the old folder.
     CHECK_FALSE(messages.contains("could not be moved at all"));
+
+    // The sentence the user is actually shown, which is the whole point of the three
+    // states: the log line is not what tells them where their artwork went.
+    const QString shown = notificationText();
+    CHECK_THAT(shown, Contains("only some of its files could be moved"));
+    CHECK_THAT(shown, Contains("still"));
+    // It must not claim the set is stored under the old name -- the folder moved.
+    CHECK_THAT(shown, ContainsNot("Alien Collection"));
 
     // The folder and the record did move, which is what makes the other message a lie.
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/set.nfo")));
@@ -1172,4 +1209,130 @@ TEST_CASE("Renaming a set onto another set's name asks before merging", "[ui][mo
         CHECK(alien->set().name == "Predator Collection");
         CHECK(alien->hasChanged());
     }
+}
+
+TEST_CASE("Clearing a set name is refused and takes no movie with it", "[ui][movie][set]")
+{
+    // The worst defect in this feature and it was silent.  The all-movie-files rename
+    // skipped its collision check and its setName() for an empty name -- and then
+    // reassigned every member to "" anyway, detaching the whole set and marking each
+    // movie changed, so the next save wrote an empty <set> into every member NFO while
+    // the MovieSet kept its name and its row became unfindable.
+    //
+    // Both modes, because the guard is one precondition in onSetNameChanged() now rather
+    // than a check inside each path -- which is how it came to exist on one of them only.
+    MovieSetFolderGuard guard;
+    const MovieSetRenameMode mode =
+        GENERATE(MovieSetRenameMode::SetFileOnly, MovieSetRenameMode::AllMovieFiles);
+    RenameModeGuard renameMode(mode);
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Aliens", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    test::MessageCapture messages;
+    renameFirstSet(widget, "");
+
+    CHECK(messages.contains("was not renamed"));
+    CHECK(messages.contains("empty name"));
+    CHECK_THAT(notificationText(), Contains("cannot have an empty name"));
+
+    // The set is intact and still findable by its key.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* set = setModel->set("Alien Collection");
+    REQUIRE(set != nullptr);
+    CHECK(set->movies().size() == 2);
+    CHECK(set->displayName() == "Alien Collection");
+
+    // And no movie was detached or marked for rewriting -- the data loss itself.
+    for (const QString& title : {QString("Alien"), QString("Aliens")}) {
+        Movie* movie = libraryMovie(title);
+        REQUIRE(movie != nullptr);
+        CHECK(movie->set().name == "Alien Collection");
+        CHECK_FALSE(movie->hasChanged());
+    }
+
+    // The row says what the set is called, and can still be looked up.
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets->rowCount() == 1);
+    CHECK(sets->item(0, 0)->text() == "Alien Collection");
+    CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Collection");
+}
+
+TEST_CASE("A merge leaves the row explaining the set it actually shows", "[ui][movie][set]")
+{
+    // performMerge() is the third place a row's identity changes, and the tooltip helper
+    // was added to loadSets() and the two renames only.  A diverged source merged onto an
+    // undiverged target left the target's row carrying the source's tooltip: a sentence
+    // about a set that no longer exists.
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Predator", "Predator Collection");
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    // Give the source set a display title of its own, so it has a tooltip to leave behind.
+    MovieSet* alien = setModel->set("Alien Collection");
+    REQUIRE(alien != nullptr);
+    alien->setTitle("The Alien Saga");
+    widget.loadSets();
+
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    int alienRow = -1;
+    for (int i = 0; i < sets->rowCount(); ++i) {
+        if (sets->item(i, 0)->data(Qt::UserRole).toString() == "Alien Collection") {
+            alienRow = i;
+        }
+    }
+    REQUIRE(alienRow >= 0);
+    REQUIRE_THAT(sets->item(alienRow, 0)->toolTip(), Contains("Alien Collection"));
+
+    answerNextQuestion(QMessageBox::Yes);
+    sets->item(alienRow, 0)->setText("Predator Collection");
+
+    // The row is the target now, which has no divergence, so it explains none.
+    REQUIRE(sets->rowCount() == 1);
+    CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Predator Collection");
+    CHECK(sets->item(0, 0)->toolTip().isEmpty());
+}
+
+TEST_CASE("Add Movie Set does not reuse a name a display title already holds", "[ui][movie][set]")
+{
+    // The uniquifier asked MovieSetModel::set(), which matches keys only, so a set whose
+    // *display title* was already "New Movie Set" let this create a second row the user
+    // cannot tell apart from it -- the state the rename guard exists to prevent, one path
+    // over.  Both now go through the same predicate.
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* alien = setModel->set("Alien Collection");
+    REQUIRE(alien != nullptr);
+    alien->setTitle("New Movie Set");
+
+    SetsWidget widget;
+    widget.loadSets();
+    REQUIRE(QMetaObject::invokeMethod(&widget, "onAddMovieSet"));
+
+    // The new set took the next free name rather than the taken one.
+    CHECK(setModel->set("New Movie Set") == nullptr);
+    CHECK(setModel->set("New Movie Set 1") != nullptr);
+
+    // And no two rows read the same.
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    QStringList shown;
+    for (int i = 0; i < sets->rowCount(); ++i) {
+        shown << sets->item(i, 0)->text();
+    }
+    QStringList unique = shown;
+    unique.removeDuplicates();
+    CHECK(unique.size() == shown.size());
 }

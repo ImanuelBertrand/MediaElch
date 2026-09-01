@@ -99,6 +99,7 @@ private:
         const QString& origSetName,
         const QString& newName);
     void revertSetName(QTableWidgetItem* item, const QString& name);
+    ELCH_NODISCARD bool setNameIsTaken(const QString& name, const MovieSet* except) const;
     ELCH_NODISCARD bool refuseIfNameIsTaken(QTableWidgetItem* item, MovieSet* origSet, const QString& newName);
     void applyDivergenceTooltip(QTableWidgetItem* item, const MovieSet* movieSet);
     void carrySetArtworkOver(const QString& oldName, const QString& newName);

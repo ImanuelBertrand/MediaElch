@@ -751,11 +751,18 @@ void SetsWidget::onAddMovieSet()
     // from the rows can still be taken.  Adding it then hands back the existing set and
     // inserts a second row for it, and a set's name is its primary key (D-B).
     // onSetNameChanged() already asks the model for the same reason.
+    //
+    // By *either* name, through the same predicate the rename refusal uses.  Asking
+    // MovieSetModel::set() alone matches keys only, so a set whose display title is
+    // already "New Movie Set" -- one that has had a set-file-only rename -- would let
+    // this create a second row the user cannot tell apart from it.  That is the same
+    // defect the rename guard exists to prevent, one path over, which is exactly how it
+    // got here: a guard added where it was noticed and not to its siblings.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     const QString baseName = tr("New Movie Set");
     QString setName = baseName;
     int adder = 0;
-    while (setModel->set(setName) != nullptr) {
+    while (setNameIsTaken(setName, nullptr)) {
         ++adder;
         setName = QString("%1 %2").arg(baseName).arg(adder);
     }
@@ -846,6 +853,36 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         return;
     }
 
+    // One precondition for all three operations, asked here rather than inside each of
+    // them.  "Added to one path and not its siblings" is how this slot has gone wrong
+    // repeatedly, and the empty name is the case where getting it wrong destroys data:
+    // the all-movie-files rename skipped its collision check and its setName() for an
+    // empty name and then reassigned every member to it anyway, detaching the whole set
+    // and marking each movie changed -- so the next save wrote an empty `<set>` into
+    // every member NFO, with the MovieSet still in the model and its row no longer
+    // findable by anything.  Silently.
+    //
+    // Below the merge check on purpose: `MovieSetModel::addSet()` refuses the empty name,
+    // so no set is ever keyed by it and an empty name can never be a merge target.
+    if (origSet == nullptr) {
+        // A row for a set the model no longer has.  Not the user's doing and there is
+        // nothing to rename, so this reverts quietly.
+        qCWarning(generic) << "[SetsWidget] Ignoring a rename of" << origSetName
+                           << "-- the model no longer holds that set.";
+        revertSetName(item, origDisplayName);
+        return;
+    }
+    if (newName.isEmpty()) {
+        qCWarning(generic) << "[SetsWidget] Movie set" << origDisplayName
+                           << "was not renamed: a movie set cannot have an empty name.";
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b> was not renamed: a movie set cannot have an empty name. To take its movies out "
+               "of it, remove the set instead.")
+                .arg(origDisplayName));
+        revertSetName(item, origDisplayName);
+        return;
+    }
+
     MovieSet* targetSet = setModel->set(newName);
     const bool mergesIntoExistingSet = targetSet != nullptr && targetSet != origSet;
 
@@ -910,25 +947,46 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
 ///          the typed name becomes this set's key, and colliding with another set's
 ///          display title produces the same two identical rows -- permanently, since the
 ///          key is what the next reload rebuilds from.
-bool SetsWidget::refuseIfNameIsTaken(QTableWidgetItem* item, MovieSet* origSet, const QString& newName)
+/// \brief Whether any set other than \p except answers to \p name, by either of its names.
+/// \details One derivation, used by the rename refusal and by *Add Movie Set*'s
+///          uniquifier.  Two of them is how they came apart in the first place.
+///
+///          Deliberately **not** applied to the paths that merely reflect what the files
+///          already say -- MovieSetXmlReader, MovieSetModel::reload() and
+///          MovieSetModel::assign().  Those represent a state on disk or a value a user
+///          typed onto a movie's own `<set><name>`, and a set MediaElch refuses to show
+///          is worse than two rows it explains: the model has to be able to hold whatever
+///          the library asserts (D-A).  The guard belongs where MediaElch is the one
+///          *choosing* a name -- a rename, and a set created from nothing.
+bool SetsWidget::setNameIsTaken(const QString& name, const MovieSet* except) const
 {
-    const QString origDisplayName = origSet != nullptr ? origSet->displayName() : QString();
     for (const MovieSet* other : Manager::instance()->movieSetModel()->sets()) {
-        if (other == origSet) {
+        if (other == except) {
             continue;
         }
-        if (other->displayName() != newName && other->name() != newName) {
-            continue;
+        if (other->displayName() == name || other->name() == name) {
+            return true;
         }
-        qCWarning(generic) << "[SetsWidget] Movie set" << origDisplayName << "was not renamed: another"
-                           << "movie set is already called" << newName;
-        NotificationBox::instance()->showError(
-            tr("<b>\"%1\"</b> was not renamed: another movie set is already called <b>\"%2\"</b>.")
-                .arg(origDisplayName, newName));
-        revertSetName(item, origDisplayName);
-        return true;
     }
     return false;
+}
+
+bool SetsWidget::refuseIfNameIsTaken(QTableWidgetItem* item, MovieSet* origSet, const QString& newName)
+{
+    // origSet is never null: onSetNameChanged() has established that before dispatching.
+    // It used to be, on the all-movie-files path, and the refusal then read
+    // `"" was not renamed` and wiped the cell.
+    if (!setNameIsTaken(newName, origSet)) {
+        return false;
+    }
+    const QString origDisplayName = origSet->displayName();
+    qCWarning(generic) << "[SetsWidget] Movie set" << origDisplayName << "was not renamed: another"
+                       << "movie set is already called" << newName;
+    NotificationBox::instance()->showError(
+        tr("<b>\"%1\"</b> was not renamed: another movie set is already called <b>\"%2\"</b>.")
+            .arg(origDisplayName, newName));
+    revertSetName(item, origDisplayName);
+    return true;
 }
 
 /// \brief Gives \p item the tooltip naming \p movieSet's key, or clears it.
@@ -955,13 +1013,8 @@ void SetsWidget::applyDivergenceTooltip(QTableWidgetItem* item, const MovieSet* 
 void SetsWidget::performSetFileOnlyRename(
     QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
 {
-    if (origSet == nullptr || newName.isEmpty()) {
-        // The name the row should show, like every other refusal here.  origSetName is
-        // the key, which is the wrong string to put back whenever the two differ.
-        revertSetName(item, origSet != nullptr ? origSet->displayName() : origSetName);
-        return;
-    }
-
+    // origSet is not null and newName is not empty: onSetNameChanged() establishes both
+    // for all three operations before it dispatches.
     if (refuseIfNameIsTaken(item, origSet, newName)) {
         return;
     }
@@ -982,7 +1035,8 @@ void SetsWidget::performSetFileOnlyRename(
 void SetsWidget::performAllMovieFilesRename(
     QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName)
 {
-    if (!newName.isEmpty() && refuseIfNameIsTaken(item, origSet, newName)) {
+    // Same precondition as the other two; see onSetNameChanged().
+    if (refuseIfNameIsTaken(item, origSet, newName)) {
         return;
     }
 
@@ -1003,7 +1057,7 @@ void SetsWidget::performAllMovieFilesRename(
     // decode and re-encode, which is what carrying them in memory used to cost.
     auto* mediaCenter = Manager::instance()->mediaCenterInterface();
     using MovieSetFileMove = MediaCenterInterface::MovieSetFileMove;
-    const MovieSetFileMove filesMoved = (origSetName.isEmpty() || newName.isEmpty())
+    const MovieSetFileMove filesMoved = origSetName.isEmpty()
                                             ? MovieSetFileMove::Moved
                                             : mediaCenter->renameMovieSetFiles(origSetName, newName);
 
@@ -1012,14 +1066,12 @@ void SetsWidget::performAllMovieFilesRename(
     }
 
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
-    const QVector<Movie*> members = (origSet != nullptr) ? origSet->movies() : QVector<Movie*>();
+    const QVector<Movie*> members = origSet->movies();
 
     // Rename the set object before its movies, so that the object -- and with it the
     // set's overview, id and artwork -- is kept instead of being emptied and a second
     // one created under the new name.
-    if (origSet != nullptr && !newName.isEmpty()) {
-        origSet->setName(newName);
-    }
+    origSet->setName(newName);
 
     for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);
@@ -1091,7 +1143,16 @@ void SetsWidget::performMerge(
     }
 
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
-    const QVector<Movie*> members = (origSet != nullptr) ? origSet->movies() : QVector<Movie*>();
+    // Read before removeSet(), which destroys origSet when it succeeds.  Both messages
+    // below name sets the user has to recognise, and after a set-file-only rename that
+    // is the display title -- naming them by key would print two different strings for
+    // the same set in one merge, since the confirmation dialog and the row both use the
+    // display title.  `newName` is the target's key by construction, because the merge
+    // check matched on it.
+    const QString origDisplayName = origSet->displayName();
+    const QString targetDisplayName = targetSet->displayName();
+
+    const QVector<Movie*> members = origSet->movies();
     for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);
         // Deliberately name-only: the movies end up in a collection that is not the one
@@ -1125,14 +1186,20 @@ void SetsWidget::performMerge(
         ui->sets->blockSignals(true);
         const int leftoverRow = ui->sets->rowCount();
         ui->sets->insertRow(leftoverRow);
-        ui->sets->setItem(leftoverRow, 0, new QTableWidgetItem(origSet != nullptr ? origSet->displayName() : origSetName));
+        ui->sets->setItem(leftoverRow, 0, new QTableWidgetItem(origDisplayName));
         ui->sets->item(leftoverRow, 0)->setData(Qt::UserRole, origSetName);
         ui->sets->blockSignals(false);
+        // The leftover is a real row for a set that still exists, so it needs the same
+        // explanation of a divergence as any other -- it is a third place a row's
+        // identity is decided, alongside loadSets() and the two renames.
+        applyDivergenceTooltip(ui->sets->item(leftoverRow, 0), setModel->set(origSetName));
 
+        qCWarning(generic) << "[SetsWidget] Movies were merged into" << targetSet->name() << "but the source set"
+                           << origSetName << "could not be removed; it is still there with no movies.";
         NotificationBox::instance()->showWarning(
             tr("The movies were merged into <b>\"%1\"</b>, but the old set's movie set file could not be "
                "removed, so <b>\"%2\"</b> is still there with no movies.")
-                .arg(newName, origSetName));
+                .arg(targetDisplayName, origDisplayName));
     }
 
     // A merge carries no artwork: the set the movies joined has its own, and the source
@@ -1144,6 +1211,10 @@ void SetsWidget::performMerge(
     item->setData(Qt::UserRole, targetSet->name());
     item->setText(targetSet->displayName());
     ui->sets->blockSignals(false);
+    // This row is the target set now, so it carries the target's divergence and not the
+    // source's.  Without this it kept the tooltip of a set that no longer exists --
+    // actively false -- or hid a real divergence the target has.
+    applyDivergenceTooltip(item, targetSet);
 
     loadSet(targetSet->name());
 }
