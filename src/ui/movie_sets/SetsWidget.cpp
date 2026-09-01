@@ -2,10 +2,12 @@
 #include "ui_SetsWidget.h"
 
 #include "data/movie/Movie.h"
+#include "data/movie/MovieSet.h"
 #include "globals/Globals.h"
 #include "globals/Helper.h"
 #include "globals/Manager.h"
 #include "log/Log.h"
+#include "media_center/MediaCenterInterface.h"
 #include "model/MovieSetModel.h"
 #include "network/DownloadManager.h"
 #include "ui/UiUtils.h"
@@ -450,6 +452,20 @@ void SetsWidget::saveSet()
             Manager::instance()->mediaCenterInterface()->saveMovieSetBackdrop(setName, m_setBackdrops[setName]);
             m_setBackdrops[setName] = QImage();
         }
+    }
+
+    // The set's own record.  Its overview, collection id and artwork are authoritative
+    // in `set.nfo` (D-A), so saving a set means writing that file -- and writing it is
+    // also what gives the set an existence apart from its movies, so that an empty one
+    // is still there after the next reload.  Nothing happens when no movie set
+    // information folder is configured: there is nowhere to put a record, and sets are
+    // read-only.
+    //
+    // The current name, not the pre-rename one: a record under the old name would be a
+    // record for a set that no longer exists.
+    MovieSet* movieSet = Manager::instance()->movieSetModel()->set(ui->sets->item(ui->sets->currentRow(), 0)->text());
+    if (movieSet != nullptr) {
+        Manager::instance()->mediaCenterInterface()->saveMovieSet(*movieSet);
     }
 
     NotificationBox::instance()->showSuccess(
