@@ -49,6 +49,15 @@ MovieSettingsWidget::MovieSettingsWidget(QWidget* parent) : QWidget(parent), ui(
         this,
         &MovieSettingsWidget::onChooseMovieSetArtworkDir);
 
+    // The rename hint's warning turns on whether this field is empty, so it has to be
+    // recomputed when the field changes -- by the Choose button, which only calls
+    // setText(), and by the user typing a path in directly.  Without this the warning
+    // said "renaming a set will be refused" for the rest of the session after the user
+    // had just fixed exactly that.
+    connect(ui->movieSetArtworkDir, &QLineEdit::textChanged, this, [this] {
+        onComboMovieSetRenameChanged(ui->comboMovieSetRename->currentIndex());
+    });
+
     ui->movieNfo->setProperty("dataFileType", static_cast<int>(DataFileType::MovieNfo));
     ui->moviePoster->setProperty("dataFileType", static_cast<int>(DataFileType::MoviePoster));
     ui->movieBackdrop->setProperty("dataFileType", static_cast<int>(DataFileType::MovieBackdrop));
