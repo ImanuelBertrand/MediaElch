@@ -51,8 +51,20 @@ public:
     ELCH_NODISCARD virtual bool movieSetArtworkEnabled() const = 0;
     virtual QImage movieSetPoster(QString setName) = 0;
     virtual QImage movieSetBackdrop(QString setName) = 0;
-    virtual void saveMovieSetPoster(QString setName, QImage poster) = 0;
-    virtual void saveMovieSetBackdrop(QString setName, QImage backdrop) = 0;
+    /// \brief Writes \p poster as the set's poster.  Returns whether it was written.
+    /// \details Refuses when there is nowhere to put it -- see movieSetArtworkEnabled()
+    ///          -- and reports a write that failed.  **The caller has to listen.**  A
+    ///          set's artwork exists only in the sets tab's own map until it is saved,
+    ///          so a caller that clears that map on a refusal destroys the image and
+    ///          then reports success.  That is what this return value was added for.
+    ///
+    ///          ELCH_NODISCARD is silent on a virtual under GCC (reproduced, 14.2), so
+    ///          nothing but a test holds this refusal; see
+    ///          test/unit/ui/testSetsWidget.cpp.
+    ELCH_NODISCARD virtual bool saveMovieSetPoster(QString setName, QImage poster) = 0;
+    /// \brief Writes \p backdrop as the set's backdrop.  Returns whether it was written.
+    /// \details See saveMovieSetPoster(); the same refusals and the same obligation.
+    ELCH_NODISCARD virtual bool saveMovieSetBackdrop(QString setName, QImage backdrop) = 0;
 
     // movie sets: the set's own record, `set.nfo` (docs/concepts/movie-sets.md, D-A)
     //

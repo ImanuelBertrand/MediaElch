@@ -42,6 +42,9 @@ public:
     void setRemovalRefused(bool refused) { m_removalRefused = refused; }
     /// \brief Makes every record write refuse, as a folder owned by another set does.
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
+    /// \brief Makes every artwork write refuse, as a failing QImage::save() does.
+    void setArtworkRefused(bool refused) { m_artworkRefused = refused; }
+    ELCH_NODISCARD int savedArtworkCount() const { return m_savedArtworkCount; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
 
@@ -90,8 +93,11 @@ public:
     ELCH_NODISCARD bool movieSetArtworkEnabled() const override { return m_artworkEnabled; }
     QImage movieSetPoster(QString /*setName*/) override { return {}; }
     QImage movieSetBackdrop(QString /*setName*/) override { return {}; }
-    void saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override {}
-    void saveMovieSetBackdrop(QString /*setName*/, QImage /*backdrop*/) override {}
+    ELCH_NODISCARD bool saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override { return saveArtwork(); }
+    ELCH_NODISCARD bool saveMovieSetBackdrop(QString /*setName*/, QImage /*backdrop*/) override
+    {
+        return saveArtwork();
+    }
     bool saveConcert(Concert* /*concert*/) override { return false; }
     bool loadConcert(Concert* /*concert*/, QString /*nfoContent*/ = "") override { return false; }
     bool loadTvShow(TvShow* /*show*/, QString /*nfoContent*/ = "") override { return false; }
@@ -126,9 +132,20 @@ public:
     void loadBooklets(Album* /*album*/) override {}
 
 private:
+    bool saveArtwork()
+    {
+        if (!m_artworkEnabled || m_artworkRefused) {
+            return false;
+        }
+        ++m_savedArtworkCount;
+        return true;
+    }
+
     QHash<QString, Record> m_records;
     bool m_recordsEnabled = true;
     bool m_artworkEnabled = true;
+    bool m_artworkRefused = false;
+    int m_savedArtworkCount = 0;
     bool m_removalRefused = false;
     bool m_writeRefused = false;
     int m_savedRecordCount = 0;

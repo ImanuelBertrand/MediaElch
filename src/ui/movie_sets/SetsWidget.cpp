@@ -450,21 +450,36 @@ void SetsWidget::saveSet()
     setNames << ui->sets->item(ui->sets->currentRow(), 0)->text();
     setNames.removeDuplicates();
 
+    // The artwork writes can refuse, and the refusal decides whether the image may be
+    // let go of.  A set's poster and backdrop live nowhere but the two maps below until
+    // they are written, so clearing an entry for a write that did not happen destroys
+    // the image -- and this used to clear them unconditionally, under a void return,
+    // and then tell the user "Saved".  Kept, so the next Save can write them once the
+    // user has fixed what refused them.
+    bool artworkSaved = true;
+    MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
+
     for (const QString& setName : asConst(setNames)) {
         for (Movie* movie : asConst(m_moviesToSave[setName])) {
-            movie->controller()->saveData(Manager::instance()->mediaCenterInterface());
+            movie->controller()->saveData(mediaCenter);
         }
         m_moviesToSave[setName].clear();
 
         // A set without a name has no path of its own to write artwork to: movieSetFileName()
         // collapses to the artwork directory itself, or to the first movie that has no set.
         if (!setName.isEmpty() && !m_setPosters[setName].isNull()) {
-            Manager::instance()->mediaCenterInterface()->saveMovieSetPoster(setName, m_setPosters[setName]);
-            m_setPosters[setName] = QImage();
+            if (mediaCenter->saveMovieSetPoster(setName, m_setPosters[setName])) {
+                m_setPosters[setName] = QImage();
+            } else {
+                artworkSaved = false;
+            }
         }
         if (!setName.isEmpty() && !m_setBackdrops[setName].isNull()) {
-            Manager::instance()->mediaCenterInterface()->saveMovieSetBackdrop(setName, m_setBackdrops[setName]);
-            m_setBackdrops[setName] = QImage();
+            if (mediaCenter->saveMovieSetBackdrop(setName, m_setBackdrops[setName])) {
+                m_setBackdrops[setName] = QImage();
+            } else {
+                artworkSaved = false;
+            }
         }
     }
 
@@ -484,12 +499,33 @@ void SetsWidget::saveSet()
     // record for a set that no longer exists.
     const QString currentName = ui->sets->item(ui->sets->currentRow(), 0)->text();
     MovieSet* movieSet = Manager::instance()->movieSetModel()->set(currentName);
-    if (movieSet != nullptr && !Manager::instance()->mediaCenterInterface()->saveMovieSet(*movieSet)) {
+    const bool recordSaved = movieSet == nullptr || mediaCenter->saveMovieSet(*movieSet);
+
+    // Three whole sentences rather than one assembled from fragments: which of the two
+    // failed is what tells the user where to look, and a translator needs the sentence.
+    if (!recordSaved && !artworkSaved) {
+        qCWarning(generic) << "[SetsWidget] Movie set" << currentName
+                           << "was not saved: its artwork could not be written, and neither could its movie"
+                           << "set file.";
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b>: the movies were saved, but the artwork and the movie set file could not be "
+               "written.")
+                .arg(currentName));
+        return;
+    }
+    if (!recordSaved) {
         // The movies and the artwork above were saved; only the set's own file was not.
         qCWarning(generic) << "[SetsWidget] Movie set" << currentName
                            << "was not saved: its movie set file could not be written.";
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.").arg(currentName));
+        return;
+    }
+    if (!artworkSaved) {
+        qCWarning(generic) << "[SetsWidget] Movie set" << currentName
+                           << "was not saved: its artwork could not be written.";
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b>: the movies were saved, but the artwork could not be written.").arg(currentName));
         return;
     }
 

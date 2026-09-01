@@ -1238,51 +1238,53 @@ QImage KodiXml::movieSetImage(const QString& setName, DataFileType type)
 /**
  * \brief Save movie set poster
  */
-void KodiXml::saveMovieSetPoster(QString setName, QImage poster)
+bool KodiXml::saveMovieSetPoster(QString setName, QImage poster)
 {
     qCInfo(generic) << "[KodiXml] Saving movie set poster for movie set:" << setName;
-    for (DataFile dataFile : Settings::instance()->dataFiles(DataFileType::MovieSetPoster)) {
-        QString fileName = movieSetFileName(setName, &dataFile);
-        if (!fileName.isEmpty()) {
-            QDir dir = QFileInfo(fileName).dir();
-            bool success = true;
-
-            // TODO: Error handling!
-            if (!dir.exists()) {
-                success = dir.mkpath(".");
-            }
-
-            if (success) {
-                // TODO: Error handling!
-                poster.save(fileName, "jpg", 100);
-            }
-        }
-    }
+    return saveMovieSetImage(setName, DataFileType::MovieSetPoster, poster);
 }
 
 /**
  * \brief Save movie set backdrop
  */
-void KodiXml::saveMovieSetBackdrop(QString setName, QImage backdrop)
+bool KodiXml::saveMovieSetBackdrop(QString setName, QImage backdrop)
 {
-    qCInfo(generic) << "[KodiXml] Saving movie set poster for movie set:" << setName;
-    for (DataFile dataFile : Settings::instance()->dataFiles(DataFileType::MovieSetBackdrop)) {
-        QString fileName = movieSetFileName(setName, &dataFile);
-        if (!fileName.isEmpty()) {
-            QDir dir = QFileInfo(fileName).dir();
-            bool success = true;
+    qCInfo(generic) << "[KodiXml] Saving movie set backdrop for movie set:" << setName;
+    return saveMovieSetImage(setName, DataFileType::MovieSetBackdrop, backdrop);
+}
 
-            // TODO: Error handling!
-            if (!dir.exists()) {
-                success = dir.mkpath(".");
-            }
-
-            if (success) {
-                // TODO: Error handling!
-                backdrop.save(fileName, "jpg", 100);
-            }
+/// \brief Writes \p image under every file name configured for \p type.
+/// \return Whether the image is on disk under every one of them.
+/// \details "Nothing was attempted" is a failure, not a success.  It means either that
+///          movieSetFileName() refused -- the separate artwork folder selected with no
+///          folder chosen -- or that the set has no path in this layout at all, and in
+///          both cases the image the caller is holding did not reach the disk.  The
+///          caller has to be able to tell that apart from a save, because the image
+///          exists nowhere else; see MediaCenterInterface::saveMovieSetPoster().
+bool KodiXml::saveMovieSetImage(const QString& setName, DataFileType type, const QImage& image)
+{
+    int attempted = 0;
+    int failed = 0;
+    for (DataFile dataFile : Settings::instance()->dataFiles(type)) {
+        const QString fileName = movieSetFileName(setName, &dataFile);
+        if (fileName.isEmpty()) {
+            // Nowhere to put it.  Not counted as a failed attempt, but not counted as an
+            // attempt either, so a set with no resolvable path at all still answers no.
+            continue;
+        }
+        ++attempted;
+        QDir dir = QFileInfo(fileName).dir();
+        if (!dir.exists() && !dir.mkpath(".")) {
+            qCWarning(generic) << "[KodiXml] Cannot create movie set artwork directory" << dir.absolutePath();
+            ++failed;
+            continue;
+        }
+        if (!image.save(fileName, "jpg", 100)) {
+            qCWarning(generic) << "[KodiXml] Cannot write movie set artwork" << fileName;
+            ++failed;
         }
     }
+    return attempted > 0 && failed == 0;
 }
 
 bool KodiXml::saveFile(QString filename, QByteArray data)

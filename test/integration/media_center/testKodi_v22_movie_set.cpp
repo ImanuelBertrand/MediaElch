@@ -13,6 +13,7 @@
 #include "settings/DataFile.h"
 #include "settings/Settings.h"
 #include "test/helpers/message_capture.h"
+#include "test/helpers/movie_set_settings.h"
 #include "test/helpers/resource_dir.h"
 
 #include <QApplication>
@@ -581,28 +582,6 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
 namespace {
 
-/// \brief Gives Settings the data file list a real MediaElch has, and takes it away again.
-/// \details Artwork file names are user-configurable, so KodiXml reads them out of
-///          Settings -- and this binary never calls Settings::loadSettings(), so that
-///          list is empty and every artwork path is a silent no-op.  A test written
-///          without this passes because nothing happens, which is the opposite of what
-///          it claims to show.  (The record paths were never affected: "set.nfo" is
-///          Kodi's fixed name and movieSetNfoFileName() builds that DataFile itself.)
-class DataFileGuard
-{
-public:
-    DataFileGuard()
-    {
-        // Checked rather than assumed.  If this binary ever does load real settings,
-        // restoring an empty list below would throw the user's own file names away.
-        REQUIRE(Settings::instance()->dataFiles(DataFileType::MovieSetPoster).isEmpty());
-        Settings::instance()->setDataFiles(Settings::instance()->dataFilesFrodo());
-    }
-    ~DataFileGuard() { Settings::instance()->setDataFiles({}); }
-    DataFileGuard(const DataFileGuard&) = delete;
-    DataFileGuard& operator=(const DataFileGuard&) = delete;
-};
-
 /// \brief Puts one movie with a real file into the library, and takes it out again.
 /// \details "Artwork next to movies" resolves a set's artwork path through a member
 ///          movie's folder (KodiXml::movieSetFileName()), so that layout cannot be
@@ -643,7 +622,7 @@ public:
 TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
 {
     const MovieSetFolderGuard guard;
-    const DataFileGuard dataFiles;
+    const test::DataFileGuard dataFiles;
     MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
 
     QImage poster(4, 4, QImage::Format_RGB32);
@@ -695,8 +674,8 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
 
-        mediaCenter->saveMovieSetPoster("Alien Collection", poster);
-        mediaCenter->saveMovieSetBackdrop("Alien Collection", poster);
+        CHECK_FALSE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+        CHECK_FALSE(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
 
         CHECK_FALSE(QFileInfo::exists(cwd.absoluteFilePath("Alien Collection")));
     }
@@ -749,7 +728,29 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE(mediaCenter->movieSetArtworkEnabled());
 
-        mediaCenter->saveMovieSetPoster("Alien Collection", poster);
+        CHECK(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
         CHECK_FALSE(mediaCenter->movieSetPoster("Alien Collection").isNull());
+    }
+
+    SECTION("A write that reached the disk says so, and one that did not says so")
+    {
+        // ELCH_NODISCARD is silent on a virtual under GCC (reproduced, 14.2), so nothing
+        // but a test can hold this refusal -- and the caller that has to listen is
+        // SetsWidget::saveSet(), which loses the image if it does not.  Its side of this
+        // is in test/unit/ui/testSetsWidget.cpp.
+        SECTION("Written")
+        {
+            MovieSetFolderGuard::useFolder(emptyMsif("artwork_reported"));
+            CHECK(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+            CHECK(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
+        }
+
+        SECTION("Not written")
+        {
+            Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+            Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+            CHECK_FALSE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+            CHECK_FALSE(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
+        }
     }
 }

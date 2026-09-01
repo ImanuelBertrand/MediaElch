@@ -7,13 +7,17 @@
 #include "media_center/MediaCenterInterface.h"
 #include "model/MovieModel.h"
 #include "model/MovieSetModel.h"
+#include "settings/DataFile.h"
 #include "settings/Settings.h"
 #include "test/helpers/message_capture.h"
+#include "test/helpers/movie_set_settings.h"
 #include "ui/movie_sets/SetsWidget.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
+#include <QTableWidget>
 #include <QTemporaryDir>
 
 namespace {
@@ -134,4 +138,65 @@ TEST_CASE("The sets tab reports a save that succeeded", "[ui][movie][set]")
 
     CHECK_FALSE(messages.contains("could not be written"));
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+}
+
+TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][movie][set]")
+{
+    // A set's poster exists nowhere but this widget's own map until it is written, so
+    // clearing that entry for a write that did not happen destroys the image -- and this
+    // used to clear it unconditionally, because the save returned void, and then report
+    // "Saved".  The refusal became reachable when the artwork paths stopped resolving
+    // into the process's working directory: what used to be written somewhere useless is
+    // now not written at all, so the caller has to hold on to it.
+    MovieSetFolderGuard guard;
+    test::DataFileGuard dataFiles;
+
+    addLibraryMovie("Alien", "Alien Collection");
+
+    // The only way a pending image gets into the widget is a download or a rename that
+    // carries one over.  A rename is the one a test can drive: it reads the set's poster
+    // through the media center and keeps it under the new name until the next save.
+    QImage poster(4, 4, QImage::Format_RGB32);
+    poster.fill(Qt::red);
+    const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
+    REQUIRE_FALSE(posterFiles.isEmpty());
+    REQUIRE(QDir().mkpath(guard.dir().absoluteFilePath("Alien Collection")));
+    for (DataFile dataFile : posterFiles) {
+        const QString fileName =
+            guard.dir().absoluteFilePath("Alien Collection/" + dataFile.saveFileName("Alien Collection"));
+        REQUIRE(poster.save(fileName, "jpg", 100));
+    }
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 1);
+    sets->item(0, 0)->setText("Alien Anthology");
+
+    // Now take the movie set information folder away, so the pending poster has nowhere
+    // to go.  The set's own record has nowhere to go either -- with no folder there is
+    // no record, by design -- so both halves of the save refuse and the user is told so.
+    Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+    REQUIRE_FALSE(Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled());
+
+    {
+        test::MessageCapture messages;
+        widget.saveSet();
+        CHECK(messages.contains("artwork"));
+        CHECK(messages.contains("could not be written"));
+    }
+
+    // And the image was kept rather than dropped: with the folder back, the next save
+    // writes it, under the new name.
+    Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(guard.dir()));
+    {
+        test::MessageCapture messages;
+        widget.saveSet();
+        CHECK_FALSE(messages.contains("could not be written"));
+    }
+    DataFile posterFile = posterFiles.first();
+    CHECK(QFileInfo::exists(
+        guard.dir().absoluteFilePath("Alien Anthology/" + posterFile.saveFileName("Alien Anthology"))));
 }
