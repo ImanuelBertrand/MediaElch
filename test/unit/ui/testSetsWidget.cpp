@@ -88,6 +88,23 @@ void writeMisfiledRecord(const QDir& msif, const QString& folder, const QString&
     record.close();
 }
 
+/// \brief Writes a `set.nfo` that really does belong to \p setName.
+/// \details Such a set has a record and needs no member movie to exist.
+void writeRecord(const QDir& msif, const QString& setName)
+{
+    REQUIRE(QDir().mkpath(msif.absoluteFilePath(setName)));
+    QFile record(msif.absoluteFilePath(setName + "/set.nfo"));
+    REQUIRE(record.open(QIODevice::WriteOnly));
+    record.write(QString("<set><title>%1</title><originaltitle>%1</originaltitle></set>").arg(setName).toUtf8());
+    record.close();
+}
+
+/// \brief Emits Settings::sigSettingsSaved without writing the user's real settings.
+void announceSettingsSaved()
+{
+    REQUIRE(QMetaObject::invokeMethod(Settings::instance(), "sigSettingsSaved"));
+}
+
 } // namespace
 
 TEST_CASE("The sets tab does not report a save that was refused", "[ui][movie][set]")
@@ -322,4 +339,75 @@ TEST_CASE("The sets tab says what is off and why", "[ui][movie][set]")
         CHECK_THAT(notice->text(), !Contains("No movie set directory is configured"));
         CHECK_THAT(notice->text(), Contains("next to your movies"));
     }
+}
+
+TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]")
+{
+    // The settings window is a separate window, so the movie set directory can be
+    // changed while this tab is on screen.  There is no signal for that setting in
+    // particular; sigSettingsSaved is the one the application has, and it fires for
+    // unrelated saves too, which is why the handler compares before it acts.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    auto* addSet = widget.findChild<QAction*>("actionAddMovieSet");
+    auto* frame = widget.findChild<QFrame*>("folderNoticeFrame");
+    REQUIRE(addSet != nullptr);
+    REQUIRE(frame != nullptr);
+    REQUIRE(addSet->isEnabled());
+    REQUIRE(frame->isHidden());
+
+    SECTION("Taking the directory away disables writing at once")
+    {
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        announceSettingsSaved();
+        CHECK_FALSE(addSet->isEnabled());
+        CHECK_FALSE(frame->isHidden());
+
+        // And putting it back re-enables it, without waiting for the tab to be re-entered.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+        announceSettingsSaved();
+        CHECK(addSet->isEnabled());
+        CHECK(frame->isHidden());
+    }
+}
+
+TEST_CASE("Turning the directory off does not destroy sets that have a record", "[ui][movie][set]")
+{
+    // A set with a `set.nfo` and no member movie is held up by its record alone.  While
+    // records are off, MovieSetModel::isBacked() answers false for every set, so a
+    // reload() at that moment would run dropEmptySets() over all of them and destroy it
+    // -- which is why the settings handler re-applies the controls and does *not*
+    // reload.  Reaching for a reload there is the obvious-looking change that this test
+    // exists to stop.
+    MovieSetFolderGuard guard;
+    writeRecord(guard.dir(), "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* movieSet = setModel->set("Alien Collection");
+    REQUIRE(movieSet != nullptr);
+    REQUIRE(movieSet->movies().isEmpty());
+    REQUIRE(movieSet->hasRecord());
+
+    Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+    announceSettingsSaved();
+
+    // Still here, and still knowing it has a record: the flag is what makes turning the
+    // directory back on restore every set's answer at once instead of at the next
+    // reload.  Re-deriving it from an empty answer would clear every one of them.
+    movieSet = setModel->set("Alien Collection");
+    REQUIRE(movieSet != nullptr);
+    CHECK(movieSet->hasRecord());
+
+    Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+    announceSettingsSaved();
+    movieSet = setModel->set("Alien Collection");
+    REQUIRE(movieSet != nullptr);
+    CHECK(movieSet->hasRecord());
 }

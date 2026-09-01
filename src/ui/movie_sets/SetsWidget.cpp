@@ -10,6 +10,7 @@
 #include "media_center/MediaCenterInterface.h"
 #include "model/MovieSetModel.h"
 #include "network/DownloadManager.h"
+#include "settings/Settings.h"
 #include "ui/UiUtils.h"
 #include "ui/image/ImageDialog.h"
 #include "ui/image/ImagePreviewDialog.h"
@@ -78,6 +79,10 @@ SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget
     connect(actionDeleteSet, &QAction::triggered, this, &SetsWidget::onRemoveMovieSet);
     connect(actionOnlyEmptySets, &QAction::toggled, this, &SetsWidget::onShowOnlyEmptySets);
     connect(ui->sets, &QWidget::customContextMenuRequested, this, &SetsWidget::showSetsContextMenu);
+    // The settings window can be opened and saved while this tab is on screen, so the
+    // answer to "may I write?" changes under it.  There is no signal for the movie set
+    // directory in particular; this is the one the application has.
+    connect(Settings::instance(), &Settings::sigSettingsSaved, this, &SetsWidget::onSettingsSaved);
     connect(ui->folderNotice, &QLabel::linkActivated, this, [this](const QString& /*link*/) {
         // The notice names the settings page in words as well, so the link is a
         // shortcut and not the only way there.
@@ -109,6 +114,7 @@ void SetsWidget::applyWriteAccess()
     // Asked of the media center, which is the object that would have to write the file.
     // Not the same question: artwork resolves in both layouts, a record in one.
     const bool artworkEnabled = Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled();
+    m_recordsAreConfigured = recordsEnabled;
 
     m_actionAddSet->setEnabled(recordsEnabled);
     m_actionAddSet->setToolTip(recordsEnabled
@@ -887,6 +893,33 @@ void SetsWidget::onShowOnlyEmptySets(bool onlyEmpty)
     // have no record go at that moment, so what is left under the filter is exactly the
     // sets that survived on their own record.
     loadSets();
+}
+
+void SetsWidget::onSettingsSaved()
+{
+    // Settings::sigSettingsSaved means "settings were written", not "the movie set
+    // directory changed" -- it also fires for the season order, the import dialogs and
+    // the Kodi sync -- so this has to be cheap and has to compare before it acts.
+    const bool wereConfigured = m_recordsAreConfigured;
+    applyWriteAccess();
+
+    if (!wereConfigured && m_recordsAreConfigured && isVisible()) {
+        // Off to on.  The records have to be discovered: a set that has a `set.nfo` and
+        // no member movie exists only once the folder has been listed, and the sets that
+        // are already here need their record read rather than only counted.  Only
+        // reload() does that.  Only when this tab is on screen, because entering it
+        // reloads anyway (MainWindow::onMenu) and reload() costs a parse per record.
+        loadSets();
+    }
+
+    // On to off does **not** reload, and that is the point rather than an omission.
+    // reload() ends in dropEmptySets(), and with records off isBacked() is false for
+    // every set, so every set that is standing on its `set.nfo` alone would be destroyed
+    // at that moment -- while the user watches.  It happens at the next visit to this
+    // tab either way, by design (a set is its movies again when there is no folder), but
+    // nothing is gained by bringing it forward.  The sets' record flags are untouched
+    // here as well, which is what lets turning the folder back on restore every set's
+    // answer at once; see MovieSetModel::isBacked().
 }
 
 void SetsWidget::onJumpToMovie(QTableWidgetItem* item)

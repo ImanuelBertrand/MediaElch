@@ -78,6 +78,7 @@ private slots:
     void onDownloadFinished(DownloadManagerElement elem);
     void onJumpToMovie(QTableWidgetItem* item);
     void onShowOnlyEmptySets(bool onlyEmpty);
+    void onSettingsSaved();
 
 private:
     Ui::SetsWidget* ui;
@@ -89,6 +90,10 @@ private:
     QMenu* m_tableContextMenu;
     /// \brief Kept so that it can be disabled; see applyWriteAccess().
     QAction* m_actionAddSet = nullptr;
+    /// \brief What applyWriteAccess() last found, to notice the setting being changed.
+    /// \details Only the direction matters, and only one of the two directions does
+    ///          anything beyond re-enabling controls; see onSettingsSaved().
+    bool m_recordsAreConfigured = false;
     DownloadManager* m_downloadManager;
     QMovie* m_loadingMovie;
     /// \brief Whether the list is filtered down to the sets that have no movies.
