@@ -105,9 +105,17 @@ TEST_CASE("The sets tab does not report a save that was refused", "[ui][movie][s
 
     CHECK(messages.contains("Alien Collection"));
     CHECK(messages.contains("could not be written"));
-    // And the other set's record is still its own.
-    MovieSet reread("Something Else Entirely");
-    CHECK_FALSE(Manager::instance()->mediaCenterInterface()->loadMovieSet(reread));
+
+    // And the other set's record was not written over.  Read as a *file*, not through
+    // loadMovieSet(): that record is misfiled -- it names "Something Else Entirely" but
+    // sits in "Alien Collection", which is the whole reason the save had to refuse --
+    // so asking the media center for it resolves to a path that never existed and
+    // answers "not found" whatever happened to the file this line is guarding.
+    QFile record(guard.dir().absoluteFilePath("Alien Collection/set.nfo"));
+    REQUIRE(record.open(QIODevice::ReadOnly));
+    const QString onDisk = QString::fromUtf8(record.readAll());
+    record.close();
+    CHECK_THAT(onDisk, Contains("Something Else Entirely"));
 }
 
 TEST_CASE("The sets tab reports a save that succeeded", "[ui][movie][set]")
