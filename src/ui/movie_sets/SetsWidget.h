@@ -58,6 +58,8 @@ public slots:
 signals:
     void setActionSaveEnabled(bool, MainWidgets);
     void sigJumpToMovie(Movie* movie);
+    /// \brief The user followed the link in the notice; open the settings window.
+    void sigOpenSettings();
 
 private slots:
     void onSetSelected();

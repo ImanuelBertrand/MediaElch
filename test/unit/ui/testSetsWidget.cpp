@@ -17,7 +17,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
 #include <QImage>
+#include <QLabel>
 #include <QTableWidget>
 #include <QTemporaryDir>
 
@@ -280,4 +282,44 @@ TEST_CASE("A set named on a movie is created without a movie set directory", "[u
 
     widget.loadSets();
     CHECK(setModel->set("Alien Collection") != nullptr);
+}
+
+TEST_CASE("The sets tab says what is off and why", "[ui][movie][set]")
+{
+    MovieSetFolderGuard guard;
+
+    SetsWidget widget;
+    auto* frame = widget.findChild<QFrame*>("folderNoticeFrame");
+    auto* notice = widget.findChild<QLabel*>("folderNotice");
+    REQUIRE(frame != nullptr);
+    REQUIRE(notice != nullptr);
+
+    SECTION("With a directory configured there is nothing to say")
+    {
+        widget.applyWriteAccess();
+        CHECK(frame->isHidden());
+    }
+
+    SECTION("A separate directory that was never chosen is a warning")
+    {
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        widget.applyWriteAccess();
+        CHECK_FALSE(frame->isHidden());
+        CHECK(frame->frameShape() == QFrame::StyledPanel);
+        CHECK_THAT(notice->text(), Contains("No movie set directory is configured"));
+        CHECK_THAT(notice->text(), Contains("read-only"));
+    }
+
+    SECTION("Artwork next to movies is not a warning, because nothing is wrong")
+    {
+        // The default layout exists so that nobody has to configure a directory before
+        // using MediaElch, so this line is seen by every user who has never opened the
+        // settings.  Warning them would be telling them off for using the default.
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        widget.applyWriteAccess();
+        CHECK_FALSE(frame->isHidden());
+        CHECK(frame->frameShape() == QFrame::NoFrame);
+        CHECK_THAT(notice->text(), !Contains("No movie set directory is configured"));
+        CHECK_THAT(notice->text(), Contains("next to your movies"));
+    }
 }

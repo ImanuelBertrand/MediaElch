@@ -369,6 +369,7 @@ void MainWindow::setupToolbar()
     connect(ui->navbar, &Navbar::sigReload,    this,             &MainWindow::onActionReload);
     connect(ui->navbar, &Navbar::sigAbout,     this,             &MainWindow::showAboutDialog);
     connect(ui->navbar, &Navbar::sigSettings,  m_settingsWindow, &SettingsWindow::show);
+    connect(ui->setsWidget, &SetsWidget::sigOpenSettings, m_settingsWindow, &SettingsWindow::show);
     connect(ui->navbar, &Navbar::sigLike,      m_supportDialog,  &QDialog::exec);
     connect(ui->navbar, &Navbar::sigSync,      this,             &MainWindow::onActionXbmc);
     connect(ui->navbar, &Navbar::sigRename,    this,             &MainWindow::onActionRename);

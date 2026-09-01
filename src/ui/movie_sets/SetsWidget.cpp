@@ -18,6 +18,8 @@
 #include "ui/notifications/NotificationBox.h"
 
 #include <QFileDialog>
+#include <QFrame>
+#include <QLabel>
 #include <QMessageBox>
 
 SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget)
@@ -76,6 +78,11 @@ SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget
     connect(actionDeleteSet, &QAction::triggered, this, &SetsWidget::onRemoveMovieSet);
     connect(actionOnlyEmptySets, &QAction::toggled, this, &SetsWidget::onShowOnlyEmptySets);
     connect(ui->sets, &QWidget::customContextMenuRequested, this, &SetsWidget::showSetsContextMenu);
+    connect(ui->folderNotice, &QLabel::linkActivated, this, [this](const QString& /*link*/) {
+        // The notice names the settings page in words as well, so the link is a
+        // shortcut and not the only way there.
+        emit sigOpenSettings();
+    });
 
     clear();
 
@@ -121,6 +128,38 @@ void SetsWidget::applyWriteAccess()
                             "been chosen. Choose one under Settings, Movies, Movie Set Artwork.");
     ui->poster->setToolTip(artworkTooltip);
     ui->backdrop->setToolTip(artworkTooltip);
+
+    // Three states, derived from the two answers above rather than from a third look at
+    // the settings -- which is deliberate, because a third look would be a third
+    // predicate.  Records off *and* artwork off can only be the separate artwork
+    // directory selected without one having been chosen; records off with artwork on can
+    // only be the other layout.
+    if (recordsEnabled) {
+        ui->folderNoticeFrame->hide();
+
+    } else if (!artworkEnabled) {
+        // A real misconfiguration: the user asked for a directory and never named one.
+        // Until this step that silently wrote into the process's working directory.
+        ui->folderNoticeFrame->setFrameShape(QFrame::StyledPanel);
+        ui->folderNotice->setText(
+            tr("<b>No movie set directory is configured.</b> Movie sets are shown but read-only: their artwork, "
+               "overview and TMDB id cannot be saved, and new movie sets cannot be created. "
+               "<a href=\"settings\">Choose a directory</a> under Settings, Movies, Movie Set Artwork, or switch "
+               "back to \"Artwork next to movies\". A movie's set can still be changed on the movie itself."));
+        ui->folderNoticeFrame->show();
+
+    } else {
+        // Not a warning, and it must not read like one.  "Artwork next to movies" is the
+        // default precisely so that nobody has to configure a directory before using
+        // MediaElch (bugwelle, #1243, 2021-04-06), so every user who has never opened
+        // the settings sees this line and none of them has done anything wrong.
+        ui->folderNoticeFrame->setFrameShape(QFrame::NoFrame);
+        ui->folderNotice->setText(
+            tr("Movie sets have no file of their own in this layout, so a movie set with no movies cannot be "
+               "created. Set artwork is written next to your movies. "
+               "<a href=\"settings\">Settings, Movies, Movie Set Artwork</a>"));
+        ui->folderNoticeFrame->show();
+    }
 }
 
 /**
