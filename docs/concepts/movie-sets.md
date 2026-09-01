@@ -84,18 +84,21 @@ back, and the images are gone with no indication that anything happened.
 
 Because there is no set object, the set the UI is operating on is identified by
 the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:273` and
-`:771`).  Call sites read it back as the set's identity:
-`chooseSetPoster()` (`:515`), `chooseSetBackdrop()` (`:555`),
-`onRemoveMovieSet()` (`:784`), `onSetNameChanged()` (`:832`) and `saveSet()`
-(`:596`, `:653`).
+`:772`).  Call sites read it back as the set's identity:
+`chooseSetPoster()` (`:516`), `chooseSetBackdrop()` (`:556`),
+`onRemoveMovieSet()` (`:785`), `onSetNameChanged()` (`:834`) and `saveSet()`
+(`:597`, `:654`).
 
 `saveSet()` used to **hedge** — reading the role *and* the displayed text and
 iterating both — which was only necessary because the two were known to
 disagree.  It does not any more, and the reason is D-B rather than tidiness:
 the two now disagree *by design* after a set-file-only rename, the role is the
 match key and the text is the display title, and a loop over both would index
-this widget's three maps under a string none of them has ever held.  Renaming a row never updates the role, so on `master` they diverge
-from the first rename onwards — `onRemoveMovieSet()` even detaches the movies
+this widget's three maps under a string none of them has ever held.
+
+On `master` the two diverge for a worse reason: renaming a row never updates the
+role at all, so they come apart from the first rename onwards —
+`onRemoveMovieSet()` even detaches the movies
 under one name (`master`'s `SetsWidget.cpp:537`) while erasing the map entries
 under the other (`master`'s `:541-544`).  #2013 fixes this within the existing
 design; it does not remove the design.
@@ -115,17 +118,17 @@ Exactly two set art types exist in the whole application:
 (`src/globals/Globals.h:143-144`), mirrored by two `DataFileType` entries
 (`:259-260`), two default filename templates
 (`src/settings/Settings.cpp:97-98`), two `QMap` members on the widget
-(`src/ui/movie_sets/SetsWidget.h:105-106`), four virtual methods on the media
+(`src/ui/movie_sets/SetsWidget.h:108-109`), four virtual methods on the media
 center interface (`src/media_center/MediaCenterInterface.h:63-79`) with their
 `KodiXml` overrides (`src/media_center/KodiXml.h:46-49`,
 `src/media_center/KodiXml.cpp:1203-1291`), and a hard-wired pair of settings
-fields (`src/ui/settings/MovieSettingsWidget.cpp:60-61`, `:72-73`, `:179-201`,
+fields (`src/ui/settings/MovieSettingsWidget.cpp:69-70`, `:81-82`, `:188-210`,
 plus its `.ui`).  Adding a third art type means touching all of it.
 
 The interface is keyed by set *name*, not by a set: `saveMovieSetPoster(QString
 setName, QImage)`.  `KodiXml::movieSetFileName` then has to find the set again
 — in "artwork next to movies" mode it linear-scans the entire movie model
-looking for any member (`src/media_center/KodiXml.cpp:1809-1823`) — and
+looking for any member (`src/media_center/KodiXml.cpp:1831-1845`) — and
 `DataFile::saveFileName` substitutes the name into the template
 (`src/settings/DataFile.cpp:52-57`).  Set art is also the only artwork
 MediaElch re-encodes: `image.save(fileName, "jpg", 100)` at
@@ -156,7 +159,7 @@ all.
 
 `SetsWidget::chooseSetPoster()` allocates a throwaway `Movie`, assigns the set
 name as that movie's *title*, and opens `ImageDialog` asking for
-`ImageType::MoviePoster` (`SetsWidget.cpp:516-523`).  `ImageDialog` seeds its
+`ImageType::MoviePoster` (`SetsWidget.cpp:517-524`).  `ImageDialog` seeds its
 search box from the movie's title (`src/ui/image/ImageDialog.cpp:118`) and
 calls `m_currentProvider->searchMovie(...)` (`:808`).  In other words, asking
 for a poster for _Alien Collection_ searches the movie database for a film
@@ -487,7 +490,7 @@ An existing user who upgrades and configures a folder must find their sets
 already there, not gone.  That requirement stands.  What meets it is the drop
 rule, not a migration: sets are re-derived from the movie NFOs on every
 `reload()`, and a set is dropped only when it has **neither** members **nor** a
-record (`MovieSetModel.cpp:258`), so a set with members survives in every
+record (`MovieSetModel.cpp:264`), so a set with members survives in every
 configuration — no media center at all, no folder configured, and a folder
 freshly configured with no records in it yet.  A test case named for that
 property, with one section per configuration, says so; it was covered only as a
@@ -514,17 +517,17 @@ A one-shot pass that materialised every derived set into a `set.nfo` was
 considered and rejected.  Giving every set a record makes every set permanent,
 since a record is precisely what lets a set outlive its last member — so every
 set that ever lost its last movie would sit in the set combo box and the set
-filter with no movie answering to it (`MovieSetModel.cpp:250`), which is the
+filter with no movie answering to it (`MovieSetModel.cpp:256`), which is the
 outcome the drop rule exists to prevent.  It would also write unprompted into a
 directory the user has just named, possibly by typo or on a drive that is not
 mounted, to fix a problem that does not exist.  A set gets its record when the
-user saves it (`SetsWidget.cpp:668`), which is the gesture that says the set is
+user saves it (`SetsWidget.cpp:669`), which is the gesture that says the set is
 worth keeping.
 
 What such a pass would genuinely have carried forward — *whatever overview and
 id those NFOs already hold* — is carried forward on the read side instead, and
 no file is written for it.  A set with no record takes its overview and its
-collection id from its members (`MovieSetModel.cpp:523`).  Without that it is
+collection id from its members (`MovieSetModel.cpp:529`).  Without that it is
 built from a name alone: the entity is blank while the mirror in every member
 NFO holds the data, and the first `set.nfo` written for it is written from that
 emptiness, because the writer skips an empty overview
@@ -535,7 +538,7 @@ hazard set out below.
 
 Four rules the seed follows, each load-bearing:
 
-- **Never over a record** (`MovieSetModel.cpp:528`).  A set that has read a
+- **Never over a record** (`MovieSetModel.cpp:534`).  A set that has read a
   `set.nfo` already holds the authoritative values, and the members hold a
   mirror of them; a mirror is not a source.  The question asked is
   `MovieSet::hasRecord()` and deliberately *not* `MovieSetModel::isBacked()`,
@@ -545,9 +548,9 @@ Four rules the seed follows, each load-bearing:
   switched off, and nothing would put them back — `reload()` leaves the record
   flags alone while records are off, and re-reads a record only when a set
   *gains* one.
-- **Never from a member that names another set** (`:591`).  `MovieSet::addMovie()`
+- **Never from a member that names another set** (`:597`).  `MovieSet::addMovie()`
   is public, so a set can hold a movie whose own `<set><name>` points elsewhere —
-  written down at the guard itself and at `detachMovie()` (`:713-715`), both of
+  written down at the guard itself and at `detachMovie()` (`:719-721`), both of
   which note that `reload()` is what *cures* it.  That movie's overview and id describe the
   collection it names, so letting it donate would make this set authoritative for
   another set's text.  The guard holds across a rename only because the rename
@@ -556,12 +559,12 @@ Four rules the seed follows, each load-bearing:
   `MovieSet::setName()` caller in `src/`.  There are two renames now and only
   that one comes through here: a set-file-only rename moves the display title and
   leaves the key untouched, so no member ever disagrees with it.
-- **Seeding is not an edit** (`MovieSetModel.cpp:622`).  It is the value the
+- **Seeding is not an edit** (`MovieSetModel.cpp:628`).  It is the value the
   library already held, read into the object that was missing it, so the set must
   not be left marked as needing to be saved — nor may an unsaved edit already
   waiting on it be forgotten.
 - **Members may legitimately disagree**, and the winner is the first member
-  with a non-empty value in member order (`:576`), with overview and id decided
+  with a non-empty value in member order (`:582`), with overview and id decided
   independently.  Nothing in MediaElch has ever forced the "identical text in
   every member" rule below, so a library assembled by other tools has sets whose
   members differ; first-wins is what Kodi 19 and 20 do with the same input.
@@ -704,16 +707,36 @@ members and `<originaltitle>` alike and re-unifies the two.  A set seeded from
 its members alone never has one, which is right: a display title lives in the
 record and nowhere else.
 
-**Where each string is shown.**  The sets tab shows the display title and keys
-every row on the match key, with a tooltip naming the key whenever the two
-differ, so the divergence is never hidden.  Everywhere else shows the **key**,
-and that is a decision rather than an omission.  The movie widget's set combo
-box is an *editing surface* for `movie->set().name` — it is editable, and
-`MovieWidget::onSetChange()` writes whatever text it holds straight into the
-movie's own value — so showing a display title there would mean the box commits
-a string the movie's file may not carry, and merely tabbing through it would
-rename that movie's set.  The set filter matches on the same per-movie value.
-Both are per-movie surfaces, and the per-movie truth *is* the key.
+**Where each string is shown.**  The sets tab shows the display title — in the
+row *and* in the heading above the movie list, which is fed by `loadSet()` and
+so is one of the places that is handed the key and has to translate — and keys
+every row on the match key.  A tooltip names the key whenever the two differ,
+set at every point the divergence can appear or disappear rather than only when
+the list is rebuilt: the rename that *creates* the divergence is exactly the
+moment a user asks what just happened.
+
+Everywhere else shows the **key**, and that is a decision rather than an
+omission.  The movie widget's set combo box is an *editing surface* for
+`movie->set().name` — it is editable, and `MovieWidget::onSetChange()` writes
+whatever text it holds straight into the movie's own value — so showing a
+display title there would mean the box commits a string the movie's file may not
+carry, and merely tabbing through it would rename that movie's set.  The set
+filter matches on the same per-movie value.  Both are per-movie surfaces, and
+the per-movie truth *is* the key.
+
+`MovieSetModel` splits the two by role: `Qt::DisplayRole` is the display title
+and `NameRole` is the key.  No view reads this model yet — the sets tab is a
+`QTableWidget` — which is the reason to split them now rather than after a view
+has enshrined the wrong one.
+
+**A name already in use is refused, in either rename.**  The merge check asks
+`MovieSetModel::set()`, which matches on the key alone, so a name that is
+another set's *display title* passes it as "not a merge".  That is right about
+Kodi — two sets sharing a display title are still two sets — and wrong about
+this tab, which would then show two rows the user cannot tell apart.  Both
+renames therefore refuse such a name; under all movie files it would otherwise
+be permanent, because the typed name becomes the key the next reload rebuilds
+from.
 
 **An all-movie-files rename moves what the set keeps on disk.**  The match key
 moves, and Kodi derives the movie set information folder from the key —
@@ -728,6 +751,19 @@ artwork-next-to-movies layout the paths are found through a movie whose
 `set().name` is still the old one.  A move that fails does not undo the rename:
 the movie NFOs are the set's identity, so that is a rename plus a findable
 leftover, and it is reported as one.
+
+**Which** leftover is not one sentence, which is why the move answers with three
+states rather than a bool.  In the separate-folder layout the directory rename
+can succeed and the rename of the set-name-derived files inside it fail, and
+then the record *is* under the new name — so "your files are still stored under
+the old name" would send that user to a folder that no longer exists.  Those
+files are set-name-derived because the shipped artwork names embed the set's
+name (`<setName>-poster.jpg` and `<setName>-fanart.jpg`,
+`src/settings/Settings.cpp:97-98`), in **both** layouts: there is one initial
+data-file list and `Settings::dataFiles()` never consults the artwork layout, so
+the placeholder-free names only appear once a user opens the settings and
+switches.  Renaming those files is real work on a default install rather than a
+rare edge.
 
 Moving the files replaced an in-memory carry-over that read the set's poster and
 backdrop back off the disk and held them until the next save.  That covered two
