@@ -126,17 +126,23 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
         CHECK(set->name() == "Alien Collection");
     }
 
-    SECTION("Reading is not an edit")
+    SECTION("The reader alone leaves the set marked as changed")
     {
-        // Every setter the reader calls marks the set as needing to be saved, but what
-        // it read *is* what is on disk.  KodiXml::loadMovieSet() clears the flag; a
-        // reader used on its own leaves it set, which is what this pins.
+        // Every setter the reader calls marks the set as needing to be saved, and the
+        // reader does not undo that -- KodiXml::loadMovieSet() is what clears the flag,
+        // because it is the one that knows the values came off the disk.  The fixture
+        // has to carry a value for this to mean anything: MovieSet's setters return
+        // early when the value does not change, so a record with neither an overview nor
+        // an id raises the flag under no implementation at all.
         MovieSet set("Alien Collection");
+        REQUIRE_FALSE(set.hasChanged());
         QDomDocument doc;
-        doc.setContent(QStringLiteral("<set><originaltitle>Alien Collection</originaltitle></set>"));
+        doc.setContent(QStringLiteral(
+            R"(<set><originaltitle>Alien Collection</originaltitle><overview>Ripley.</overview></set>)"));
         kodi::MovieSetXmlReader reader(set);
         REQUIRE(reader.parseNfoDom(doc));
-        CHECK(set.movies().isEmpty());
+        CHECK(set.overview() == "Ripley.");
+        CHECK(set.hasChanged());
     }
 
     SECTION("Rejects a document that is not a <set>")
