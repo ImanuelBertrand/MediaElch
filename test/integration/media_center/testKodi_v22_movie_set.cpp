@@ -285,9 +285,12 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
     {
         // The hazard this guards.  DirectoryPath's default constructor leaves isValid()
         // false around a default QDir, whose absolutePath() is the process's current
-        // working directory, and movieSetFileName() never asks.  Selecting the separate
-        // folder without choosing one must not scatter files into whatever directory
-        // MediaElch was started from.
+        // working directory.  Selecting the separate folder without choosing one must not
+        // scatter files into whatever directory MediaElch was started from.
+        //
+        // movieSetFileName() asks too, and covers the three record paths that build a
+        // path through it.  What this predicate covers on its own is movieSetsWithRecord(),
+        // which lists the folder itself and never builds a per-set path.  Its check is below.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());

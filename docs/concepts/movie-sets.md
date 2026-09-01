@@ -320,10 +320,15 @@ Question* below for where that guard lives and what it does not cover.
 design rather than a gap.**  `KodiXml::movieSetRecordsEnabled()` is the one
 place that decides, and it tests *both* the layout and `isValid()`.  The layout
 alone would walk into the working directory, and the path guard above does not
-make this one redundant: that guard stops a file being *written* there, while
-this one stops a `set.nfo` *found* there from marking a set as having a record,
-which is what decides whether the model keeps or drops the set — and it is
-asked before any path is built.  So it gates reading as well as writing.
+make this one redundant — but for one specific reason, which is worth stating
+exactly rather than generally.  Three of the four `set.nfo` paths (the read,
+the write and the removal) build their path through `movieSetNfoFileName()`
+and so through `movieSetFileName()`, and are therefore already covered by the
+path guard.  The fourth, **`movieSetsWithRecord()`, is not**: it lists the
+folder itself and never builds a per-set path, so without this predicate a
+`set.nfo` sitting in the working directory would be reported as a record — and
+having a record is what decides whether the model keeps or drops a set.  That
+enumeration is what this guard is for.
 
 The gate has to come **before** the path is resolved, not be inferred from an
 empty result.  In the artwork-next-to-movies layout `movieSetFileName()` does

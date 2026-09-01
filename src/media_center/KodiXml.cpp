@@ -1355,37 +1355,36 @@ mediaelch::DirectoryPath KodiXml::getPath(const Concert* concert)
 namespace {
 
 /// \brief Whether a movie set information folder is configured: the layout *and* a folder.
-/// \details The one place either half of this is derived.  Both halves are load-bearing.
+/// \details The one place the two are asked *together*, and the only place isValid() is
+///          asked at all.  The layout on its own is a fair question and is asked in four
+///          other places in this file, all of them choosing between the two artwork
+///          layouts rather than deciding whether a folder exists.
 ///
-///          The layout, because a `set.nfo` and a per-set artwork folder only exist in
-///          that layout at all.
+///          The layout half, because a `set.nfo` and a per-set artwork folder only exist
+///          in that layout at all.
 ///
-///          The folder, because DirectoryPath's default constructor leaves isValid()
-///          false around a *default* QDir, whose absolutePath() is the process's current
-///          working directory.  "Separate folder selected, folder never chosen" therefore
-///          names a real, writable path in whatever directory MediaElch was started from.
-///          movieSetFileName() refuses that path too now, and this is still not
-///          redundant with it: that refusal is what stops a file being *written* there,
-///          while this one is what stops a `set.nfo` found there from marking a set as
-///          having a record -- which is what decides whether the model keeps or drops the
-///          set, and happens before any path is built.  Neither guard covers the other's
-///          case, and both are pinned by tests in testKodi_v22_movie_set.cpp.
+///          The folder half, because DirectoryPath's default constructor leaves
+///          isValid() false around a *default* QDir, whose absolutePath() is the
+///          process's current working directory.  "Separate folder selected, folder never
+///          chosen" therefore names a real, writable path in whatever directory MediaElch
+///          was started from.
+///
+///          movieSetFileName() refuses that path too, and the two guards are still not
+///          redundant -- but for one specific reason, so it is worth being exact.  Three
+///          of the four `set.nfo` paths (the read, the write and the removal) build their
+///          path through movieSetNfoFileName() and therefore through movieSetFileName(),
+///          so that guard already covers them.  The fourth, movieSetsWithRecord(), does
+///          not: it lists the folder itself, from movieSetArtworkDirectory().dir(),
+///          without ever building a per-set path.  **That enumeration is what this guard
+///          is for.**  Without it, a `set.nfo` sitting in the working directory would be
+///          reported as a record, and having a record is what decides whether the model
+///          keeps or drops a set.  Both guards are pinned by tests in
+///          testKodi_v22_movie_set.cpp.
 bool movieSetFolderIsConfigured()
 {
     return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder
            && Settings::instance()->movieSetArtworkDirectory().isValid();
 }
-
-} // namespace
-
-bool KodiXml::movieSetRecordsEnabled() const
-{
-    // A record lives in the movie set information folder and nowhere else, so having one
-    // configured is the whole question.
-    return movieSetFolderIsConfigured();
-}
-
-namespace {
 
 /// \brief Opens and parses the movie set record at \p fileName.
 /// \return false if it could not be opened, which is the caller's cue to refuse.
@@ -1414,6 +1413,13 @@ bool readMovieSetRecord(const QString& fileName, QDomDocument& domDoc)
 }
 
 } // namespace
+
+bool KodiXml::movieSetRecordsEnabled() const
+{
+    // A record lives in the movie set information folder and nowhere else, so having one
+    // configured is the whole question.
+    return movieSetFolderIsConfigured();
+}
 
 QString KodiXml::movieSetNfoFileName(const QString& setName)
 {
