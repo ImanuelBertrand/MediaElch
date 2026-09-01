@@ -53,6 +53,7 @@ private slots:
     void onSetNameChanged(QTableWidgetItem* item);
     void onDownloadFinished(DownloadManagerElement elem);
     void onJumpToMovie(QTableWidgetItem* item);
+    void onShowOnlyEmptySets(bool onlyEmpty);
 
 private:
     Ui::SetsWidget* ui;
@@ -64,6 +65,12 @@ private:
     QMenu* m_tableContextMenu;
     DownloadManager* m_downloadManager;
     QMovie* m_loadingMovie;
+    /// \brief Whether the list is filtered down to the sets that have no movies.
+    /// \details A set with a `set.nfo` survives having no members (D-A), so the list can
+    ///          hold sets that nothing in the library points at.  They are not
+    ///          distinguishable from the others by looking, and in a long list they are
+    ///          not findable at all, so the tab needs a way to ask for them.
+    bool m_showOnlyEmptySets = false;
 
     void loadSet(QString set);
 };

@@ -58,10 +58,18 @@ SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget
     m_tableContextMenu = new QMenu(ui->sets);
     auto* actionAddSet = new QAction(tr("Add Movie Set"), this);
     auto* actionDeleteSet = new QAction(tr("Delete Movie Set"), this);
+    // A set with a `set.nfo` stays in the list after its last movie leaves it, so the
+    // list can hold sets nothing in the library points at.  Nothing about a row says so,
+    // and a user with a hundred sets cannot find them by opening each one.
+    auto* actionOnlyEmptySets = new QAction(tr("Show Only Empty Movie Sets"), this);
+    actionOnlyEmptySets->setCheckable(true);
     m_tableContextMenu->addAction(actionAddSet);
     m_tableContextMenu->addAction(actionDeleteSet);
+    m_tableContextMenu->addSeparator();
+    m_tableContextMenu->addAction(actionOnlyEmptySets);
     connect(actionAddSet, &QAction::triggered, this, &SetsWidget::onAddMovieSet);
     connect(actionDeleteSet, &QAction::triggered, this, &SetsWidget::onRemoveMovieSet);
+    connect(actionOnlyEmptySets, &QAction::toggled, this, &SetsWidget::onShowOnlyEmptySets);
     connect(ui->sets, &QWidget::customContextMenuRequested, this, &SetsWidget::showSetsContextMenu);
 
     clear();
@@ -128,6 +136,9 @@ void SetsWidget::loadSets()
 
     QStringList setNames;
     for (const MovieSet* movieSet : setModel->sets()) {
+        if (m_showOnlyEmptySets && !movieSet->movies().isEmpty()) {
+            continue;
+        }
         setNames.append(movieSet->name());
     }
     setNames.sort();
@@ -680,6 +691,16 @@ void SetsWidget::onDownloadFinished(DownloadManagerElement elem)
         }
     }
     delete elem.movie;
+}
+
+void SetsWidget::onShowOnlyEmptySets(bool onlyEmpty)
+{
+    m_showOnlyEmptySets = onlyEmpty;
+    // Filtering is done while the list is built, so the list is simply built again.  It
+    // also re-derives the library, which is the point: the sets that are empty *and*
+    // have no record go at that moment, so what is left under the filter is exactly the
+    // sets that survived on their own record.
+    loadSets();
 }
 
 void SetsWidget::onJumpToMovie(QTableWidgetItem* item)
