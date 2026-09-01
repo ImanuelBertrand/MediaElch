@@ -655,7 +655,7 @@ the answer had been "fewer than I thought":
 |---|---|
 | **read** a set's record | answers "found" only if the parsed `<originaltitle>` equals the name asked for, and applies **nothing** before that check |
 | **enumerate** the folder | reports a record only if the name in it resolves back to the folder it was found in |
-| **write** a set's record | refuses if a file is already there **and** it names some other set |
+| **write** a set's record | refuses if a file is already there **and** it names some other set — but *takes* a file that names nobody, see below |
 | **remove** a set's record | refuses unless the file names exactly this set |
 
 The write is the odd one and the asymmetry is deliberate.  A read may demand a match,
@@ -663,6 +663,17 @@ because a record it cannot find simply does not exist; a write has to be able to
 the *first* record for a set, where there is no file at all, so its test is "already
 taken by someone else", not "belongs to me".  Requiring a match there would make it
 impossible ever to write a record.
+
+The write and the removal also disagree, deliberately, about a **readable file that
+names nobody**: the write claims it, the removal refuses it.  Nothing about the shared
+question implies that, so it is written down here rather than left to be "unified" by
+the next reader — and unifying it would brick the folder.  A record that names no set is
+nobody's by this design's own definition: the enumeration skips it and the read refuses
+it, so no set can ever carry a record flag because of it.  The write therefore has to be
+able to claim it, or that folder is permanently unwritable with nothing in the UI able
+to clear it.  The removal must still refuse, because deleting a file it cannot show to
+belong to the set being deleted is precisely the fail-open below.  Both directions are
+pinned by a test.
 
 Two rules hold across all four:
 
@@ -682,6 +693,16 @@ Two rules hold across all four:
 Get any of this wrong and a set flips between having a record and not having one from one
 reload to the next, *Delete Movie Set* deletes another set's file, and *Save* overwrites
 one.
+
+**And the callers have to listen.**  Teaching the media center to refuse achieves nothing
+if the refusals are discarded, which is how the first version of this shipped: the model
+dropped the set anyway, so the row vanished, the file survived and the next `reload()`
+brought the set back — the very outcome the deletion was added to prevent, arriving
+through the door the guard opened.  So `MovieSetModel::removeSet()` returns whether the
+set is gone and is `[[nodiscard]]`, the sets tab tells the user when a deletion or a save
+was refused, and the removal attempts the record **before** detaching the members, so
+that a refusal leaves the set, its movies and its file exactly as they were rather than
+half-done.
 
 For the same reason the name is **not** trimmed when it is read — nor when `<title>` and
 `<originaltitle>` are compared for a set-file-only rename, or MediaElch's own files
