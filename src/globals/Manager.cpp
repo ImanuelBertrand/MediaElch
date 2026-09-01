@@ -43,6 +43,10 @@ Manager::Manager(QObject* parent) : QObject(parent)
     KodiXml::MediaPersistence persistence{
         *m_moviePersistence, *m_tvShowPersistence, *m_concertPersistence, *m_musicPersistence};
     m_mediaCenters.append(new KodiXml(*m_kodiSettings, persistence, this));
+    // After the media center exists, not with setMovieModel() above: the movie set model
+    // reads and writes the sets' records -- their `set.nfo` files -- through it, and the
+    // sets that have a record but no member movie can only be found once it is there.
+    m_movieSetModel->setRecordSource(m_mediaCenters.at(0));
     m_mediaCentersTvShow.append(new KodiXml(*m_kodiSettings, persistence, this));
     m_mediaCentersConcert.append(new KodiXml(*m_kodiSettings, persistence, this));
 

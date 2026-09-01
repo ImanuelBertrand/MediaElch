@@ -1422,7 +1422,6 @@ bool KodiXml::loadMovieSet(MovieSet& set)
     // set would have MediaElch warn about discarding unsaved changes to a set nobody
     // touched.
     set.setChanged(false);
-    set.setHasRecord(true);
     return true;
 }
 

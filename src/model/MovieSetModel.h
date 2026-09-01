@@ -10,6 +10,7 @@
 #include <QString>
 #include <QVector>
 
+class MediaCenterInterface;
 class Movie;
 class MovieModel;
 
@@ -70,12 +71,29 @@ public:
     /// \details Loads the sets from it immediately and follows it from then on.
     void setMovieModel(MovieModel* movieModel);
 
+    /// \brief Sets the media center this model reads and writes sets' records through.
+    /// \details A set's record is its `set.nfo`, and having one is what lets a set
+    ///          outlive its last member (D-A).  Passed in rather than taken from
+    ///          Manager so that this model has no opinion about which media center is
+    ///          in use and can be tested without one.
+    ///
+    ///          A null media center means *no records*: every set is then exactly the
+    ///          movies that name it, which is what MediaElch did before `set.nfo`
+    ///          existed and what this model does in any configuration without a movie
+    ///          set information folder.
+    void setRecordSource(MediaCenterInterface* mediaCenter);
+
     /// \brief All sets, in the order they were first seen.  Owned by this model.
     /// \details A set is never dropped for merely having no members -- an edit that
     ///          empties one leaves it standing, and one created by addSet() and never
     ///          filled is a set too.  Sets are dropped when the library is re-derived
     ///          and nothing is left to derive them from (reload(), or the movies
     ///          leaving the movie model) or when they are removed deliberately.
+    ///
+    ///          Re-derivation spares a set that has a `set.nfo`: such a set has a
+    ///          record of its own and does not depend on any movie naming it.  A set
+    ///          created by addSet() and never saved has no record, so it still goes --
+    ///          as it always did.  See dropEmptySets().
     ELCH_NODISCARD const QVector<MovieSet*>& sets() const;
     /// \brief The set called \p name, or nullptr if there is none.  An empty name is no set.
     ELCH_NODISCARD MovieSet* set(const QString& name) const;
@@ -146,9 +164,19 @@ public:
     void removeSet(const QString& name);
 
     /// \brief Regroups every movie of the movie model into sets.
-    /// \details Existing MovieSet objects are kept, so a set's own record survives; a set
-    ///          that ends up with no members is dropped, because until `set.nfo` exists
-    ///          the movies are all a set has.
+    /// \details Existing MovieSet objects are kept, so a set's own record survives; a
+    ///          set that ends up with neither members nor a `set.nfo` is dropped.
+    ///
+    ///          This is also where the model re-asks the disk which sets have a record.
+    ///          It is one directory listing for the whole library, not a probe per set,
+    ///          and doing it every time is what heals a `set.nfo` deleted behind
+    ///          MediaElch's back or a movie set information folder pointed somewhere
+    ///          else -- with no settings-changed plumbing to keep in step.
+    ///
+    ///          A set that already exists does *not* have its record re-read.  What is
+    ///          refreshed is only whether a record exists; the record's contents are
+    ///          read once, when the set is created, because re-reading would overwrite
+    ///          an overview the user has edited but not saved.
     void reload();
     /// \brief Removes every set.
     void clear();
@@ -169,8 +197,17 @@ private:
     void dropSet(MovieSet* movieSet);
     /// \brief Takes \p movie out of the membership index entry for \p movieSet.
     void unindexMembership(QObject* movie, MovieSet* movieSet);
-    /// \brief Drops every set that has no members left.
+    /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
+    /// \brief Whether sets can have a record at all, i.e. whether a folder is configured.
+    ELCH_NODISCARD bool recordsAreConfigured() const;
+    /// \brief Whether \p movieSet has a `set.nfo` of its own.
+    /// \details Two questions, and the configuration one is asked live rather than
+    ///          remembered.  A user who goes back to "artwork next to movies" has no
+    ///          folder any more, so no set has a record any more, and every set is its
+    ///          movies again at once instead of at the next reload.  Switching back
+    ///          restores every set's answer, because nothing cleared the flags.
+    ELCH_NODISCARD bool isBacked(const MovieSet* movieSet) const;
     /// \brief Logs a warning if dropping \p movieSet would discard an unsaved record.
     void warnIfRecordIsLost(const MovieSet* movieSet) const;
 
@@ -195,6 +232,8 @@ private:
     ///          are in no set.
     QHash<QObject*, QVector<MovieSet*>> m_setsByMovie;
     MovieModel* m_movieModel = nullptr;
+    /// \brief Where sets' records are read from and written to; null means no records.
+    MediaCenterInterface* m_mediaCenter = nullptr;
     /// \brief Whether reload() is running; it announces one reset instead of each change.
     bool m_inReset = false;
 };
