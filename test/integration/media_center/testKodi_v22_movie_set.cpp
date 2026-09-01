@@ -411,6 +411,44 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         record.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     }
 
+    SECTION("A record in a hidden folder is seen by the listing as well as the probe")
+    {
+        // QDir::NoDotAndDotDot drops only "." and ".."; without QDir::Hidden a set whose
+        // legalised folder starts with a dot is invisible to the listing while
+        // loadMovieSet() opens its path directly and finds it.  The set then alternates
+        // between surviving its last member and not, which is the very flip-flop the one
+        // question was supposed to close.
+        const QDir msif = emptyMsif("hidden");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set(".hack Collection");
+        set.setOverview("Bandai's franchise.");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        REQUIRE(QFileInfo::exists(msif.absoluteFilePath(".hack Collection/set.nfo")));
+
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{".hack Collection"});
+
+        MovieSet reread(".hack Collection");
+        CHECK(mediaCenter->loadMovieSet(reread));
+    }
+
+    SECTION("A set whose name legalises away to nothing gets no record at all")
+    {
+        // "." and "..." and a run of spaces are all accepted by the sets tab's rename
+        // field and all legalise to the empty string, which would build "<msif>//set.nfo"
+        // and drop the record into the folder's root -- where the listing, which descends
+        // into subfolders, would never see it, while the direct probe would.  Same split
+        // answer as the hidden folder, so the same refusal.
+        const QDir msif = emptyMsif("nameless");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("...");
+        CHECK_FALSE(mediaCenter->saveMovieSet(set));
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("set.nfo")));
+        CHECK_FALSE(mediaCenter->loadMovieSet(set));
+        CHECK_FALSE(mediaCenter->removeMovieSetRecord("..."));
+    }
+
     SECTION("A record in a folder its own name does not resolve to is ignored")
     {
         // Reporting it would name a set whose every write path looks somewhere else:

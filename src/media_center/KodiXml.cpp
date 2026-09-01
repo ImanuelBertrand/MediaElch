@@ -1381,6 +1381,15 @@ QString KodiXml::movieSetNfoFileName(const QString& setName)
     if (setName.isEmpty() || !movieSetRecordsEnabled()) {
         return {};
     }
+    // A name that legalises away to nothing -- ".", "...", a run of spaces, all of which
+    // the sets tab's rename field accepts -- would otherwise build "<msif>//set.nfo" and
+    // drop the record straight into the movie set information folder's root.  Nothing
+    // enumerates that, since the listing descends into subfolders, so the record would be
+    // found by the direct probe and not by the listing: the same split answer that the
+    // hidden-folder case produced.  Such a set simply has nowhere to keep a record.
+    if (mediaelch::kodi::makeLegalFileName(setName).isEmpty()) {
+        return {};
+    }
     // The gate above has to come first.  movieSetFileName() does not resolve to nothing
     // in the other artwork layout: for a set that has members it happily returns
     // "<the first member's folder>/set.nfo", which is a real path Kodi never reads.
@@ -1398,7 +1407,12 @@ QStringList KodiXml::movieSetsWithRecord()
     }
     const QDir msif = Settings::instance()->movieSetArtworkDirectory().dir();
     QStringList setNames;
-    const QStringList folders = msif.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    // QDir::Hidden, because QDir::NoDotAndDotDot only drops "." and "..": without it a
+    // set whose legalised folder begins with a dot -- ".hack Collection" is a real
+    // collection -- is invisible here while loadMovieSet() opens its path directly and
+    // finds it.  That split answer is exactly what the two halves below exist to close,
+    // so the listing has to be able to see everything the probe can.
+    const QStringList folders = msif.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
     for (const QString& folder : folders) {
         // A folder holding artwork but no `set.nfo` is not a set.  The record is what
         // makes a set exist in its own right; treating a pile of images as one would
@@ -1491,7 +1505,8 @@ bool KodiXml::saveMovieSet(MovieSet& set)
     const QString fileName = movieSetNfoFileName(set.name());
     if (fileName.isEmpty()) {
         qCWarning(generic) << "[KodiXml] Not saving the record of movie set" << set.name()
-                           << "-- no movie set information folder is configured.";
+                           << "-- it has no path of its own: either no movie set information folder is"
+                           << "configured, or the name legalises away to nothing.";
         return false;
     }
     // The writer is the fourth path to this file and the last one to be brought under the
