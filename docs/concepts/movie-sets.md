@@ -646,25 +646,49 @@ A set's folder is its name run through Kodi's `MakeLegalFileName`, which is **lo
 back a folder whose name differs from the one asked for.  A record found at a set's path
 is therefore not necessarily that set's record.
 
-So every path asks exactly one question — **is there a record whose `<originaltitle>` is
-this name, in the folder that this name resolves to?** — and both halves are checked:
+So every path asks one question — **is there a record whose `<originaltitle>` is this
+name, in the folder that this name resolves to?** — and asks it before it acts.  There
+are **four** such paths, and it is worth counting them, because two review rounds found
+the answer had been "fewer than I thought":
 
-- reading a set's record answers "found" only if the parsed `<originaltitle>` equals the
-  name asked for, and applies nothing before that check;
-- enumerating the folder reports a record only if the name in it resolves back to the
-  folder it was found in.  A record reported from anywhere else would be looked for
-  elsewhere on the next read, written a second time elsewhere on the next save, and
-  removed by nothing.
+| Path | What it must establish first |
+|---|---|
+| **read** a set's record | answers "found" only if the parsed `<originaltitle>` equals the name asked for, and applies **nothing** before that check |
+| **enumerate** the folder | reports a record only if the name in it resolves back to the folder it was found in |
+| **write** a set's record | refuses if a file is already there **and** it names some other set |
+| **remove** a set's record | refuses unless the file names exactly this set |
 
-Get this wrong in either half and a set flips between having a record and not having one
-from one reload to the next — and *Delete Movie Set* deletes another set's file.  The
-deletion itself re-checks the name before unlinking, because that is the one place where
-being wrong destroys something.
+The write is the odd one and the asymmetry is deliberate.  A read may demand a match,
+because a record it cannot find simply does not exist; a write has to be able to create
+the *first* record for a set, where there is no file at all, so its test is "already
+taken by someone else", not "belongs to me".  Requiring a match there would make it
+impossible ever to write a record.
 
-For the same reason the name is **not** trimmed when it is read.  It is a join key that
-must be byte-identical to the member NFOs' `<set><name>`, the movie NFO reader does not
-trim that either, and `MakeLegalFileName` chops only *trailing* whitespace — so a
-normalising reader would report a set under one spelling and look it up under another.
+Two rules hold across all four:
+
+- **Fail closed.**  A record that cannot be opened yields no owner, and no path may read
+  that as permission to proceed.  This bites hardest on removal: unlinking needs write
+  permission on the *directory* and nothing at all on the file, so an unreadable
+  `set.nfo` is perfectly deletable, and skipping the check would destroy a file whose
+  owner was never established — and report success.
+- **The listing must be able to see everything the probe can.**  `QDir::NoDotAndDotDot`
+  drops only `.` and `..`, so without `QDir::Hidden` a set whose legalised folder begins
+  with a dot — *.hack Collection* is a real collection — is invisible to the enumeration
+  while a direct probe finds it.  For the same reason a name that legalises away to
+  nothing (`.`, `...`, a run of spaces, all of which the sets tab accepts) gets **no**
+  record at all: its path would be the folder's root, which the enumeration never
+  descends into.
+
+Get any of this wrong and a set flips between having a record and not having one from one
+reload to the next, *Delete Movie Set* deletes another set's file, and *Save* overwrites
+one.
+
+For the same reason the name is **not** trimmed when it is read — nor when `<title>` and
+`<originaltitle>` are compared for a set-file-only rename, or MediaElch's own files
+would look renamed whenever a set's name carries whitespace.  It is a join key that must
+be byte-identical to the member NFOs' `<set><name>`, the movie NFO reader does not trim
+that either, and `MakeLegalFileName` chops only *trailing* whitespace — so a normalising
+reader would report a set under one spelling and look it up under another.
 
 **That second half could not be approximated with `MovieSet::hasChanged()`**, and one
 attempt at it had to be reverted.  Until the writer existed nothing called
