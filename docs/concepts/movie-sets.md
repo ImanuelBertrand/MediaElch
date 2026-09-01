@@ -51,31 +51,31 @@ nothing else (`src/data/movie/MovieSet.cpp:3`).
 
 There is no list of sets anywhere.  It is recomputed, from scratch, in three
 unrelated places, each walking the whole movie model and grouping by
-`movie->set().name`: the sets tab (`src/ui/movie_sets/SetsWidget.cpp:120-134`),
+`movie->set().name`: the sets tab (`src/ui/movie_sets/SetsWidget.cpp:132-147`),
 the set combo box in the movie widget
 (`src/ui/movies/MovieWidget.cpp:598-606`), and the set dropdown in the filter
 widget (`src/ui/small_widgets/FilterWidget.cpp:318-319`).
 `MainWindow::onMenu` runs the first of those on every switch to the Movie Sets
 tab (`src/ui/main/MainWindow.cpp:881`), after first discarding the four
-`QMap`s that hold everything the tab knows (`SetsWidget.cpp:106-109`).
+`QMap`s that hold everything the tab knows (`SetsWidget.cpp:117-121`).
 
 What that discard costs is worth being precise about, because it is smaller
 than it looks and still bad.  Edits to a movie are not lost: `Movie::setSet`
 marks the movie dirty (`src/data/movie/Movie.cpp:779-783`) and it stays dirty
 in `MovieModel`.  What is lost is the tab's own state — the `m_moviesToSave`
 list of what still needs writing, and any set poster or backdrop the user
-picked but has not saved (`SetsWidget.cpp:107-109`).  Leave the tab and come
+picked but has not saved (`SetsWidget.cpp:119-121`).  Leave the tab and come
 back, and the images are gone with no indication that anything happened.
 
 ### The Identity of a Set Is a Table Cell
 
 Because there is no set object, the set the UI is operating on is identified by
-the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:149` and
-`:521`).  Four call sites read it back as the set's identity:
-`chooseSetPoster()` (`:365`), `chooseSetBackdrop()` (`:400`),
-`onRemoveMovieSet()` (`:534`) and `onSetNameChanged()` (`:550`).  A fifth,
+the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:157` and
+`:542`).  Four call sites read it back as the set's identity:
+`chooseSetPoster()` (`:378`), `chooseSetBackdrop()` (`:413`),
+`onRemoveMovieSet()` (`:555`) and `onSetNameChanged()` (`:576`).  A fifth,
 `saveSet()`, hedges: it reads the role *and* the displayed text and iterates
-both (`:435-440`), which is only necessary because the two are known to
+both (`:448-451`), which is only necessary because the two are known to
 disagree.  Renaming a row never updates the role, so on `master` they diverge
 from the first rename onwards — `onRemoveMovieSet()` even detaches the movies
 under one name (`:537`) while erasing the map entries under the other
@@ -135,7 +135,7 @@ all.
 
 `SetsWidget::chooseSetPoster()` allocates a throwaway `Movie`, assigns the set
 name as that movie's *title*, and opens `ImageDialog` asking for
-`ImageType::MoviePoster` (`SetsWidget.cpp:366-373`).  `ImageDialog` seeds its
+`ImageType::MoviePoster` (`SetsWidget.cpp:384-391`).  `ImageDialog` seeds its
 search box from the movie's title (`src/ui/image/ImageDialog.cpp:118`) and
 calls `m_currentProvider->searchMovie(...)` (`:808`).  In other words, asking
 for a poster for _Alien Collection_ searches the movie database for a film
@@ -447,7 +447,7 @@ default behaviour would be wrong out of the box.  That makes it a dependency
 of this design rather than an unrelated tidy-up, and it is fixed here.
 
 Renaming a set onto an existing name is a merge, on both sides.  The current
-code already performs it (`SetsWidget.cpp:555-560`) without telling the user.
+code already performs it (`SetsWidget.cpp:581-586`) without telling the user.
 
 ### D-C: Promote `MovieSet` to an Entity, and Give the List a Model
 
@@ -604,18 +604,67 @@ does.  This is a relaxation of one predicate, not new machinery.
 Whether a set has a record is a fact about the file system, and it is treated as one:
 established when the set is created, before the object is visible to anything —
 `dropEmptySets()` must never see a set whose record has not been looked for yet —
-and refreshed on every `reload()` from a single directory listing rather than a probe
-per set.  Refreshing it is what heals a `set.nfo` deleted behind MediaElch's back or a
-folder pointed somewhere else, with no settings-changed plumbing to keep in step.  Only
-the record's *existence* is refreshed; its contents are read once, at creation, because
-re-reading would overwrite an overview the user has edited and not saved.  The one
-exception is a set that had no record and now has one, which must be read or it would
-write the emptiness it was created with over the file.
+and re-derived on every `reload()`, which is what heals a `set.nfo` deleted behind
+MediaElch's back or a folder pointed somewhere else, with no settings-changed plumbing
+to keep in step.  The flag is therefore a *cache*, only as fresh as the last reload, and
+every claim below depends on that.
+
+Re-deriving is asked once for the whole library rather than once per set, but it is not
+cheap: only the file says which set it belongs to, so answering means opening and
+DOM-parsing every `set.nfo` in the folder — and each set that then has to be *created*
+from a record is parsed a second time on its way through the reader.  A first reload with
+M records does 2M parses.  Bounded by the number of sets rather than the size of the
+library, but not free, and worth remembering before it is put anywhere hotter than a tab
+switch.
+
+Only the record's *existence* is re-derived; its contents are read once, at creation,
+because re-reading would overwrite an overview the user has edited and not saved.  Two
+consequences that are deliberate and not obvious:
+
+- A set that had **no** record and now has one *is* read, or a set marked as having a
+  record while still holding the empty overview it was created with would write that
+  emptiness over the file on the next save.
+- A set whose record has **gone** keeps the overview and id it read from it, so saving
+  the set writes the file again with those contents.  That is the same thing that happens
+  to every other unsaved value in this application, and it is recoverable; silently
+  emptying the object would not be.
 
 The predicate is also gated, live, on whether records are configured at all.  A user who
 goes back to "artwork next to movies" has no folder, so no set has a record, and every
-set is its movies again at once rather than at the next reload; going back restores every
-set's answer, because nothing cleared the flags and nothing on disk was touched.
+set is its movies again at once rather than at the next reload.  Turning the folder back
+on restores every set's answer immediately — but *only* because `reload()` leaves the
+flags alone while records are off.  Re-deriving them from an empty answer would clear
+every one of them, and a set would then be destroyed for losing its last member although
+its `set.nfo` is on disk; it would heal at the next reload, which is no comfort to a user
+watching a set disappear.  Nothing on disk is touched either way.
+
+#### One Question, Asked the Same Way Everywhere
+
+A set's folder is its name run through Kodi's `MakeLegalFileName`, which is **lossy**:
+`: / \ ? * " < > |` all collapse to `_`, so *Mission: Impossible* and
+*Mission_ Impossible* resolve to one folder, and a case-insensitive file system hands
+back a folder whose name differs from the one asked for.  A record found at a set's path
+is therefore not necessarily that set's record.
+
+So every path asks exactly one question — **is there a record whose `<originaltitle>` is
+this name, in the folder that this name resolves to?** — and both halves are checked:
+
+- reading a set's record answers "found" only if the parsed `<originaltitle>` equals the
+  name asked for, and applies nothing before that check;
+- enumerating the folder reports a record only if the name in it resolves back to the
+  folder it was found in.  A record reported from anywhere else would be looked for
+  elsewhere on the next read, written a second time elsewhere on the next save, and
+  removed by nothing.
+
+Get this wrong in either half and a set flips between having a record and not having one
+from one reload to the next — and *Delete Movie Set* deletes another set's file.  The
+deletion itself re-checks the name before unlinking, because that is the one place where
+being wrong destroys something.
+
+For the same reason the name is **not** trimmed when it is read.  It is a join key that
+must be byte-identical to the member NFOs' `<set><name>`, the movie NFO reader does not
+trim that either, and `MakeLegalFileName` chops only *trailing* whitespace — so a
+normalising reader would report a set under one spelling and look it up under another.
 
 **That second half could not be approximated with `MovieSet::hasChanged()`**, and one
 attempt at it had to be reverted.  Until the writer existed nothing called
@@ -628,6 +677,14 @@ NFOs while the new one is kept forever in the set combo box and the set filter. 
 writer has since given the flag its clearing edge — `KodiXml::saveMovieSet()` and
 `loadMovieSet()` both clear it, which is the first time anything ever has — but the flag
 still answers a different question and is still not this one.
+
+Renaming a set is the one place where the record and the set part company.  A rename
+that *merges* into an existing set removes the source set's record, because it goes
+through the deliberate removal path; a plain rename leaves the old `set.nfo` where it was
+and writes a new one under the new name on the next save, exactly as it already leaves
+the old artwork folder behind.  The orphan then shows up as a set with no movies, which
+is findable and removable — but making the record follow the rename is D3a's business,
+not this step's.
 
 A set created by *Add Movie Set* and never filled is dropped by the next re-derivation.
 That is not a new restriction and not a consequence of this rule: it was already true
@@ -673,7 +730,7 @@ library reload, and nothing today makes that safe.  `MovieModel` has no
 and `MovieModel::clear()` (`:278-289`) calls `movie->deleteLater()` on every
 element while `Movie::sigChanged` never fires on destruction.  The existing
 code already knows this hazard and works around it by having no long-lived
-state at all: the comment at `SetsWidget.cpp:104-105` says the maps must be
+state at all: the comment at `SetsWidget.cpp:114-115` says the maps must be
 cleared before the table is, "otherwise MediaElch may access invalidated
 `Movie*`".  Any design that keeps set objects across a reload takes that
 hazard on, and the version where the model is the only writer is the one where
