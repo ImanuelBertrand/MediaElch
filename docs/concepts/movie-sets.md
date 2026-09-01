@@ -42,12 +42,15 @@ where they change something described here; everything else describes
 
 ## Current State
 
-**Line numbers in this section point into this branch's tree**, which is what a
-reader has checked out.  Most of the code cited here is untouched by the branch
-and reads the same in both.  Where the branch has *replaced* what a claim
-describes, the claim is still about `master` and the citation says so and gives
-`master`'s own coordinates — a bare `:537` in this section always belongs to
-this tree.
+**A line number with no `master`'s prefix points into this branch's tree**,
+which is what a reader has checked out.  Most of the code cited here is
+untouched by the branch and reads the same in both.  Where the branch has
+*replaced* what a claim describes, the claim is still about `master`; the
+citation then carries a `master`'s prefix and gives `master`'s own coordinates.
+The prefix is the only marker, and every `master` citation here carries one,
+including the bare ranges that continue a file named just before — so the same
+numbers can mean two different places, and which tree is being cited is never
+left to be inferred from the shape of the citation.
 
 ### A Set Has No Existence of Its Own
 
@@ -63,7 +66,7 @@ has replaced all three with `MovieSetModel`: the sets tab
 (`master`'s `src/ui/movie_sets/SetsWidget.cpp:120-134`), the set combo box in
 the movie widget (`master`'s `src/ui/movies/MovieWidget.cpp:598-606`), and the
 set dropdown in the filter widget
-(`master`'s `src/ui/small_widgets/FilterWidget.cpp:320-321`).
+(`master`'s `src/ui/small_widgets/FilterWidget.cpp:318-319`).
 `MainWindow::onMenu` runs the first of those on every switch to the Movie Sets
 tab (`src/ui/main/MainWindow.cpp:882`) — that much is still true here — after
 first discarding the maps that hold everything the tab knows
@@ -81,11 +84,11 @@ back, and the images are gone with no indication that anything happened.
 
 Because there is no set object, the set the UI is operating on is identified by
 the string in the row's `Qt::UserRole` (written at `SetsWidget.cpp:252` and
-`:723`).  Four call sites read it back as the set's identity:
-`chooseSetPoster()` (`:482`), `chooseSetBackdrop()` (`:522`),
-`onRemoveMovieSet()` (`:736`) and `onSetNameChanged()` (`:767`).  A fifth,
+`:724`).  Four call sites read it back as the set's identity:
+`chooseSetPoster()` (`:483`), `chooseSetBackdrop()` (`:523`),
+`onRemoveMovieSet()` (`:737`) and `onSetNameChanged()` (`:768`).  A fifth,
 `saveSet()`, hedges: it reads the role *and* the displayed text and iterates
-both (`:557-560`), which is only necessary because the two are known to
+both (`:558-561`), which is only necessary because the two are known to
 disagree.  Renaming a row never updates the role, so on `master` they diverge
 from the first rename onwards — `onRemoveMovieSet()` even detaches the movies
 under one name (`master`'s `SetsWidget.cpp:537`) while erasing the map entries
@@ -117,7 +120,7 @@ plus its `.ui`).  Adding a third art type means touching all of it.
 The interface is keyed by set *name*, not by a set: `saveMovieSetPoster(QString
 setName, QImage)`.  `KodiXml::movieSetFileName` then has to find the set again
 — in "artwork next to movies" mode it linear-scans the entire movie model
-looking for any member (`src/media_center/KodiXml.cpp:1676-1690`) — and
+looking for any member (`src/media_center/KodiXml.cpp:1677-1691`) — and
 `DataFile::saveFileName` substitutes the name into the template
 (`src/settings/DataFile.cpp:52-57`).  Set art is also the only artwork
 MediaElch re-encodes: `image.save(fileName, "jpg", 100)` at
@@ -338,8 +341,11 @@ exactly rather than generally.  Three of the four `set.nfo` paths (the read,
 the write and the removal) build their path through `movieSetNfoFileName()`
 and so through `movieSetFileName()`, and are therefore already covered by the
 path guard.  The fourth, **`movieSetsWithRecord()`, is not**: it lists the
-folder itself and never builds a per-set path, so without this predicate a
-`set.nfo` sitting in the working directory would be reported as a record — and
+folder itself and never goes through `movieSetFileName()`.  It does build a
+path to each record it finds — that is how it opens them — but it derives it
+from the folder listing, so nothing on that route is guarded.  Without this
+predicate a `set.nfo` sitting in the working directory would be reported as a
+record — and
 having a record is what decides whether the model keeps or drops a set.  That
 enumeration is what this guard is for.
 
