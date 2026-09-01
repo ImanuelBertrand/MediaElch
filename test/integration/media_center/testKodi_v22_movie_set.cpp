@@ -487,6 +487,43 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         CHECK_FALSE(mediaCenter->removeMovieSetRecord("..."));
     }
 
+    SECTION("A record that names nobody: the write takes it, the removal will not")
+    {
+        // The two paths disagree here **on purpose**, and nothing else says so.
+        //
+        // A readable `set.nfo` that names no set is nobody's record by this design's own
+        // definition: the enumeration skips it and loadMovieSet() refuses it, so no set
+        // can ever carry hasRecord() because of it.  The write may therefore claim it --
+        // and has to, or that folder is permanently unwritable with nothing in the UI
+        // able to clear it.  The removal must still refuse it, because deleting a file
+        // it cannot show to belong to the set being deleted is exactly the fail-open it
+        // was fixed for.
+        //
+        // Both directions of the writer's `!recordName.isEmpty() &&` conjunct are pinned
+        // here: tighten the writer and the save below fails, loosen the remover and the
+        // refusal above does.
+        const QDir msif = emptyMsif("nameless");
+        MovieSetFolderGuard::useFolder(msif);
+        REQUIRE(QDir().mkpath(msif.absoluteFilePath("Alien Collection")));
+        const QString fileName = msif.absoluteFilePath("Alien Collection/set.nfo");
+        QFile orphan(fileName);
+        REQUIRE(orphan.open(QIODevice::WriteOnly));
+        orphan.write("<set><overview>Belongs to no one.</overview></set>");
+        orphan.close();
+
+        // Nobody's record, so nobody may have it deleted.
+        CHECK_FALSE(mediaCenter->removeMovieSetRecord("Alien Collection"));
+        CHECK(QFileInfo::exists(fileName));
+
+        // But a set whose folder this is may claim it.
+        MovieSet set("Alien Collection");
+        set.setOverview("Ripley versus the Alien.");
+        CHECK(mediaCenter->saveMovieSet(set));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Alien Collection"});
+        // And now that it names someone, the removal will take it.
+        CHECK(mediaCenter->removeMovieSetRecord("Alien Collection"));
+    }
+
     SECTION("A record in a folder its own name does not resolve to is ignored")
     {
         // Reporting it would name a set whose every write path looks somewhere else:
