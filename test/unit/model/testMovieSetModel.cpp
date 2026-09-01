@@ -908,8 +908,10 @@ TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
     // D-A's other half, and the reason MovieSet::hasRecord() exists.  Until `set.nfo`
     // was written, a set was nothing but the movies that named it, so re-deriving the
     // library and finding none left meant the set was gone.  A set with a record of its
-    // own is not derived from anything: it has an overview, a collection id and artwork
-    // that belong to the set, and it stays.
+    // own is not derived from anything: the file on disk says it exists, whatever the
+    // movies say, and it stays.  Not because the record holds anything the members do not
+    // -- the overview and the id are mirrored into every member NFO, and the artwork is
+    // the image files beside the record -- but because it exists at all.
     QObject owner;
     MovieModel movies;
     MediaCenterInterfaceMock mediaCenter;

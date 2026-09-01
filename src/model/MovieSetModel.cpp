@@ -238,11 +238,13 @@ void MovieSetModel::dropEmptySets()
     for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
         MovieSet* movieSet = m_sets.at(row);
         // No members left *and* no record of its own (D-A).  A set with a `set.nfo` is
-        // more than the grouping of its movies: it has an overview, a collection id and
-        // artwork that belong to the set and not to any movie, so it outlives its last
-        // member.  A set without one is nothing but that grouping, and goes when the
-        // grouping does -- otherwise its name would sit in the set combo box and the set
-        // filter with no movie answering to it.
+        // more than the grouping of its movies, and not because the file holds anything
+        // the movies do not -- the overview and the id are mirrored into every member
+        // NFO, and the artwork is the image files beside the record rather than in it.
+        // It is that the file exists at all: a fact about the file system that no movie
+        // supplies, so such a set outlives its last member.  A set without one is nothing
+        // but that grouping, and goes when the grouping does -- otherwise its name would
+        // sit in the set combo box and the set filter with no movie answering to it.
         //
         // The record is a fact about the file system, established when the set was
         // created and refreshed by reload().  It is deliberately *not* approximated by
@@ -293,9 +295,13 @@ void MovieSetModel::reload()
     // Which sets have a record is asked once for the whole library, and every set here is
     // told whether it is among the answers.  It is not a cheap question: the media center
     // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names, so this costs one parse per record -- plus a second one for each set that
-    // has to be created from a record below, which goes through loadMovieSet() again.
-    // It is bounded by the number of sets, not by the size of the library.
+    // names, so this costs one parse per record -- plus a second one for every set whose
+    // record is new to it, which goes through loadMovieSet() again.  That is the flip
+    // branch just below as well as the sets created from a record further down, and on
+    // the first reload after a folder is configured the flip branch takes it for *every*
+    // set that has a record, so the doubled figure is the one to expect there rather than
+    // the exception.  Either way it is bounded by the number of sets, not by the size of
+    // the library.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the

@@ -11,9 +11,14 @@
 class Movie;
 
 /// \brief A movie collection (aka. set) as an object of its own.
-/// \details A set is an aggregate over the movies whose NFO names it, plus the
-///          authoritative record in `set.nfo` that holds its overview, its TMDB
-///          collection id and its artwork.  See docs/concepts/movie-sets.md, D-C.
+/// \details A set is an aggregate over the movies whose NFO names it, plus a record of
+///          its own in `set.nfo`.  What the record adds is not a field the movies lack:
+///          the overview and the TMDB collection id are mirrored into every member NFO
+///          as well (D-A), and the artwork is the image files in the set's folder, which
+///          the record deliberately never carries.  What it adds is *existence* -- it is
+///          a fact about the file system that no movie can supply, so a set that has one
+///          is something apart from the grouping of its movies and outlives its last
+///          member.  See docs/concepts/movie-sets.md, D-A and D-C.
 ///
 ///          Not to be confused with MovieSetInfo, the three-field value that a
 ///          single Movie carries about the set it belongs to.

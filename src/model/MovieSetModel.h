@@ -199,8 +199,13 @@ public:
     ///          settings-changed plumbing to keep in step.  The question is asked once
     ///          for the whole library rather than once per set, but it is not cheap:
     ///          answering it means parsing every `set.nfo` in the folder, since only the
-    ///          file says which set it belongs to.  The cost is one parse per record,
-    ///          plus a second for each set that has to be created from one.
+    ///          file says which set it belongs to.  That is one parse per record, plus a
+    ///          second for every set whose record is *new to it*, which has to be read
+    ///          and not merely counted -- both a set created from a record and one that
+    ///          already existed and has just gained one.  On the first reload after a
+    ///          folder is configured that second parse is taken for every set that has a
+    ///          record, so the doubled figure is what to expect there, and that is the
+    ///          case worth budgeting for.
     ///
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
