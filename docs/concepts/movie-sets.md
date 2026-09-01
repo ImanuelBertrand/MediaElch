@@ -1190,19 +1190,30 @@ with a different failure mode.
 5. **Should MediaElch ever write a `set.nfo` the user did not ask for?**  Not
    for the overview's sake: Kodi 22 populates `tag.m_set` from the movie NFO
    *before* it looks for a record and returns early if the movie names no set
-   (`xbmc/video/VideoInfoScanner.cpp:834-835`), and the record then overrides only a
-   non-empty `<title>`, `<overview>` and `<art>` (`:852-857`).  With no record,
-   Kodi 22 reads the member mirror exactly as 19-21 do.
+   (`xbmc/video/VideoInfoScanner.cpp:834-835`), and the record then overrides
+   only a non-empty `<title>`, `<overview>` and `<art>` (`:852-857`).  With no
+   record, Kodi 22 reads the member mirror exactly as 19-21 do.
 
-   What a record does buy on 22 is **rename-in-place** and **`<art>`**.  `AddSet`
-   matches on `strOriginalSet` and writes that column only on INSERT — the UPDATE
-   branch touches `strSet` and `strOverview` and never the key
-   (`xbmc/video/VideoDatabase.cpp:1535-1536`, `:1555-1558`) — and
-   `strOriginalSet` is populated only inside the branch that found a record
-   (`VideoInfoScanner.cpp:851`).  So without one, renaming through the member
-   NFOs orphans the old set row instead of renaming it, which is what forces the
-   three-state rename setting (D-B); and `<art>` is Kodi 22's only fallback for a
-   folder with no image files.
+   What a record does buy on 22 is **rename-in-place** and **`<art>`**, and the
+   mechanism is not that a record-less set lacks a `strOriginalSet`.  It has one:
+   `AddSet` substitutes the set's own name whenever the original title is empty,
+   in the SELECT and in the INSERT alike
+   (`xbmc/video/VideoDatabase.cpp:1536`, `:1544`).  What a record does is
+   **decouple the display name from the match key**; without one they are the
+   same string.
+
+   With no `set.nfo`, `strSet` and `strOriginalSet` are both the movie NFOs'
+   `<set><name>`, so renaming through the members moves the key itself: the
+   SELECT misses, `AddSet` INSERTs, and the old row is orphaned with its artwork
+   and its id.  With one, `strOriginalSet` stays the members' `<set><name>` while
+   `strSet` becomes the record's `<title>`
+   (`xbmc/video/VideoInfoScanner.cpp:851-853`), so a set-file-only rename moves
+   the display name with the key held still and the UPDATE at
+   `xbmc/video/VideoDatabase.cpp:1555-1558` renames the row in place.  That
+   decoupling is why D-B's join key is `<originaltitle>` and why rename
+   behaviour has to be a three-state setting; *Renaming Is a Setting, Not an
+   Inference* works it through.  `<art>`, separately, is Kodi 22's only fallback
+   for a folder with no image files.
 
    That is a real motive for writing records unasked, and it collides with the
    drop rule: a record is what makes a set permanent, so writing one for every
