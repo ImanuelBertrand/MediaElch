@@ -510,7 +510,7 @@ worth keeping.
 What such a pass would genuinely have carried forward — *whatever overview and
 id those NFOs already hold* — is carried forward on the read side instead, and
 no file is written for it.  A set with no record takes its overview and its
-collection id from its members (`MovieSetModel.cpp:498`).  Without that it is
+collection id from its members (`MovieSetModel.cpp:503`).  Without that it is
 built from a name alone: the entity is blank while the mirror in every member
 NFO holds the data, and the first `set.nfo` written for it is written from that
 emptiness, because the writer skips an empty overview
@@ -521,7 +521,7 @@ hazard set out below.
 
 Four rules the seed follows, each load-bearing:
 
-- **Never over a record** (`MovieSetModel.cpp:503`).  A set that has read a
+- **Never over a record** (`MovieSetModel.cpp:508`).  A set that has read a
   `set.nfo` already holds the authoritative values, and the members hold a
   mirror of them; a mirror is not a source.  The question asked is
   `MovieSet::hasRecord()` and deliberately *not* `MovieSetModel::isBacked()`,
@@ -531,21 +531,21 @@ Four rules the seed follows, each load-bearing:
   switched off, and nothing would put them back — `reload()` leaves the record
   flags alone while records are off, and re-reads a record only when a set
   *gains* one.
-- **Never from a member that names another set** (`:566`).  `MovieSet::addMovie()`
+- **Never from a member that names another set** (`:571`).  `MovieSet::addMovie()`
   is public, so a set can hold a movie whose own `<set><name>` points elsewhere —
-  written down at the guard itself and at `detachMovie()` (`:688-690`), both of
+  written down at the guard itself and at `detachMovie()` (`:693-695`), both of
   which note that `reload()` is what *cures* it.  That movie's overview and id describe the
   collection it names, so letting it donate would make this set authoritative for
   another set's text.  The guard holds across a rename only because
   `SetsWidget::onSetNameChanged()` rewrites every member's value straight after
   renaming the object (`SetsWidget.cpp:830-839`), and it is the only
   `MovieSet::setName()` caller in `src/`.
-- **Seeding is not an edit** (`MovieSetModel.cpp:597`).  It is the value the
+- **Seeding is not an edit** (`MovieSetModel.cpp:602`).  It is the value the
   library already held, read into the object that was missing it, so the set must
   not be left marked as needing to be saved — nor may an unsaved edit already
   waiting on it be forgotten.
 - **Members may legitimately disagree**, and the winner is the first member
-  with a non-empty value in member order (`:551`), with overview and id decided
+  with a non-empty value in member order (`:556`), with overview and id decided
   independently.  Nothing in MediaElch has ever forced the "identical text in
   every member" rule below, so a library assembled by other tools has sets whose
   members differ; first-wins is what Kodi 19 and 20 do with the same input.

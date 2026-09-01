@@ -309,16 +309,21 @@ void MovieSetModel::reload()
     //
     // Bounded by the folder and the number of sets, never by the size of the library.
     //
-    // A standing rule about the three sentences above, because they have been wrong in
-    // five consecutive review rounds: three enumerations that each missed a call site, one
-    // guarantee ("at most two parses per record") that the folder-collision case
-    // falsified, and one condition that was right except for the restriction that only a
-    // probed set parses.  Every fix answered the error that had just been found, which is
-    // why it kept taking another round.  **If this is ever found wrong a sixth time,
-    // delete the quantified claim instead of repairing it.**  The mechanism -- a parse
-    // happens where a probed path lands on a file -- and the bound above carry the whole
-    // useful warning between them, and a comment that has been wrong six times is worth
-    // less than no comment at all.
+    // A standing rule about the three sentences above, because five successive versions of
+    // them have been wrong, each in its own way.  Three were enumerations of which sets
+    // take the second parse: two of those missed a call site, and the third named both
+    // call sites correctly but misattributed the empty-model state to setMovieModel() and
+    // setRecordSource() -- neither of which touches m_sets -- and overcounted it as "every
+    // set".  The fourth traded the enumeration for a guarantee, "at most two parses per
+    // record", which the folder-collision case falsified.  The fifth had the condition
+    // right and dropped the restriction, counting every set whose path lands on a file
+    // including the ones that are never probed.  Each fix answered the error that had just
+    // been found, which is exactly why it kept taking another round.
+    //
+    // **If this is ever found wrong a sixth time, delete the quantified claim instead of
+    // repairing it.**  The mechanism -- a parse happens where a probed path lands on a
+    // file -- and the bound above carry the whole useful warning between them, and a
+    // comment that has been wrong six times is worth less than no comment at all.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the
