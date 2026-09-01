@@ -1280,9 +1280,14 @@ TEST_CASE("A set derived from movies knows what its members know", "[model][movi
 
     SECTION("A membership edit that creates a set seeds it")
     {
-        // The third way a set is born: a movie is moved into a set that did not exist a
-        // moment ago, and the value the caller hands assign() carries the overview and
-        // the id with it.
+        // A set created by a membership edit is seeded from whatever value assign() writes
+        // onto the movie.  This pins assign()'s contract, and deliberately not a user
+        // gesture: a full value like this one is not what either in-app caller sends.  The
+        // movie widget's set box and the sets tab's "Add Movie" both build a name-only
+        // MovieSetInfo on purpose, because the previous set's overview and id describe the
+        // set the movie is leaving (`MovieWidget.cpp:1301-1307`, `SetsWidget.cpp:424-431`).
+        // The path that really does carry a full value into a set that did not exist is
+        // the section below.
         Movie* alien = movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId));
         movies.addMovie(alien);
         MovieSetModel sets;
@@ -1296,6 +1301,32 @@ TEST_CASE("A set derived from movies knows what its members know", "[model][movi
         // The *movie* is changed by the edit, and the set is not: nothing about the set's
         // own record was edited, only read out of the member that just joined.
         CHECK(alien->hasChanged());
+        CHECK_FALSE(sets.set("Alien Anthology")->hasChanged());
+    }
+
+    SECTION("A set created by a reconciled NFO re-read is seeded")
+    {
+        // The production path that carries a member's overview and id into a set nothing
+        // knew about a moment ago, and the reason the seed is worth having at all:
+        // MovieController::loadData() re-reads a library movie's NFO under a
+        // QSignalBlocker, so Movie::sigChanged never reaches the model and syncMovie() is
+        // the notification that survives.  What the file holds is the whole `<set>` block
+        // -- name, overview and id together -- not a name on its own.
+        Movie* alien = movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId));
+        movies.addMovie(alien);
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        {
+            const QSignalBlocker blocker(alien);
+            alien->setSetInfo(setInfo("Alien Anthology", "Ripley returns.", TmdbId(8091)));
+        }
+        REQUIRE(sets.set("Alien Anthology") == nullptr);
+
+        sets.syncMovie(alien);
+
+        REQUIRE(sets.set("Alien Anthology") != nullptr);
+        CHECK(sets.set("Alien Anthology")->overview() == "Ripley returns.");
+        CHECK(sets.set("Alien Anthology")->tmdbId() == TmdbId(8091));
         CHECK_FALSE(sets.set("Alien Anthology")->hasChanged());
     }
 }

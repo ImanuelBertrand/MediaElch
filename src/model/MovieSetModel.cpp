@@ -295,13 +295,15 @@ void MovieSetModel::reload()
     // Which sets have a record is asked once for the whole library, and every set here is
     // told whether it is among the answers.  It is not a cheap question: the media center
     // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names, so this costs one parse per record -- plus a second one for every set whose
-    // record is new to it, which goes through loadMovieSet() again.  That is the flip
-    // branch just below as well as the sets created from a record further down, and on
-    // the first reload after a folder is configured the flip branch takes it for *every*
-    // set that has a record, so the doubled figure is the one to expect there rather than
-    // the exception.  Either way it is bounded by the number of sets, not by the size of
-    // the library.
+    // names, so this costs one parse per record.  A second parse on top of that for every
+    // set whose record this pass has not read yet, each going through loadMovieSet()
+    // again: the flip branch just below, for a set that already existed and has just
+    // gained a record, and createSet() for every set this pass *builds* -- which is the
+    // attach loop building one from a movie just as much as the enumeration building one
+    // from a record.  When m_sets starts out empty, which is what setMovieModel() and
+    // setRecordSource() both produce, that is every set, so the doubled figure is the
+    // ordinary case rather than the exception.  Either way it is bounded by the number of
+    // sets, not by the size of the library.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the
@@ -502,10 +504,20 @@ void MovieSetModel::seedFromMembers(MovieSet* movieSet)
     if (movieSet->hasRecord()) {
         return;
     }
-    // Only what is missing is filled, so this never overwrites -- neither a value seeded
-    // by an earlier member nor one the user typed.  The other side of that is that a
-    // seeded value is not refreshed when a member's NFO changes: the seed fills a hole
-    // once, it does not track the members.
+    // Only what is missing is filled, so this never overwrites a value that is there --
+    // neither one an earlier member supplied nor one the user typed.  Two consequences,
+    // both deliberate and neither of them obvious.
+    //
+    // A seeded value is not refreshed when a member's NFO changes afterwards.  The seed
+    // fills a hole once; it does not track the members.
+    //
+    // And "missing" is emptiness, not intent.  Once PR-6 lands the overview editor, a user
+    // who *clears* an unbacked set's overview leaves a hole like any other, and the next
+    // movie to join that set fills it again from a member -- with the dirty flag restored
+    // below, so nothing marks it and nothing warns.  A set with a record is safe, because
+    // the guard above stops the seed outright.  An unbacked set is not, and closing that
+    // needs a "deliberately empty" state this object does not have.  Worth knowing before
+    // the editor is written, because the editor is what makes it reachable.
     const bool overviewIsMissing = movieSet->overview().isEmpty();
     const bool idIsMissing = !movieSet->tmdbId().isValid();
     if (!overviewIsMissing && !idIsMissing) {
@@ -531,6 +543,13 @@ void MovieSetModel::seedFromMembers(MovieSet* movieSet)
         // overview and id belong to that one.  MovieSet::addMovie() is public, so this
         // set can hold a movie whose own `<set><name>` points elsewhere -- reload() cures
         // that, but until it runs such a member must not donate anything.
+        //
+        // Note where this guard's correctness comes from after a rename: nothing in
+        // MovieSet::setName() moves the members' names with it, so every member would
+        // stop matching.  What keeps them matching is SetsWidget::onSetNameChanged(),
+        // which rewrites every member's MovieSetInfo immediately after renaming the
+        // object, and it is the only setName() caller in `src/`.  A second caller that
+        // did not do the same would leave this set unable to seed from its own members.
         if (info.name != movieSet->name()) {
             continue;
         }
