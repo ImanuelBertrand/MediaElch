@@ -129,8 +129,11 @@ void SetsWidget::loadSets()
     ui->sets->clear();
     ui->sets->setRowCount(0);
 
-    // Regrouping here is what drops the sets whose last movie has left, and what a set
-    // added by the context menu but never filled does not survive -- both as before.
+    // Regrouping here is what re-derives the library's sets, and the moment at which a
+    // set that has nothing left to exist by is dropped -- no movies *and* no `set.nfo`
+    // (D-A).  So a set whose last movie left survives if it has a record and goes if it
+    // has not, and a set added by the context menu survives only once it has been saved,
+    // which is what writes its record.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     setModel->reload();
 
@@ -512,26 +515,22 @@ void SetsWidget::onPreviewPoster()
 void SetsWidget::onAddMovieSet()
 {
     m_tableContextMenu->close();
-    QString setName = tr("New Movie Set");
-    int adder = -1;
-    bool setExists = false;
-    do {
-        adder++;
-        setExists = false;
-        for (int i = 0, n = ui->sets->rowCount(); i < n; ++i) {
-            if ((adder == 0 && ui->sets->item(i, 0)->text() == setName)
-                || (adder > 0 && ui->sets->item(i, 0)->text() == QString("%1 %2").arg(setName).arg(adder))) {
-                setExists = true;
-                break;
-            }
-        }
-    } while (setExists);
-
-    if (adder > 0) {
-        setName.append(QString(" %1").arg(adder));
+    // Asked of the model, not of the table.  The table is a filtered view of the model --
+    // "Show Only Empty Movie Sets" hides every set that has movies, and a set can also be
+    // missing from it because the list has not been rebuilt since -- so a name absent
+    // from the rows can still be taken.  Adding it then hands back the existing set and
+    // inserts a second row for it, and a set's name is its primary key (D-B).
+    // onSetNameChanged() already asks the model for the same reason.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    const QString baseName = tr("New Movie Set");
+    QString setName = baseName;
+    int adder = 0;
+    while (setModel->set(setName) != nullptr) {
+        ++adder;
+        setName = QString("%1 %2").arg(baseName).arg(adder);
     }
 
-    Manager::instance()->movieSetModel()->addSet(setName);
+    setModel->addSet(setName);
     m_moviesToSave.insert(setName, QVector<Movie*>());
     m_setPosters.insert(setName, QImage());
     m_setBackdrops.insert(setName, QImage());
