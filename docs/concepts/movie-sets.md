@@ -482,14 +482,18 @@ And this is not an upgrade path that ages out.  Membership lives in the member
 movies and nowhere else, so a movie's `<set><name>` is the only thing that can
 say that movie is in a set at all.  That makes the `movie.nfo` to set path one
 that can never be retired, however many records a library accumulates, and makes
-a set with no `set.nfo` the normal first state of a set *that has members* —
-not an anomaly to be migrated away.
+a set with no `set.nfo` the normal first state of a *derived* set — not an
+anomaly to be migrated away.
 
-Sets that have no members are learned about differently, and the distinction
-matters below: the folder enumeration above creates the sets that only a record
-names, and *Add Movie Set* creates one from a click, with no movie and no NFO
-anywhere.  Neither is derived from its movies, and the seed has to know the
-difference.
+Derivation is the axis here, not membership, and the two are easy to conflate.
+A set can have members that no movie NFO ever named it in: *Add Movie Set*
+creates one from a click and the sets tab assigns movies into it afterwards.  A
+set can also have no members at all, which is what the folder enumeration above
+builds from a record.  The seed does **not** sort those apart, and does not need
+to — its one question is whether the set has a record, so a set made by *Add
+Movie Set* is seeded exactly like a derived one.  That is right: its members name
+it from the moment they are assigned, so they are as good a source as any other
+member.
 
 A one-shot pass that materialised every derived set into a `set.nfo` was
 considered and rejected.  Giving every set a record makes every set permanent,
@@ -505,7 +509,7 @@ worth keeping.
 What such a pass would genuinely have carried forward — *whatever overview and
 id those NFOs already hold* — is carried forward on the read side instead, and
 no file is written for it.  A set with no record takes its overview and its
-collection id from its members (`MovieSetModel.cpp:481`).  Without that it is
+collection id from its members (`MovieSetModel.cpp:485`).  Without that it is
 built from a name alone: the entity is blank while the mirror in every member
 NFO holds the data, and the first `set.nfo` written for it is written from that
 emptiness, because the writer skips an empty overview
@@ -516,7 +520,7 @@ hazard set out below.
 
 Four rules the seed follows, each load-bearing:
 
-- **Never over a record** (`MovieSetModel.cpp:486`).  A set that has read a
+- **Never over a record** (`MovieSetModel.cpp:490`).  A set that has read a
   `set.nfo` already holds the authoritative values, and the members hold a
   mirror of them; a mirror is not a source.  The question asked is
   `MovieSet::hasRecord()` and deliberately *not* `MovieSetModel::isBacked()`,
@@ -526,20 +530,21 @@ Four rules the seed follows, each load-bearing:
   switched off, and nothing would put them back — `reload()` leaves the record
   flags alone while records are off, and re-reads a record only when a set
   *gains* one.
-- **Never from a member that names another set** (`:542`).  `MovieSet::addMovie()`
-  is public and `reload()` documents that a set can hold a movie whose own
-  `<set><name>` points elsewhere.  That movie's overview and id describe the
+- **Never from a member that names another set** (`:553`).  `MovieSet::addMovie()`
+  is public, so a set can hold a movie whose own `<set><name>` points elsewhere —
+  written down at the guard itself and at `detachMovie()` (`:675-677`), both of
+  which note that `reload()` is what *cures* it.  That movie's overview and id describe the
   collection it names, so letting it donate would make this set authoritative for
   another set's text.  The guard holds across a rename only because
   `SetsWidget::onSetNameChanged()` rewrites every member's value straight after
   renaming the object (`SetsWidget.cpp:830-839`), and it is the only
   `MovieSet::setName()` caller in `src/`.
-- **Seeding is not an edit** (`MovieSetModel.cpp:573`).  It is the value the
+- **Seeding is not an edit** (`MovieSetModel.cpp:584`).  It is the value the
   library already held, read into the object that was missing it, so the set must
   not be left marked as needing to be saved — nor may an unsaved edit already
   waiting on it be forgotten.
 - **Members may legitimately disagree**, and the winner is the first member
-  with a non-empty value in member order (`:527`), with overview and id decided
+  with a non-empty value in member order (`:538`), with overview and id decided
   independently.  Nothing in MediaElch has ever forced the "identical text in
   every member" rule below, so a library assembled by other tools has sets whose
   members differ; first-wins is what Kodi 19 and 20 do with the same input.
@@ -600,10 +605,12 @@ set.  #2012 gives it somewhere to be persisted; it does not promote it.
 #### Renaming Is a Setting, Not an Inference
 
 The consequence for renaming is worse than "the UI must keep up".  Kodi 22
-matches on `GetOriginalTitle()` falling back to the title
-(`VideoDatabase.cpp:2427-2428`), and `strOriginalSet` is written **only on
-INSERT** (`:1541-1544`) — the UPDATE branch touches `strSet` and `strOverview`
-and nothing else (`:1555`, `:1558`).  So there are two genuinely different
+matches on the original title, which the movie scan passes in from the set tag
+(`VideoDatabase.cpp:2427-2428`); the fallback to the plain title when that is
+empty is inside `AddSet` itself, in the SELECT and the INSERT alike (`:1536`,
+`:1544`).  And `strOriginalSet` is written **only on INSERT** (`:1541-1544`) —
+the UPDATE branch touches `strSet` and `strOverview` and nothing else (`:1555`,
+`:1558`).  Open question 5 works through what that buys.  So there are two genuinely different
 renames, and which one is correct depends entirely on the Kodi version the
 library is for:
 
@@ -1191,8 +1198,14 @@ with a different failure mode.
    for the overview's sake: Kodi 22 populates `tag.m_set` from the movie NFO
    *before* it looks for a record and returns early if the movie names no set
    (`xbmc/video/VideoInfoScanner.cpp:834-835`), and the record then overrides
-   only a non-empty `<title>`, `<overview>` and `<art>` (`:852-857`).  With no
-   record, Kodi 22 reads the member mirror exactly as 19-21 do.
+   only a non-empty `<title>` and `<overview>` (`:852-855`).  Both of those have
+   a mirror in every member NFO, so with no record Kodi 22 reads that mirror
+   exactly as 19-21 do.  `<art>` is overridden in the same block (`:856-857`) but
+   is deliberately left out of that comparison: it has **no** mirror to fall back
+   on, since a movie NFO carries no set artwork in this design and the `set.*`
+   spelling that would give it one is a convention MediaElch does not implement
+   (D-D).  So `<art>` is one of the two things a record buys, not part of the
+   question.
 
    What a record does buy on 22 is **rename-in-place** and **`<art>`**, and the
    mechanism is not that a record-less set lacks a `strOriginalSet`.  It has one:
@@ -1212,8 +1225,14 @@ with a different failure mode.
    `xbmc/video/VideoDatabase.cpp:1555-1558` renames the row in place.  That
    decoupling is why D-B's join key is `<originaltitle>` and why rename
    behaviour has to be a three-state setting; *Renaming Is a Setting, Not an
-   Inference* works it through.  `<art>`, separately, is Kodi 22's only fallback
-   for a folder with no image files.
+   Inference* works it through.
+
+   `<art>` is the second answer, and it is a *later* step than the override
+   above: having loaded the record's art into the tag, Kodi scans the folder's
+   own image files first and falls back to that art only `if (movieSetArt.empty()
+   && …)` (`xbmc/video/VideoInfoScanner.cpp:866-871`), which is what D-A's
+   artwork row means.  So a record buys artwork only for a folder that has no
+   image files — real, and narrow.
 
    That is a real motive for writing records unasked, and it collides with the
    drop rule: a record is what makes a set permanent, so writing one for every
