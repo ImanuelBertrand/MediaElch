@@ -14,6 +14,7 @@ class Album;
 class Artist;
 class Concert;
 class Movie;
+class MovieSet;
 class TvShow;
 class TvShowEpisode;
 
@@ -33,6 +34,34 @@ public:
     virtual QImage movieSetBackdrop(QString setName) = 0;
     virtual void saveMovieSetPoster(QString setName, QImage poster) = 0;
     virtual void saveMovieSetBackdrop(QString setName, QImage backdrop) = 0;
+
+    // movie sets: the set's own record, `set.nfo` (docs/concepts/movie-sets.md, D-A)
+    //
+    // A set's overview, TMDB id and artwork are authoritative in `set.nfo`, which lives
+    // in the movie set information folder.  That folder only exists in one of the two
+    // artwork layouts, so every one of these is a no-op when it is not configured --
+    // and that is the design, not a gap: with no folder there is nowhere to put a
+    // record, so no set has one and sets are read-only.
+
+    /// \brief Whether set records can be stored at all, i.e. whether a folder is configured.
+    /// \details Asked live rather than remembered, so that changing the setting takes
+    ///          effect at once instead of at the next reload.
+    ELCH_NODISCARD virtual bool movieSetRecordsEnabled() const = 0;
+    /// \brief The names of all sets that have a record, read from the records themselves.
+    /// \details Empty when records are not enabled.  This is how a set with no member
+    ///          movies is found at all: nothing else knows it exists, because a set is
+    ///          otherwise only ever derived from the movies that name it.
+    ELCH_NODISCARD virtual QStringList movieSetsWithRecord() = 0;
+    /// \brief Reads \p set's record into it.  Returns whether one was found.
+    /// \details Leaves the set unchanged and returns false when there is no record.
+    virtual bool loadMovieSet(MovieSet& set) = 0;
+    /// \brief Writes \p set's record.  Returns whether it was written.
+    virtual bool saveMovieSet(MovieSet& set) = 0;
+    /// \brief Deletes the record of the set called \p setName.  Returns whether it is gone.
+    /// \details Removes the record only, never the folder or the artwork in it.  A set
+    ///          whose record outlived it would be found again by movieSetsWithRecord()
+    ///          and come back, so a deliberate removal has to take the record with it.
+    virtual bool removeMovieSetRecord(const QString& setName) = 0;
 
     // concerts
     virtual bool saveConcert(Concert* concert) = 0;

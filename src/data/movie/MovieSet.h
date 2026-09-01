@@ -66,6 +66,24 @@ public:
     ELCH_NODISCARD bool hasChanged() const;
     void setChanged(bool changed);
 
+    /// \brief Whether a `set.nfo` for this set exists on disk.
+    /// \details This is what makes a set more than the movies that name it: a set with
+    ///          a record has an existence of its own and outlives its last member,
+    ///          while a set without one is nothing but the grouping of its movies and
+    ///          goes when they do -- see MovieSetModel::dropEmptySets().
+    ///
+    ///          It is a fact about the file system, not an opinion, and it is only ever
+    ///          written by the code that looked: MovieSetModel sets it when a set is
+    ///          created and when it reloads, from what the media center actually found,
+    ///          and the writer sets it when a record has been written.  Nothing infers
+    ///          it from hasChanged(), which is a one-way latch and cannot stand in for
+    ///          it -- that substitution has been tried and reverted.
+    ///
+    ///          Read it through MovieSetModel, not directly: a record only counts while
+    ///          records are configured at all, and the flag alone does not know that.
+    ELCH_NODISCARD bool hasRecord() const;
+    void setHasRecord(bool hasRecord);
+
 signals:
     /// \brief Emitted for every movie that becomes a member of this set.
     /// \details Membership is announced per movie, and not only through sigChanged
@@ -115,6 +133,8 @@ private:
     QVector<Movie*> m_movies;
     MovieSetImages m_images;
     bool m_hasChanged = false;
+    /// \brief Whether a `set.nfo` for this set exists on disk; see hasRecord().
+    bool m_hasRecord = false;
 };
 
 Q_DECLARE_METATYPE(MovieSet*)

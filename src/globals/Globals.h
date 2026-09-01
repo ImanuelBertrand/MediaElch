@@ -244,7 +244,11 @@ enum class DataFileType : int {
     ArtistFanart         = 34,
     ArtistLogo           = 35,
     AlbumThumb           = 36,
-    AlbumCdArt           = 37
+    AlbumCdArt           = 37,
+    // The movie set's own record.  Deliberately absent from Settings' data file lists:
+    // Kodi looks for exactly "set.nfo" in the movie set information folder, so unlike
+    // every type above it there is nothing for the user to configure.
+    MovieSetNfo          = 38
 };
 // clang-format on
 

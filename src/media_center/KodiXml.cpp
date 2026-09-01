@@ -1,6 +1,7 @@
 #include "KodiXml.h"
 
 #include "data/Image.h"
+#include "data/movie/MovieSet.h"
 #include "globals/Globals.h"
 #include "globals/Helper.h"
 #include "globals/Manager.h"
@@ -14,6 +15,8 @@
 #include "media_center/kodi/EpisodeXmlReader.h"
 #include "media_center/kodi/EpisodeXmlWriter.h"
 #include "media_center/kodi/MakeLegalFileName.h"
+#include "media_center/kodi/MovieSetXmlReader.h"
+#include "media_center/kodi/MovieSetXmlWriter.h"
 #include "media_center/kodi/MovieXmlReader.h"
 #include "media_center/kodi/MovieXmlWriter.h"
 #include "media_center/kodi/TvShowXmlReader.h"
@@ -22,6 +25,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
@@ -1326,6 +1330,143 @@ mediaelch::DirectoryPath KodiXml::getPath(const Concert* concert)
         return mediaelch::DirectoryPath(dir);
     }
     return mediaelch::DirectoryPath(fi.dir());
+}
+
+bool KodiXml::movieSetRecordsEnabled() const
+{
+    // Two conditions, and the second one is not decoration.  DirectoryPath's default
+    // constructor leaves isValid() false around a default QDir, whose absolutePath() is
+    // the *process's current working directory*, and movieSetFileName() below calls
+    // .dir() without ever asking.  So "separate folder selected, folder never chosen"
+    // resolves to a real, writable path in whatever directory MediaElch was started
+    // from.  Refusing is the only correct answer: a record written there is invisible to
+    // Kodi, and -- worse -- a `set.nfo` *read* from there would mark a set as having a
+    // record, which is what decides whether the model keeps or drops it.
+    return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder
+           && Settings::instance()->movieSetArtworkDirectory().isValid();
+}
+
+QString KodiXml::movieSetNfoFileName(const QString& setName)
+{
+    if (setName.isEmpty() || !movieSetRecordsEnabled()) {
+        return {};
+    }
+    // The gate above has to come first.  movieSetFileName() does not resolve to nothing
+    // in the other artwork layout: for a set that has members it happily returns
+    // "<the first member's folder>/set.nfo", which is a real path Kodi never reads.
+    //
+    // "set.nfo" is Kodi's fixed name for this file, so the DataFile is built here rather
+    // than read from Settings, where every other file name is user-configurable.
+    DataFile dataFile(DataFileType::MovieSetNfo, "set.nfo", 0);
+    return movieSetFileName(setName, &dataFile, LegalisePath::Yes);
+}
+
+QStringList KodiXml::movieSetsWithRecord()
+{
+    if (!movieSetRecordsEnabled()) {
+        return {};
+    }
+    const QDir msif = Settings::instance()->movieSetArtworkDirectory().dir();
+    QStringList setNames;
+    const QStringList folders = msif.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString& folder : folders) {
+        // A folder holding artwork but no `set.nfo` is not a set.  The record is what
+        // makes a set exist in its own right; treating a pile of images as one would
+        // resurrect every set a user ever deliberately removed.
+        QFile file(msif.absoluteFilePath(folder) + "/set.nfo");
+        if (!file.exists()) {
+            continue;
+        }
+        if (!file.open(QIODevice::ReadOnly)) {
+            qCWarning(generic) << "[KodiXml] Cannot read movie set record" << file.fileName();
+            continue;
+        }
+        QDomDocument domDoc;
+        domDoc.setContent(file.readAll());
+        file.close();
+        // Read from the file, not taken from the folder name: the folder name is the
+        // set name run through Kodi's legalisation, which is lossy -- a set called
+        // "Mission: Impossible" lives in "Mission_ Impossible" -- and the name has to
+        // match the member NFOs' <set><name> byte for byte.
+        const QString setName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
+        if (setName.isEmpty()) {
+            qCWarning(generic) << "[KodiXml] Movie set record names no set:" << file.fileName();
+            continue;
+        }
+        setNames.append(setName);
+    }
+    return setNames;
+}
+
+bool KodiXml::loadMovieSet(MovieSet& set)
+{
+    const QString fileName = movieSetNfoFileName(set.name());
+    if (fileName.isEmpty()) {
+        return false;
+    }
+    QFile file(fileName);
+    if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    QDomDocument domDoc;
+    domDoc.setContent(file.readAll());
+    file.close();
+
+    mediaelch::kodi::MovieSetXmlReader reader(set);
+    if (!reader.parseNfoDom(domDoc)) {
+        qCWarning(generic) << "[KodiXml] Movie set record is not a <set> document:" << fileName;
+        return false;
+    }
+    // The reader wrote the set's fields, and every one of those setters marks the set as
+    // needing to be saved.  It does not: this *is* what is on disk.  Leaving the flag
+    // set would have MediaElch warn about discarding unsaved changes to a set nobody
+    // touched.
+    set.setChanged(false);
+    set.setHasRecord(true);
+    return true;
+}
+
+bool KodiXml::saveMovieSet(MovieSet& set)
+{
+    const QString fileName = movieSetNfoFileName(set.name());
+    if (fileName.isEmpty()) {
+        qCWarning(generic) << "[KodiXml] Not saving the record of movie set" << set.name()
+                           << "-- no movie set information folder is configured.";
+        return false;
+    }
+    const mediaelch::kodi::MovieSetXmlWriter writer(set);
+    if (!saveFile(fileName, writer.getMovieSetXml())) {
+        qCWarning(generic) << "[KodiXml] Cannot write movie set record" << fileName;
+        return false;
+    }
+    set.setHasRecord(true);
+    // The clearing edge for MovieSet::hasChanged().  Nothing else has ever cleared that
+    // flag, which is why it could not be used to decide whether a set survives losing
+    // its last member; it can be cleared now because there is finally a moment at which
+    // the set and its file agree.
+    set.setChanged(false);
+    return true;
+}
+
+bool KodiXml::removeMovieSetRecord(const QString& setName)
+{
+    const QString fileName = movieSetNfoFileName(setName);
+    if (fileName.isEmpty()) {
+        return false;
+    }
+    QFile file(fileName);
+    if (!file.exists()) {
+        // Already gone, which is what the caller wanted.
+        return true;
+    }
+    if (!file.remove()) {
+        qCWarning(generic) << "[KodiXml] Cannot remove movie set record" << fileName;
+        return false;
+    }
+    // Only the record.  The folder and any artwork in it stay: they may still be wanted,
+    // MediaElch has never deleted them, and a folder without a `set.nfo` is not a set,
+    // so leaving it behind cannot bring the set back.
+    return true;
 }
 
 QString KodiXml::movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise)

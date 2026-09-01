@@ -151,3 +151,16 @@ void MovieSet::setChanged(bool changed)
     m_hasChanged = changed;
     emit sigChanged(this);
 }
+
+bool MovieSet::hasRecord() const
+{
+    return m_hasRecord;
+}
+
+void MovieSet::setHasRecord(bool hasRecord)
+{
+    // Deliberately no sigChanged(): whether a `set.nfo` exists is not a property of the
+    // set that anything displays, and announcing it would make a reload that merely
+    // re-checked the disk look like an edit.
+    m_hasRecord = hasRecord;
+}
