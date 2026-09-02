@@ -1558,14 +1558,10 @@ namespace {
 /// \details The shipped artwork file names embed the set's name (`<setName>-poster.jpg`) in
 ///          both layouts, until MovieSettingsWidget rewrites them for the separate-folder
 ///          one, and moving a folder does not rename what is inside it -- so this runs in
-///          both.  Files move one at a time and the ones that did are kept, so the answer
-///          counts rather than latching a bool.
-MediaCenterInterface::MovieSetFileMove renameSetArtworkFilesIn(
-    const QDir& dir, const QString& oldName, const QString& newName)
+///          both.  Files move one at a time and the ones that did are kept, so the caller's
+///          running counts are added to rather than latching a bool.
+void renameSetArtworkFilesIn(const QDir& dir, const QString& oldName, const QString& newName, int& moved, int& failed)
 {
-    using Move = MediaCenterInterface::MovieSetFileMove;
-    int moved = 0;
-    int failed = 0;
     for (const DataFileType type : {DataFileType::MovieSetPoster, DataFileType::MovieSetBackdrop}) {
         for (DataFile dataFile : Settings::instance()->dataFiles(type)) {
             const QString oldFileName = dir.absoluteFilePath(dataFile.saveFileName(oldName));
@@ -1587,10 +1583,37 @@ MediaCenterInterface::MovieSetFileMove renameSetArtworkFilesIn(
             }
         }
     }
+}
+
+/// \brief The answer a rename gives for \p moved things renamed and \p failed things left behind.
+MediaCenterInterface::MovieSetFileMove movieSetFileMoveOf(int moved, int failed)
+{
+    using Move = MediaCenterInterface::MovieSetFileMove;
     if (failed == 0) {
         return Move::Moved;
     }
     return moved > 0 ? Move::PartlyMoved : Move::NotMoved;
+}
+
+/// \brief \p domDoc's set, renamed from \p oldName to \p newName, as a `set.nfo` again.
+/// \return An empty array when the document is not a `<set>` document, which the caller has
+///         to take as a failure rather than as a file to write.
+/// \details The set's key has a third copy here, in `<originaltitle>`, and every path that
+///          touches a `set.nfo` first asks whether it names the set being asked about -- so a
+///          record left naming the old set is one MediaElch can no longer read, list, write
+///          or remove.  Rebuilt through a MovieSet so that this is the same move
+///          MovieSet::setName() makes for the object: the overview and the collection id ride
+///          along, and the display title is re-unified with the key, which is what an
+///          all-movie-files rename does to it.
+QByteArray renamedMovieSetRecord(const QDomDocument& domDoc, const QString& oldName, const QString& newName)
+{
+    MovieSet set(oldName);
+    mediaelch::kodi::MovieSetXmlReader reader(set);
+    if (!reader.parseNfoDom(domDoc)) {
+        return {};
+    }
+    set.setName(newName);
+    return mediaelch::kodi::MovieSetXmlWriter(set).getMovieSetXml();
 }
 
 } // namespace
@@ -1608,9 +1631,9 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
         }
         const QString oldFolder = mediaelch::kodi::makeLegalFileName(oldName);
         const QString newFolder = mediaelch::kodi::makeLegalFileName(newName);
-        if (oldFolder.isEmpty() || newFolder.isEmpty() || oldFolder == newFolder) {
-            // Two names can share one folder, and renaming between them would rename a
-            // directory onto itself.
+        if (oldFolder.isEmpty() || newFolder.isEmpty()) {
+            // A name that legalises away to nothing -- "." or a run of spaces -- has no
+            // folder of its own, so there is neither anything to move nor anywhere to move it.
             return MovieSetFileMove::Moved;
         }
         QDir msif = Settings::instance()->movieSetArtworkDirectory().dir();
@@ -1618,48 +1641,73 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
             return MovieSetFileMove::Moved;
         }
 
+        // Legalisation is lossy, so two names can share one folder and the directory then
+        // stays where it is -- renaming it would rename it onto itself.  What is *inside* it
+        // is named after the set and not after the folder, so the record and the artwork
+        // still have to follow the rename.
+        const bool sameFolder = oldFolder == newFolder;
+
         // The same ownership question removeMovieSetRecord() asks: the folder is only this
         // set's to move if the record in it names this set.  A folder with no record at all
         // is artwork alone and has no other claimant, so it moves.
+        QDomDocument record;
+        bool hasRecord = false;
         const QString oldRecord = msif.absoluteFilePath(oldFolder) + "/set.nfo";
         if (QFileInfo::exists(oldRecord)) {
-            QDomDocument domDoc;
-            if (!readMovieSetRecord(oldRecord, domDoc)) {
+            if (!readMovieSetRecord(oldRecord, record)) {
                 qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder
                                    << "-- the record in it cannot be read, so it cannot be shown to belong to"
                                    << oldName;
                 return MovieSetFileMove::NotMoved;
             }
-            const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
+            const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(record);
             if (recordName != oldName) {
                 qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder << "-- its record names"
                                    << recordName << "and not" << oldName;
                 return MovieSetFileMove::NotMoved;
             }
+            hasRecord = true;
         }
 
-        if (QFileInfo::exists(msif.absoluteFilePath(newFolder))) {
-            // Refused rather than merged: folding two folders together would let this set's
-            // artwork shadow another's with no way to tell afterwards which came from where.
-            qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder << "to" << newFolder
-                               << "-- something is already there.";
-            return MovieSetFileMove::NotMoved;
+        if (!sameFolder) {
+            if (QFileInfo::exists(msif.absoluteFilePath(newFolder))) {
+                // Refused rather than merged: folding two folders together would let this
+                // set's artwork shadow another's with no way to tell afterwards which came
+                // from where.
+                qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder << "to" << newFolder
+                                   << "-- something is already there.";
+                return MovieSetFileMove::NotMoved;
+            }
+            // One rename, not a copy-and-delete loop: within a file system it cannot half
+            // succeed, and across file systems QDir::rename() fails outright rather than
+            // leaving the record in one folder and the artwork in another.
+            if (!msif.rename(oldFolder, newFolder)) {
+                qCWarning(generic) << "[KodiXml] Cannot move movie set folder" << msif.absoluteFilePath(oldFolder)
+                                   << "to" << msif.absoluteFilePath(newFolder);
+                return MovieSetFileMove::NotMoved;
+            }
         }
 
-        // One rename, not a copy-and-delete loop: within a file system it cannot half
-        // succeed, and across file systems QDir::rename() fails outright rather than
-        // leaving the record in one folder and the artwork in another.
-        if (!msif.rename(oldFolder, newFolder)) {
-            qCWarning(generic) << "[KodiXml] Cannot move movie set folder" << msif.absoluteFilePath(oldFolder) << "to"
-                               << msif.absoluteFilePath(newFolder);
-            return MovieSetFileMove::NotMoved;
+        // Nothing below is undone; the directory has moved already and a failure here is
+        // counted rather than latched, so that the caller can say how far the rename got.
+        const QDir folder(msif.absoluteFilePath(newFolder));
+        int moved = sameFolder ? 0 : 1;
+        int failed = 0;
+        if (hasRecord) {
+            // Only where there was one: a rename is not the moment at which a set earns a
+            // record, and writing one here would give every folder of loose artwork a set.
+            const QByteArray renamed = renamedMovieSetRecord(record, oldName, newName);
+            if (!renamed.isEmpty() && saveFile(folder.absoluteFilePath("set.nfo"), renamed)) {
+                ++moved;
+            } else {
+                qCWarning(generic) << "[KodiXml] Cannot rename the record in" << folder.absolutePath() << "from"
+                                   << oldName << "to" << newName
+                                   << "-- it still names the old set, so no path will accept it under the new one.";
+                ++failed;
+            }
         }
-        // The folder moved but the files in it kept their names.  A failure from here is
-        // never "nothing moved": the record is at the new name already.
-        return renameSetArtworkFilesIn(QDir(msif.absoluteFilePath(newFolder)), oldName, newName)
-                       == MovieSetFileMove::Moved
-                   ? MovieSetFileMove::Moved
-                   : MovieSetFileMove::PartlyMoved;
+        renameSetArtworkFilesIn(folder, oldName, newName, moved, failed);
+        return movieSetFileMoveOf(moved, failed);
     }
 
     // Artwork next to movies: no per-set folder and no record, so the files are renamed where
@@ -1671,7 +1719,10 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
         // No member movie with a file, so this set has no artwork path here to move.
         return MovieSetFileMove::Moved;
     }
-    return renameSetArtworkFilesIn(QFileInfo(anchor).dir(), oldName, newName);
+    int moved = 0;
+    int failed = 0;
+    renameSetArtworkFilesIn(QFileInfo(anchor).dir(), oldName, newName, moved, failed);
+    return movieSetFileMoveOf(moved, failed);
 }
 
 QString KodiXml::movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise)

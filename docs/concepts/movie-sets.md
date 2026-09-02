@@ -228,8 +228,6 @@ writes; it reads `<movie base name>-set.poster.jpg` there, which we never write.
   information-folder reader needs for them.
 - The mirror into the member NFOs.  Nothing pushes a set's overview or id onto
   its members — only the NFO reader and the scrapers write those values there.
-- The third copy of the match key in an all-movie-files rename: the record
-  moves into the new folder, but its `<originaltitle>` is not rewritten.
 - Set scraping.  Nothing fetches a collection's overview, id or artwork into a
   `MovieSet`; the TMDB scraper only fills the *movie's* set value.
 - An editor for the overview and the id in the sets tab, and a scrape and

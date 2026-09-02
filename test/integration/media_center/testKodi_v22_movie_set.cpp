@@ -302,6 +302,14 @@ private:
     mediaelch::DirectoryPath m_dir;
 };
 
+/// \brief The whole of the file at \p fileName as text.
+QString readFile(const QString& fileName)
+{
+    QFile file(fileName);
+    REQUIRE(file.open(QIODevice::ReadOnly));
+    return QString::fromUtf8(file.readAll());
+}
+
 /// \brief An empty temporary movie set information folder.
 QDir emptyMsif(const QString& name)
 {
@@ -743,5 +751,143 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
             CHECK_FALSE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
             CHECK_FALSE(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
         }
+    }
+}
+
+TEST_CASE("Movie set rename on disk", "[data][movie][movie_set][kodi][nfo]")
+{
+    const MovieSetFolderGuard guard;
+    const test::DataFileGuard dataFiles;
+    MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
+    using MovieSetFileMove = MediaCenterInterface::MovieSetFileMove;
+
+    QImage poster(4, 4, QImage::Format_RGB32);
+    poster.fill(Qt::red);
+
+    SECTION("The record follows the folder and still names the set afterwards")
+    {
+        // The key has three copies on disk -- every member's <set><name>, the folder name and
+        // the record's <originaltitle> -- and a rename that moves only two of them leaves a
+        // record no path will accept: unwritable by saveMovieSet(), invisible to
+        // movieSetsWithRecord() and loadMovieSet(), and undeletable by removeMovieSetRecord().
+        const QDir msif = emptyMsif("rename_record");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        set.setOverview("Ripley versus the Alien.");
+        set.setTmdbId(TmdbId("8091"));
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        REQUIRE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::Moved);
+
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Alien Collection")));
+        REQUIRE(QFileInfo::exists(msif.absoluteFilePath("Alien Anthology/set.nfo")));
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Anthology/Alien Anthology-poster.jpg")));
+
+        CHECK(setNameOf(readFile(msif.absoluteFilePath("Alien Anthology/set.nfo"))) == "Alien Anthology");
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Alien Anthology"});
+
+        MovieSet renamed("Alien Anthology");
+        REQUIRE(mediaCenter->loadMovieSet(renamed));
+        // Carried over rather than rewritten from an empty set: the record is the only place
+        // the overview and the collection id live.
+        CHECK(renamed.overview() == "Ripley versus the Alien.");
+        CHECK(renamed.tmdbId() == TmdbId("8091"));
+
+        // And the set can still be written and removed, which is what the stranded record
+        // made impossible.
+        CHECK(mediaCenter->saveMovieSet(renamed));
+        CHECK(mediaCenter->removeMovieSetRecord("Alien Anthology"));
+    }
+
+    SECTION("A display title from an earlier set-file-only rename is re-unified with the key")
+    {
+        // MovieSet::setName() clears the display title, so the record has to lose it too --
+        // otherwise the next reload would put the old displayed name back.
+        const QDir msif = emptyMsif("rename_title");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        set.setTitle("The Alien Films");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::Moved);
+
+        const QString written = readFile(msif.absoluteFilePath("Alien Anthology/set.nfo"));
+        CHECK_THAT(written, Contains("<title>Alien Anthology</title>"));
+        CHECK_THAT(written, Contains("<originaltitle>Alien Anthology</originaltitle>"));
+
+        MovieSet renamed("Alien Anthology");
+        REQUIRE(mediaCenter->loadMovieSet(renamed));
+        CHECK(renamed.title().isEmpty());
+        CHECK(renamed.displayName() == "Alien Anthology");
+    }
+
+    SECTION("The record moves even when an artwork file cannot follow it")
+    {
+        // The folder is renamed first and the files in it afterwards, so a failure from there
+        // is never "nothing moved": the record is already at the new name.
+        const QDir msif = emptyMsif("rename_partly");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        REQUIRE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+        // Something already at the name the poster wants; renaming onto it would lose a file.
+        QFile blocker(msif.absoluteFilePath("Alien Collection/Alien Anthology-poster.jpg"));
+        REQUIRE(blocker.open(QIODevice::WriteOnly));
+        blocker.close();
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::PartlyMoved);
+
+        MovieSet renamed("Alien Anthology");
+        CHECK(mediaCenter->loadMovieSet(renamed));
+        // The poster stayed behind under the old name, in the new folder.
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Anthology/Alien Collection-poster.jpg")));
+    }
+
+    SECTION("A folder with artwork but no record moves and gains none")
+    {
+        // A folder with no `set.nfo` is artwork alone and has no other claimant, so it moves
+        // -- but a rename is not the moment at which a set earns a record.
+        const QDir msif = emptyMsif("rename_artonly");
+        MovieSetFolderGuard::useFolder(msif);
+        REQUIRE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+        REQUIRE_FALSE(QFileInfo::exists(msif.absoluteFilePath("Alien Collection/set.nfo")));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::Moved);
+
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Anthology/Alien Anthology-poster.jpg")));
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Alien Anthology/set.nfo")));
+        CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
+    }
+
+    SECTION("Two names that share one folder still rename the record in it")
+    {
+        // Legalisation is lossy, so both names live in "Mission_ Impossible Collection" and
+        // the directory stays where it is -- but the record inside it is keyed on the set's
+        // own name, so it is stranded just the same if the rename passes it by.
+        const QDir msif = emptyMsif("rename_samefolder");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Mission: Impossible Collection");
+        set.setOverview("Ethan Hunt runs.");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        REQUIRE(mediaCenter->saveMovieSetPoster("Mission: Impossible Collection", poster));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Mission: Impossible Collection", "Mission? Impossible Collection")
+              == MovieSetFileMove::Moved);
+
+        const QDir folder(msif.absoluteFilePath("Mission_ Impossible Collection"));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Mission? Impossible Collection"});
+
+        MovieSet renamed("Mission? Impossible Collection");
+        REQUIRE(mediaCenter->loadMovieSet(renamed));
+        CHECK(renamed.overview() == "Ethan Hunt runs.");
+
+        // The artwork keeps its name: MediaElch's file name sanitiser drops both ":" and "?",
+        // so the two names resolve to one file here as well.
+        CHECK(QFileInfo::exists(folder.absoluteFilePath("Mission Impossible Collection-poster.jpg")));
     }
 }
