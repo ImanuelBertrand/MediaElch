@@ -207,6 +207,33 @@ void renameFirstSet(SetsWidget& widget, const QString& newName)
     sets->item(0, 0)->setText(newName);
 }
 
+/// \brief Selects the first set and returns its movie table, populated.
+QTableWidget* selectFirstSet(SetsWidget& widget)
+{
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() >= 1);
+    sets->setCurrentCell(0, 0);
+    auto* movies = widget.findChild<QTableWidget*>("movies");
+    REQUIRE(movies != nullptr);
+    return movies;
+}
+
+/// \brief Takes \p title out of the set shown in \p widget, as the Remove button does.
+void removeMovieFromSet(SetsWidget& widget, const QString& title)
+{
+    QTableWidget* movies = selectFirstSet(widget);
+    int row = -1;
+    for (int i = 0; i < movies->rowCount(); ++i) {
+        if (movies->item(i, 0)->text() == title) {
+            row = i;
+        }
+    }
+    REQUIRE(row >= 0);
+    movies->setCurrentCell(row, 0);
+    REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovie", Qt::DirectConnection));
+}
+
 /// \brief Emits Settings::sigSettingsSaved without writing the user's real settings.
 void announceSettingsSaved()
 {
@@ -827,7 +854,7 @@ TEST_CASE("An all-movie-files rename moves what the set keeps on disk", "[ui][mo
 
     SECTION("every file in the folder moves, not the two types this tab knows about")
     {
-        // MovieSetImages knows two types; Kodi reads six more, and a user may have added any.
+        // This tab holds two types; Kodi reads six more, and a user may have added any.
         QFile extra(guard.dir().absoluteFilePath("Alien Collection/clearlogo.png"));
         REQUIRE(extra.open(QIODevice::WriteOnly));
         extra.write("not really a png");
@@ -1171,4 +1198,125 @@ TEST_CASE("Add Movie Set does not reuse a name a display title already holds", "
     QStringList unique = shown;
     unique.removeDuplicates();
     CHECK(unique.size() == shown.size());
+}
+
+
+TEST_CASE("Deleting a movie set asks before it deletes anything", "[ui][movie][set]")
+{
+    // The entry sits under Add Movie Set, removes a file from disk and takes every movie out
+    // of the set; the far less destructive merge already asks.
+    MovieSetFolderGuard guard;
+    writeRecord(guard.dir(), "Alien Collection");
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 1);
+    sets->setCurrentCell(0, 0);
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    Movie* alien = libraryMovie("Alien");
+    REQUIRE(alien != nullptr);
+
+    SECTION("declining leaves the set, its record and its movies alone")
+    {
+        answerNextQuestion(QMessageBox::No);
+        REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovieSet", Qt::DirectConnection));
+
+        MovieSet* movieSet = setModel->set("Alien Collection");
+        REQUIRE(movieSet != nullptr);
+        CHECK(movieSet->movies().size() == 1);
+        CHECK(alien->set().name == "Alien Collection");
+        CHECK_FALSE(alien->hasChanged());
+        CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+        CHECK(sets->rowCount() == 1);
+    }
+
+    SECTION("accepting deletes the set and its record")
+    {
+        answerNextQuestion(QMessageBox::Yes);
+        REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovieSet", Qt::DirectConnection));
+
+        CHECK(setModel->set("Alien Collection") == nullptr);
+        CHECK(alien->set().name.isEmpty());
+        CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+        CHECK(sets->rowCount() == 0);
+    }
+}
+
+TEST_CASE("Deleting a movie set writes the movies it took out of it", "[ui][movie][set]")
+{
+    // The record goes from disk at once, so the other half -- clearing <set><name> in each
+    // member -- cannot be left to a tab the user may never open: this one's Save is gone with
+    // the row.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Aliens", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 1);
+    sets->setCurrentCell(0, 0);
+
+    // Queued under the set's name and no longer a member: the removal has to write it too.
+    removeMovieFromSet(widget, "Aliens");
+
+    answerNextQuestion(QMessageBox::Yes);
+    REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovieSet", Qt::DirectConnection));
+
+    // saveData() clears the flag whatever the write itself did, so this is "the tab saved it".
+    for (const QString& title : {QString("Alien"), QString("Aliens")}) {
+        Movie* movie = libraryMovie(title);
+        REQUIRE(movie != nullptr);
+        CHECK(movie->set().name.isEmpty());
+        CHECK(movie->sortTitle().isEmpty());
+        CHECK_FALSE(movie->hasChanged());
+    }
+}
+
+TEST_CASE("A rename keeps the movies queued for saving under the old name", "[ui][movie][set]")
+{
+    // A movie taken out of the set is queued under the old name and is not a member any more,
+    // so carrying the members over does not carry it and clearing the old queue drops its
+    // write -- leaving the set name it was taken out of in its NFO.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Aliens", "Alien Collection");
+    addLibraryMovie("Predator", "Predator Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    removeMovieFromSet(widget, "Aliens");
+
+    Movie* aliens = libraryMovie("Aliens");
+    REQUIRE(aliens != nullptr);
+    REQUIRE(aliens->set().name.isEmpty());
+    REQUIRE(aliens->hasChanged());
+
+    SECTION("an all-movie-files rename")
+    {
+        RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+
+        renameFirstSet(widget, "Alien Anthology");
+        widget.saveSet();
+
+        CHECK_FALSE(aliens->hasChanged());
+    }
+
+    SECTION("a merge")
+    {
+        answerNextQuestion(QMessageBox::Yes);
+        renameFirstSet(widget, "Predator Collection");
+        widget.saveSet();
+
+        CHECK_FALSE(aliens->hasChanged());
+    }
+
+    Movie* alien = libraryMovie("Alien");
+    REQUIRE(alien != nullptr);
+    CHECK_FALSE(alien->hasChanged());
 }

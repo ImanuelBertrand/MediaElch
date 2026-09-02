@@ -681,6 +681,25 @@ void SetsWidget::onRemoveMovieSet()
     const MovieSet* movieSet = setModel->set(origSetName);
     const QVector<Movie*> members = (movieSet != nullptr) ? movieSet->movies() : QVector<Movie*>();
 
+    // Asked, not assumed: a removal takes every movie out of the set, deletes the set's file
+    // where there is one, and is not undoable -- like the merge, and one context menu entry
+    // below *Add Movie Set*.  Two whole sentences rather than one assembled from fragments.
+    const bool removesRecord = movieSet != nullptr && movieSet->hasRecord() && setModel->recordsAreConfigured();
+    QString question = tr("<b>\"%1\"</b> will be deleted and every movie is taken out of the set.<br><br>This cannot "
+                          "be undone. Delete it?")
+                           .arg(setName);
+    if (removesRecord) {
+        question = tr("<b>\"%1\"</b> will be deleted: its movie set file goes with it, and with it the set's "
+                      "overview and id, and every movie is taken out of the set.<br><br>This cannot be undone. "
+                      "Delete it?")
+                       .arg(setName);
+    }
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this, tr("Delete movie set?"), question, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+
     if (!setModel->removeSet(origSetName)) {
         NotificationBox::instance()->showError(
             tr("<b>\"%1\"</b> could not be deleted: its movie set file could not be removed.").arg(setName));
@@ -690,9 +709,21 @@ void SetsWidget::onRemoveMovieSet()
     // removeSet() marks the detached movies changed; the sort title is this tab's own doing.
     // Read before the removal, which empties the set, and applied after it, so that a refusal
     // leaves the movies untouched too.
+    QVector<Movie*> moviesToSave = m_moviesToSave.value(origSetName);
     for (Movie* movie : members) {
         movie->setSortTitle("");
+        if (!moviesToSave.contains(movie)) {
+            moviesToSave.append(movie);
+        }
     }
+    // Written now, not queued: the `set.nfo` is already gone, and the row that this tab's own
+    // Save works from goes below, so a queue here could never be written at all.
+    MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
+    for (Movie* movie : asConst(moviesToSave)) {
+        movie->controller()->saveData(mediaCenter);
+    }
+    m_moviesToSave.remove(origSetName);
+
     ui->sets->removeRow(ui->sets->currentRow());
     // By the match key: `setName` above is what the cell displays, which after a
     // set-file-only rename is a name these maps have never held.
@@ -906,7 +937,7 @@ void SetsWidget::performAllMovieFilesRename(
         m_moviesToSave[newName].append(movie);
         setModel->assign(movie, movie->set().renamedTo(newName));
     }
-    m_moviesToSave[origSetName].clear();
+    carryQueuedMoviesOver(origSetName, newName);
 
     // Only the images pending in this widget; what is already on disk was moved above and is
     // deliberately not read back in, which would re-encode it and orphan the original.
@@ -975,7 +1006,7 @@ void SetsWidget::performMerge(
         set.name = targetSet->name();
         setModel->assign(movie, set);
     }
-    m_moviesToSave[origSetName].clear();
+    carryQueuedMoviesOver(origSetName, newName);
 
     // Removed rather than moved: the target set already has its own record and folder.
     if (!setModel->removeSet(origSetName)) {
@@ -1010,6 +1041,22 @@ void SetsWidget::performMerge(
     applyDivergenceTooltip(item, targetSet);
 
     loadSet(targetSet->name());
+}
+
+/// \brief Moves the movies queued for saving under \p oldName to \p newName's queue.
+/// \details The set's members are carried over by the caller; this is for the ones that are
+///          not members any more.  A movie *Remove movie* took out of the set is queued under
+///          the name it was taken out of, so clearing that queue would drop its write and
+///          leave that very name in its NFO.
+void SetsWidget::carryQueuedMoviesOver(const QString& oldName, const QString& newName)
+{
+    const QVector<Movie*> queued = m_moviesToSave.value(oldName);
+    for (Movie* movie : queued) {
+        if (!m_moviesToSave[newName].contains(movie)) {
+            m_moviesToSave[newName].append(movie);
+        }
+    }
+    m_moviesToSave[oldName].clear();
 }
 
 /// \brief Moves images this widget is holding unsaved from \p oldName's key to \p newName's.
