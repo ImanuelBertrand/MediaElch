@@ -1264,6 +1264,9 @@ TEST_CASE("Deleting a movie set writes the movies it took out of it", "[ui][movi
 
     // Queued under the set's name and no longer a member: the removal has to write it too.
     removeMovieFromSet(widget, "Aliens");
+    Movie* aliens = libraryMovie("Aliens");
+    REQUIRE(aliens != nullptr);
+    REQUIRE(aliens->hasChanged());
 
     answerNextQuestion(QMessageBox::Yes);
     REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovieSet", Qt::DirectConnection));
