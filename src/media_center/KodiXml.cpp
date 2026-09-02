@@ -1601,26 +1601,33 @@ MediaCenterInterface::MovieSetFileMove movieSetFileMoveOf(int moved, int failed)
 /// \details The set's key has a third copy here, in `<originaltitle>`, and every path that
 ///          touches a `set.nfo` first asks whether it names the set being asked about -- so a
 ///          record left naming the old set is one MediaElch can no longer read, list, write
-///          or remove.  Rebuilt through a MovieSet so that this is the same move
-///          MovieSet::setName() makes for the object: the overview and the collection id ride
-///          along, and the display title is re-unified with the key, which is what an
-///          all-movie-files rename does to it.
+///          or remove.  What is written is a set built from the new name carrying the old
+///          record's overview and collection id, which is the same end state
+///          MovieSetModel::renameSet() reaches for the object: those two ride along, and the
+///          display title is re-unified with the key -- a set that has just been named has
+///          none -- which is what an all-movie-files rename does to it.  The key itself moves
+///          only in the model, which is the one place that can see a duplicate.
 QByteArray renamedMovieSetRecord(const QDomDocument& domDoc, const QString& oldName, const QString& newName)
 {
-    MovieSet set(oldName);
-    mediaelch::kodi::MovieSetXmlReader reader(set);
+    MovieSet parsed(oldName);
+    mediaelch::kodi::MovieSetXmlReader reader(parsed);
     if (!reader.parseNfoDom(domDoc)) {
         return {};
     }
-    set.setName(newName);
-    return mediaelch::kodi::MovieSetXmlWriter(set).getMovieSetXml();
+    MovieSet renamed(newName);
+    renamed.setOverview(parsed.overview());
+    renamed.setTmdbId(parsed.tmdbId());
+    return mediaelch::kodi::MovieSetXmlWriter(renamed).getMovieSetXml();
 }
 
 } // namespace
 
 KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, const QString& newName)
 {
-    if (oldName.isEmpty() || newName.isEmpty()) {
+    if (oldName.isEmpty() || newName.isEmpty() || oldName == newName) {
+        // A set renamed to the name it already has has nothing to move -- and rewriting its
+        // record would drop the display title that a set-file-only rename put there, which no
+        // rename of the key to itself has any business doing.
         return MovieSetFileMove::Moved;
     }
 

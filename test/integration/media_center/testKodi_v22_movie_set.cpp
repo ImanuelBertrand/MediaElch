@@ -824,6 +824,24 @@ TEST_CASE("Movie set rename on disk", "[data][movie][movie_set][kodi][nfo]")
         CHECK(renamed.displayName() == "Alien Anthology");
     }
 
+    SECTION("A rename to the name the set already has leaves the record alone")
+    {
+        // The key does not move, so neither does the display title beside it: re-unifying the
+        // two here would throw away a set-file-only rename for nothing.
+        const QDir msif = emptyMsif("rename_samename");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        set.setTitle("The Alien Films");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Collection") == MovieSetFileMove::Moved);
+
+        MovieSet reread("Alien Collection");
+        REQUIRE(mediaCenter->loadMovieSet(reread));
+        CHECK(reread.title() == "The Alien Films");
+    }
+
     SECTION("The record moves even when an artwork file cannot follow it")
     {
         // The folder is renamed first and the files in it afterwards, so a failure from there
