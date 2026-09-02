@@ -127,10 +127,14 @@ private slots:
 
 private:
     void updateImage(ImageType imageType, ClosableImage* image);
+    void commitSetEdit();
 
 private:
     Ui::MovieWidget* ui;
     QPointer<Movie> m_movie;
+    /// \brief The set name the combo box was last filled with or last committed from.
+    /// \details What commitSetEdit() compares against; see there.
+    QString m_committedSetName;
     QMovie* m_loadingMovie;
     QLabel* m_savingWidget;
     QVector<QWidget*> m_streamDetailsWidgets;

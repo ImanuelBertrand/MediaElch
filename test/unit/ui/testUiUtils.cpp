@@ -222,3 +222,54 @@ TEST_CASE("withCurrentValue keeps an editable combo box able to show its value",
         CHECK(ui::withCurrentValue({}, "Alien Collection") == QStringList{"Alien Collection"});
     }
 }
+
+TEST_CASE("hasUncommittedEdit tells a typed set name from a stale display", "[ui][movie][set]")
+{
+    // MovieWidget's save commits the set combo, because the navbar's buttons never end its
+    // edit; the rule that keeps that from writing a name the user never touched lives here.
+    ComboFixture f;
+    f.combo->setCurrentText("Alien Collection");
+
+    SECTION("a box still showing what it was filled with holds no edit")
+    {
+        CHECK_FALSE(ui::hasUncommittedEdit(f.combo, "Alien Collection"));
+    }
+
+    SECTION("a name typed into the box is an edit")
+    {
+        f.combo->setCurrentText("Alien Anthology");
+
+        CHECK(ui::hasUncommittedEdit(f.combo, "Alien Collection"));
+    }
+
+    SECTION("an emptied box is an edit, which is how a movie leaves its set")
+    {
+        f.combo->setCurrentText("");
+
+        CHECK(ui::hasUncommittedEdit(f.combo, "Alien Collection"));
+    }
+
+    SECTION("a set renamed elsewhere leaves the untouched box holding no edit")
+    {
+        // The blocker: the sets tab renamed the set under the widget, so the box shows a name
+        // the movie no longer carries -- and committing it would drag the movie back.
+        const QString renamedElsewhere = "Alien Anthology";
+        REQUIRE(f.combo->currentText() != renamedElsewhere);
+
+        CHECK_FALSE(ui::hasUncommittedEdit(f.combo, "Alien Collection"));
+    }
+
+    SECTION("a name picked from the drop-down is an edit until it is committed")
+    {
+        f.combo->setCurrentIndex(1);
+        REQUIRE(f.combo->currentText() == "Predator Collection");
+
+        CHECK(ui::hasUncommittedEdit(f.combo, "Alien Collection"));
+        CHECK_FALSE(ui::hasUncommittedEdit(f.combo, "Predator Collection"));
+    }
+
+    SECTION("a null combo box holds nothing to commit")
+    {
+        CHECK_FALSE(ui::hasUncommittedEdit(nullptr, "Alien Collection"));
+    }
+}

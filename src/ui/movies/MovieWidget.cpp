@@ -262,9 +262,26 @@ void MovieWidget::resizeEvent(QResizeEvent* event)
 bool MovieWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if (mediaelch::ui::shouldCommitOnFocusOut(ui->set, watched, event)) {
-        onSetChange(ui->set->currentText());
+        commitSetEdit();
     }
     return QWidget::eventFilter(watched, event);
+}
+
+/**
+ * \brief Commits a set name the user typed into the combo, and only that.
+ *
+ * Saving has to commit the combo -- the navbar's buttons are QToolButtons, take no focus, and
+ * so never end its edit -- but must not commit what it merely displays: nothing refreshes the
+ * box when the user returns to this tab, so a set renamed, merged or removed in the sets tab
+ * meanwhile would be written back onto the movie by a save the user made for another reason.
+ * A box still showing what it was filled with is therefore left alone, whatever the movie now
+ * says; a box showing anything else is the user's edit and is committed.
+ */
+void MovieWidget::commitSetEdit()
+{
+    if (mediaelch::ui::hasUncommittedEdit(ui->set, m_committedSetName)) {
+        onSetChange(ui->set->currentText());
+    }
 }
 
 void MovieWidget::setBigWindow(bool bigWindow)
@@ -291,6 +308,8 @@ void MovieWidget::clear()
     };
 
     clear(ui->set);
+    // The emptied box is not an edit of anything; without this the next save would commit "".
+    m_committedSetName.clear();
     clear(ui->certification);
     clear(ui->director);
     clear(ui->writer);
@@ -655,6 +674,7 @@ void MovieWidget::updateMovieInfo()
     ui->certification->setCurrentIndex(
         qsizetype_to_int(certificationsSorted.indexOf(m_movie->certification().toString())));
     ui->set->setCurrentIndex(qsizetype_to_int(sets.indexOf(m_movie->set().name)));
+    m_committedSetName = ui->set->currentText();
 
     ui->set->blockSignals(false);
     ui->certification->blockSignals(false);
@@ -947,7 +967,7 @@ void MovieWidget::saveInformation()
     qCDebug(generic) << "[Movie] Save movie";
     // The set combo commits when its edit is finished, and saving does not finish it: the
     // navbar's save button takes no focus and Ctrl+S moves focus nowhere at all.
-    onSetChange(ui->set->currentText());
+    commitSetEdit();
     setDisabledTrue();
 
     QVector<Movie*> movies = MovieFilesWidget::instance()->selectedMovies();
@@ -997,6 +1017,8 @@ void MovieWidget::saveInformation()
 void MovieWidget::saveAll()
 {
     qCDebug(generic) << "[Movies] Save all movies";
+    // Reached from the same navbar as saveInformation(), and equally unable to end the edit.
+    commitSetEdit();
     setDisabledTrue();
     m_savingWidget->show();
 
@@ -1241,10 +1263,16 @@ void MovieWidget::onSortTitleChange(QString text)
  */
 void MovieWidget::onSetChange(QString text)
 {
+    if (m_movie == nullptr) {
+        return;
+    }
+    // The box has been read; whatever it holds is committed now, so a later save has nothing
+    // left to commit from it.
+    m_committedSetName = text;
     // eventFilter() calls this on every focus loss, edited or not, so the name comparison is
     // what stops tabbing through the box from dirtying the movie.  assign()'s own guard is no
     // substitute: it compares the whole MovieSetInfo, and the value below is name-only.
-    if (m_movie == nullptr || text == m_movie->set().name) {
+    if (text == m_movie->set().name) {
         return;
     }
     // Name only: the user named a different set, and the previous set's overview and id

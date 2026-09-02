@@ -39,6 +39,11 @@ bool shouldCommitOnFocusOut(const QComboBox* comboBox, const QObject* watched, c
            && !isOwnPopupOpen(comboBox);
 }
 
+bool hasUncommittedEdit(const QComboBox* comboBox, const QString& committedText)
+{
+    return comboBox != nullptr && comboBox->currentText() != committedText;
+}
+
 QStringList withCurrentValue(QStringList entries, const QString& current)
 {
     if (!entries.contains(current)) {

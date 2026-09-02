@@ -3,6 +3,7 @@
 #include "utils/Meta.h"
 
 #include <QPushButton>
+#include <QString>
 #include <QStringList>
 
 class QComboBox;
@@ -38,6 +39,16 @@ ELCH_NODISCARD bool isOwnPopupOpen(const QComboBox* comboBox);
 ///          regardless; it does not propagate to the line edit inside the combo box.
 /// \return false if \p comboBox or \p event is null.
 ELCH_NODISCARD bool shouldCommitOnFocusOut(const QComboBox* comboBox, const QObject* watched, const QEvent* event);
+
+/// \brief Whether \p comboBox holds an edit that has not reached the value it edits.
+/// \details A widget whose save commits its editable combo box -- because the navbar's save
+///          buttons are QToolButtons, take no focus, and so never end the edit -- cannot
+///          commit unconditionally: the box is refilled only when the widget loads its
+///          subject, so a value changed elsewhere in the meantime would be written back over
+///          it.  \p committedText is what the box was last filled with or last committed, so
+///          a box that still shows it holds no edit, whatever the subject says now.
+/// \return false for a null \p comboBox.
+ELCH_NODISCARD bool hasUncommittedEdit(const QComboBox* comboBox, const QString& committedText);
 
 /// \brief Returns \p entries, with \p current added if it is not in them already.
 /// \details For a combo box filled with setCurrentIndex(list.indexOf(current)): a missing
