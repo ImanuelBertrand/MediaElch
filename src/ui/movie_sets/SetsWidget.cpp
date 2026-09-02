@@ -719,8 +719,11 @@ void SetsWidget::onRemoveMovieSet()
     // Written now, not queued: the `set.nfo` is already gone, and the row that this tab's own
     // Save works from goes below, so a queue here could never be written at all.
     MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
+    bool moviesSaved = true;
     for (Movie* movie : asConst(moviesToSave)) {
-        movie->controller()->saveData(mediaCenter);
+        if (!movie->controller()->saveData(mediaCenter)) {
+            moviesSaved = false;
+        }
     }
     m_moviesToSave.remove(origSetName);
 
@@ -729,6 +732,18 @@ void SetsWidget::onRemoveMovieSet()
     // set-file-only rename is a name these maps have never held.
     m_setPosters.remove(origSetName);
     m_setBackdrops.remove(origSetName);
+
+    // Nothing retries this: the set and its file are gone, and saveData() clears the movie's
+    // changed flag whether it wrote anything or not, so a silent failure would leave the NFO
+    // naming a set that no longer exists and no sign of it anywhere.
+    if (!moviesSaved) {
+        qCWarning(generic) << "[SetsWidget] Movie set" << origSetName
+                           << "was deleted but not every movie could be written; their NFO files still name it.";
+        NotificationBox::instance()->showError(
+            tr("<b>\"%1\"</b> was deleted, but not every movie could be written. Their NFO files still name the "
+               "set.")
+                .arg(setName));
+    }
 }
 
 /// \brief Puts the row's text back to what the set is actually called; used when a rename

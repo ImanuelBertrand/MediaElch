@@ -1281,6 +1281,31 @@ TEST_CASE("Deleting a movie set writes the movies it took out of it", "[ui][movi
     }
 }
 
+TEST_CASE("Deleting a movie set reports a movie whose NFO could not be written", "[ui][movie][set]")
+{
+    // The set's file is already gone and saveData() clears the changed flag whether it wrote
+    // anything or not, so a failed write would otherwise leave no trace anywhere.
+    MovieSetFolderGuard guard;
+    // A movie with no files is one KodiXml refuses to write, which is the failure under test.
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 1);
+    sets->setCurrentCell(0, 0);
+
+    NotificationWatcher notifications;
+    test::MessageCapture messages;
+    answerNextQuestion(QMessageBox::Yes);
+    REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovieSet", Qt::DirectConnection));
+
+    CHECK(sets->rowCount() == 0);
+    CHECK(notifications.text().contains("not every movie could be written"));
+    CHECK(messages.contains("was deleted but not every movie could be written"));
+}
+
 TEST_CASE("A rename keeps the movies queued for saving under the old name", "[ui][movie][set]")
 {
     // A movie taken out of the set is queued under the old name and is not a member any more,
