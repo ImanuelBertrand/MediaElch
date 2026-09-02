@@ -42,7 +42,7 @@ auto setupCustomMovieScraperStubs(std::size_t N) -> CustomMovieScraperTestSetup
         setup.scrapers[i]->stub_movie.addGenre(QStringLiteral("first-genre-%1").arg(i));
         setup.scrapers[i]->stub_movie.addGenre(QStringLiteral("second-genre-%1").arg(i));
 
-        MovieSet movieSet;
+        MovieSetInfo movieSet;
         movieSet.name = QStringLiteral("movie-set-name-%1").arg(i);
         movieSet.overview = QStringLiteral("movie-set-overview-%1").arg(i);
         setup.scrapers[i]->stub_movie.setSet(movieSet);

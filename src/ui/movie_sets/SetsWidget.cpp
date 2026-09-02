@@ -319,7 +319,7 @@ void SetsWidget::onAddMovie()
         }
         // The movie joins a different collection, so its previous set's overview and
         // id must not travel with it.
-        MovieSet set;
+        MovieSetInfo set;
         set.name = setName;
         movie->setSet(set);
         m_sets[setName].append(movie);
@@ -350,7 +350,7 @@ void SetsWidget::onRemoveMovie()
         m_moviesToSave[movie->set().name].append(movie);
     }
     movie->setSortTitle("");
-    movie->setSet(MovieSet{});
+    movie->setSet(MovieSetInfo{});
     ui->movies->removeRow(ui->movies->currentRow());
 }
 
@@ -539,7 +539,7 @@ void SetsWidget::onRemoveMovieSet()
     ui->sets->removeRow(ui->sets->currentRow());
 
     for (Movie* movie : m_sets[origSetName]) {
-        movie->setSet(MovieSet{});
+        movie->setSet(MovieSetInfo{});
         movie->setSortTitle("");
     }
     m_sets.remove(setName);
@@ -592,7 +592,7 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     for (Movie* movie : m_sets[origSetName]) {
         m_moviesToSave[newName].append(movie);
         if (mergesIntoExistingSet) {
-            MovieSet set;
+            MovieSetInfo set;
             set.name = newName;
             movie->setSet(set);
         } else {

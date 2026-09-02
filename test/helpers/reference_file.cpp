@@ -465,7 +465,7 @@ public:
     }
     void exportPlayCount(int playCount) override { writeToReference(m_out, "playcount", playCount); }
     void exportLastPlayed(const QDateTime& lastPlayed) override { writeToReference(m_out, "lastPlayed", lastPlayed); }
-    void exportMovieSet(const MovieSet& set) override
+    void exportMovieSet(const MovieSetInfo& set) override
     {
         writeToReference(
             m_out, "movie set", QStringLiteral("tmdbid=%1 | name=%2").arg(set.tmdbId.toString(), set.name));

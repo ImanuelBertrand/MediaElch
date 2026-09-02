@@ -111,7 +111,7 @@ void Movie::clear(QSet<MovieScraperInfo> infos)
         m_originalTitle = "";
     }
     if (infos.contains(MovieScraperInfo::Set)) {
-        m_set = MovieSet{};
+        m_set = MovieSetInfo{};
     }
     if (infos.contains(MovieScraperInfo::Overview)) {
         m_overview = "";
@@ -466,7 +466,7 @@ WikidataId Movie::wikidataId() const
  * \return Set of the movie
  * \see Movie::setSet
  */
-MovieSet Movie::set() const
+MovieSetInfo Movie::set() const
 {
     return m_set;
 }
@@ -776,7 +776,7 @@ void Movie::setWikidataId(WikidataId wikidataId)
  * \param set Setname of the movie
  * \see Movie::set
  */
-void Movie::setSet(MovieSet set)
+void Movie::setSet(MovieSetInfo set)
 {
     m_set = std::move(set);
     setChanged(true);

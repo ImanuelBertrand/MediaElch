@@ -57,7 +57,7 @@ std::unique_ptr<Movie> movieWithAllDetails()
     movie->addGenre("Science Fiction");
     movie->addCountry("United States of America");
 
-    MovieSet set;
+    MovieSetInfo set;
     set.tmdbId = TmdbId(283579);
     set.name = "Divergent Collection";
     set.overview =

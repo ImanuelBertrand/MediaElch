@@ -1,23 +1,77 @@
 #pragma once
 
 #include "data/TmdbId.h"
+#include "data/movie/MovieSetImages.h"
 #include "utils/Meta.h"
 
+#include <QObject>
 #include <QString>
+#include <QVector>
 
-/// Represents a movie collection (aka. set).
-struct MovieSet
+class Movie;
+
+/// \brief A movie collection (aka. set) as an object of its own.
+/// \details A set is an aggregate over the movies whose NFO names it, plus the
+///          authoritative record in `set.nfo` that holds its overview, its TMDB
+///          collection id and its artwork.  See docs/concepts/movie-sets.md, D-C.
+///
+///          Not to be confused with MovieSetInfo, the three-field value that a
+///          single Movie carries about the set it belongs to.
+class MovieSet : public QObject
 {
-    /// A collection's TmdbId, e.g. 1241 for Harry Potter.
-    /// Used for getting data from TMDB, e.g.
-    /// themoviedb.org/movie/1241 which redirects to
-    /// themoviedb.org/collection/1241-harry-potter-collection
-    TmdbId tmdbId{TmdbId::NoId};
-    QString name;
-    QString overview;
+    Q_OBJECT
 
-    /// \brief Returns this collection under a new name, keeping overview and id.
-    /// \details Only for renaming a collection.  Moving a movie to a _different_
-    ///          collection must not use this: overview and id describe the old one.
-    ELCH_NODISCARD MovieSet renamedTo(QString newName) const;
+public:
+    /// \param name The set's name; the primary key of a set (D-B).
+    explicit MovieSet(QString name, QObject* parent = nullptr);
+    ~MovieSet() override = default;
+
+    ELCH_NODISCARD QString name() const;
+    ELCH_NODISCARD TmdbId tmdbId() const;
+    ELCH_NODISCARD QString overview() const;
+    /// \brief The set's member movies.  Not owned.
+    ELCH_NODISCARD const QVector<Movie*>& movies() const;
+    ELCH_NODISCARD MovieSetImages& images();
+    ELCH_NODISCARD const MovieSetImages& constImages() const;
+
+    /// \brief Sets the set's name, its primary key (D-B).
+    /// \details Assigning the value the set already has does nothing at all: it
+    ///          neither dirties the set nor emits sigChanged.  That guarantee is
+    ///          scoped to these three scalar setters; MovieSetImages::setImage()
+    ///          and setChanged() below both fire unconditionally.
+    void setName(QString name);
+    void setTmdbId(TmdbId id);
+    void setOverview(QString overview);
+
+    /// \brief Adds \p movie to this set's members.  Does nothing if it is already one.
+    void addMovie(Movie* movie);
+    /// \brief Removes \p movie from this set's members.  Does nothing if it is not one.
+    void removeMovie(Movie* movie);
+
+    /// \brief Whether this set's own record differs from what is stored on disk.
+    ELCH_NODISCARD bool hasChanged() const;
+    void setChanged(bool changed);
+
+signals:
+    /// \brief Emitted whenever anything about this set changed, including its
+    ///        membership.
+    /// \warning A membership change deliberately marks *nothing* dirty -- not
+    ///          this set (membership is not part of set.nfo, D-A) and not the
+    ///          movie (the model becomes the only writer in a later step).  So
+    ///          whoever calls addMovie()/removeMovie() -- MovieSetModel, once it
+    ///          exists -- has to mark the member movies changed itself.  Forget
+    ///          that and a membership edit is lost with no flag set anywhere,
+    ///          while this signal has already claimed otherwise.
+    void sigChanged(MovieSet* set);
+
+private:
+    QString m_name;
+    TmdbId m_tmdbId{TmdbId::NoId};
+    QString m_overview;
+    /// \brief Member movies.  Not owned; owned by MovieModel.
+    QVector<Movie*> m_movies;
+    MovieSetImages m_images;
+    bool m_hasChanged = false;
 };
+
+Q_DECLARE_METATYPE(MovieSet*)

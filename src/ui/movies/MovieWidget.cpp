@@ -1201,7 +1201,7 @@ void MovieWidget::onSetChange(QString text)
     if (m_movie == nullptr) {
         return;
     }
-    MovieSet set;
+    MovieSetInfo set;
     set.name = text;
     m_movie->setSet(set);
     ui->buttonRevert->setVisible(true);

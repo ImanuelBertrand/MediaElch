@@ -110,7 +110,7 @@ QByteArray MovieXmlWriterGeneric::getMovieXml(bool testMode)
     //
     // Kodi ignores unknown children of <set>; the collection's id is stored so that
     // MediaElch can identify the collection again after a restart.
-    MovieSet set = m_movie.set();
+    MovieSetInfo set = m_movie.set();
     if (!set.name.isEmpty()) {
         xml.writeStartElement("set");
         xml.writeTextElement("name", set.name);

@@ -140,7 +140,7 @@ void TmdbMovieScrapeJob::loadCollection(const TmdbId& collectionTmdbId)
                 return;
             }
 
-            MovieSet set;
+            MovieSetInfo set;
             set.tmdbId = TmdbId(parsedJson.value("id").toInt());
             set.name = parsedJson.value("name").toString();
             set.overview = parsedJson.value("overview").toString();
@@ -178,7 +178,7 @@ void TmdbMovieScrapeJob::parseAndAssignInfos(const QJsonDocument& json)
     }
     if (parsedJson.value("belongs_to_collection").isObject()) {
         const auto collection = parsedJson.value("belongs_to_collection").toObject();
-        MovieSet set;
+        MovieSetInfo set;
         set.tmdbId = TmdbId(collection.value("id").toInt());
         set.name = collection.value("name").toString();
         m_movie->setSet(set);
