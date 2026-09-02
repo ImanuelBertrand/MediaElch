@@ -946,7 +946,7 @@ void SetsWidget::performAllMovieFilesRename(
     // second one created under the new name.  It cannot refuse here: refuseIfNameIsTaken()
     // above turned a taken name away, before anything was moved on disk.
     const bool renamed = setModel->renameSet(origSet, newName);
-    Q_UNUSED(renamed)
+    MediaElch_Assert(renamed);
 
     for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);
@@ -961,7 +961,8 @@ void SetsWidget::performAllMovieFilesRename(
     ui->sets->blockSignals(true);
     item->setData(Qt::UserRole, newName);
     ui->sets->blockSignals(false);
-    // setName() re-unified the two names, so whatever divergence this row showed is gone.
+    // Re-read rather than assumed gone: renaming a set to the key it already has leaves its
+    // display title standing, so the row can still diverge.
     applyDivergenceTooltip(item, origSet);
 
     // The rename happened either way -- undoing it would mean rewriting every member again --
