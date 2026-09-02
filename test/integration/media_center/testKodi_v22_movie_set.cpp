@@ -890,4 +890,95 @@ TEST_CASE("Movie set rename on disk", "[data][movie][movie_set][kodi][nfo]")
         // so the two names resolve to one file here as well.
         CHECK(QFileInfo::exists(folder.absoluteFilePath("Mission Impossible Collection-poster.jpg")));
     }
+
+    SECTION("A rename is refused when something is already at the new name")
+    {
+        // Refused rather than merged: folding two folders together would let this set's
+        // artwork shadow another's with no way to tell afterwards which came from where.
+        const QDir msif = emptyMsif("rename_occupied");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet set("Alien Collection");
+        set.setOverview("Ripley versus the Alien.");
+        REQUIRE(mediaCenter->saveMovieSet(set));
+        REQUIRE(QDir().mkpath(msif.absoluteFilePath("Alien Anthology")));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::NotMoved);
+
+        // Nothing at all happened: the record is untouched and still names the old set.
+        CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Collection/set.nfo")));
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Alien Anthology/set.nfo")));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Alien Collection"});
+    }
+
+    SECTION("A rename is refused when the record in the folder names another set")
+    {
+        // Legalisation is lossy, so "Mission: Impossible Collection" and the name spelled the
+        // way its folder is share that folder.  Only the set the record names may move it.
+        const QDir msif = emptyMsif("rename_foreign");
+        MovieSetFolderGuard::useFolder(msif);
+
+        MovieSet owner("Mission: Impossible Collection");
+        owner.setOverview("Ethan Hunt runs.");
+        REQUIRE(mediaCenter->saveMovieSet(owner));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Mission_ Impossible Collection", "Ethan Hunt Collection")
+              == MovieSetFileMove::NotMoved);
+
+        CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Ethan Hunt Collection")));
+        CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Mission: Impossible Collection"});
+    }
+
+    SECTION("There is nothing to move without a movie set information folder")
+    {
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::Moved);
+        CHECK_FALSE(QFileInfo::exists(QDir::current().absoluteFilePath("Alien Anthology")));
+    }
+
+    SECTION("Artwork next to movies is renamed where it lies")
+    {
+        // No per-set folder and no record here: the artwork's directory is found through a
+        // member movie, so this is the layout the caller's ordering invariant exists for.
+        QDir movieDir = test::makeTempDir("movie_set/rename_next_to_movies");
+        movieDir.removeRecursively();
+        const LibraryMovieGuard movie(movieDir, "Alien Collection");
+
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+        REQUIRE(QFileInfo::exists(movieDir.absoluteFilePath("Alien Collection-poster.jpg")));
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::Moved);
+
+        CHECK(QFileInfo::exists(movieDir.absoluteFilePath("Alien Anthology-poster.jpg")));
+        CHECK_FALSE(QFileInfo::exists(movieDir.absoluteFilePath("Alien Collection-poster.jpg")));
+    }
+
+    SECTION("Artwork next to movies is unreachable once the members carry the new name")
+    {
+        // Why SetsWidget moves the files before it reassigns the movies: afterwards no member
+        // answers to the old name and the anchor that resolves the directory is gone.  The
+        // rename then reports success because there was nothing left it could find to move.
+        QDir movieDir = test::makeTempDir("movie_set/rename_reassigned_first");
+        movieDir.removeRecursively();
+        const LibraryMovieGuard movie(movieDir, "Alien Collection");
+
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+
+        const QVector<Movie*> movies = Manager::instance()->movieModel()->movies();
+        REQUIRE(movies.size() == 1);
+        MovieSetInfo reassigned = movies.first()->set();
+        reassigned.name = "Alien Anthology";
+        movies.first()->setSetInfo(reassigned);
+
+        CHECK(mediaCenter->renameMovieSetFiles("Alien Collection", "Alien Anthology") == MovieSetFileMove::Moved);
+        CHECK(QFileInfo::exists(movieDir.absoluteFilePath("Alien Collection-poster.jpg")));
+        CHECK_FALSE(QFileInfo::exists(movieDir.absoluteFilePath("Alien Anthology-poster.jpg")));
+    }
 }
