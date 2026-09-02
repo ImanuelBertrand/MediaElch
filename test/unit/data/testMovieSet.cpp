@@ -78,6 +78,86 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
         CHECK(changes == 0);
     }
 
+    SECTION("a destroyed movie removes itself from the set")
+    {
+        // A set does not own its members, and nothing else tells it when one dies:
+        // Movie::sigChanged is not emitted from ~Movie and MovieModel::clear() only
+        // calls deleteLater() on every movie.  See docs/concepts/movie-sets.md, D-C.
+        MovieSet set{"Alien Collection"};
+        Movie aliens;
+        {
+            Movie alien;
+            set.addMovie(&alien);
+            set.addMovie(&aliens);
+            REQUIRE(set.movies().size() == 2);
+        }
+
+        REQUIRE(set.movies().size() == 1);
+        CHECK(set.movies().at(0) == &aliens);
+    }
+
+    SECTION("a movie destroyed after leaving the set changes nothing")
+    {
+        MovieSet set{"Alien Collection"};
+        Movie aliens;
+        set.addMovie(&aliens);
+
+        int changes = 0;
+        QObject::connect(&set, &MovieSet::sigChanged, [&changes](MovieSet*) { ++changes; });
+        {
+            Movie alien;
+            set.addMovie(&alien);
+            set.removeMovie(&alien);
+        }
+
+        REQUIRE(set.movies().size() == 1);
+        CHECK(set.movies().at(0) == &aliens);
+        CHECK(changes == 2); // the add and the remove, nothing for the destruction
+    }
+
+    SECTION("clearMovies removes every member")
+    {
+        MovieSet set{"Alien Collection"};
+        Movie alien;
+        Movie aliens;
+        set.addMovie(&alien);
+        set.addMovie(&aliens);
+
+        set.clearMovies();
+
+        CHECK(set.movies().isEmpty());
+        // Membership is not part of the set's own record (D-A).
+        CHECK_FALSE(set.hasChanged());
+    }
+
+    SECTION("clearing a set without members changes nothing")
+    {
+        MovieSet set{"Alien Collection"};
+        int changes = 0;
+        QObject::connect(&set, &MovieSet::sigChanged, [&changes](MovieSet*) { ++changes; });
+
+        set.clearMovies();
+
+        CHECK(changes == 0);
+    }
+
+    SECTION("a movie destroyed after clearMovies changes nothing")
+    {
+        MovieSet set{"Alien Collection"};
+        int changes = 0;
+        {
+            Movie alien;
+            set.addMovie(&alien);
+            set.clearMovies();
+            // The destroyed() connection outlives the membership on purpose, so the
+            // handler has to be a no-op for a movie that is no longer a member.
+            QObject::connect(&set, &MovieSet::sigChanged, [&changes](MovieSet*) { ++changes; });
+        }
+
+        CHECK(set.movies().isEmpty());
+        CHECK(changes == 0);
+    }
+
     SECTION("membership does not write the set onto the movie")
     {
         // The movie-side value stays untouched; the model becomes the only writer

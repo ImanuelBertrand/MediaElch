@@ -24,6 +24,7 @@ target_sources(
     media/testPath.cpp
     media_center/testMakeLegalFileName.cpp
     model/testMovieModel.cpp
+    model/testMovieSetModel.cpp
     model/testTvShowModel.cpp
     model/testConcertModel.cpp
     model/testMusicModel.cpp
@@ -44,6 +45,7 @@ target_sources(
     tv_shows/testTvMazeId.cpp
     tv_shows/testEpisodeNumber.cpp
     tv_shows/testSeasonNumber.cpp
+    ui/testUiUtils.cpp
     utils/testMath.cpp
     utils/testContainers.cpp
 )

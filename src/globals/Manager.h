@@ -13,6 +13,7 @@
 #include "media_center/MediaCenterInterface.h"
 #include "model/ConcertModel.h"
 #include "model/MovieModel.h"
+#include "model/MovieSetModel.h"
 #include "model/TvShowModel.h"
 #include "model/TvShowProxyModel.h"
 #include "model/music/MusicModel.h"
@@ -60,6 +61,7 @@ public:
     ELCH_NODISCARD MusicFileSearcher* musicFileSearcher();
     ELCH_NODISCARD Database* database();
     ELCH_NODISCARD MovieModel* movieModel();
+    ELCH_NODISCARD MovieSetModel* movieSetModel();
     ELCH_NODISCARD TvShowModel* tvShowModel();
     ELCH_NODISCARD ConcertModel* concertModel();
     ELCH_NODISCARD MusicModel* musicModel();
@@ -89,6 +91,7 @@ private:
     TvShowFileSearcher* m_tvShowFileSearcher = nullptr;
     ConcertFileSearcher* m_concertFileSearcher = nullptr;
     MovieModel* m_movieModel = nullptr;
+    MovieSetModel* m_movieSetModel = nullptr;
     TvShowModel* m_tvShowModel = nullptr;
     ConcertModel* m_concertModel = nullptr;
     MusicModel* m_musicModel = nullptr;

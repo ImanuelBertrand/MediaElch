@@ -6,6 +6,7 @@
 #include "globals/Helper.h"
 #include "globals/Manager.h"
 #include "log/Log.h"
+#include "model/MovieSetModel.h"
 #include "network/DownloadManager.h"
 #include "ui/UiUtils.h"
 #include "ui/image/ImageDialog.h"
@@ -97,13 +98,14 @@ void SetsWidget::showSetsContextMenu(QPoint point)
 }
 
 /**
- * \brief Parses list of movie and constructs sets map
+ * \brief Shows the library's movie sets
+ * \details The set list itself belongs to MovieSetModel, which groups the library once
+ *          and keeps the result; this only reads it.  The widget's own maps still hold
+ *          raw Movie*, so they are cleared before ui->sets is -- otherwise MediaElch may
+ *          access an invalidated Movie* in an event handler of ui->sets.
  */
 void SetsWidget::loadSets()
 {
-    // Clear m_sets before ui->sets is cleared.  Otherwise MediaElch may access
-    // invalidated Movie* in an event handler of ui->sets
-    m_sets.clear();
     m_moviesToSave.clear();
     m_setPosters.clear();
     m_setBackdrops.clear();
@@ -117,36 +119,26 @@ void SetsWidget::loadSets()
     ui->sets->clear();
     ui->sets->setRowCount(0);
 
-    for (Movie* movie : Manager::instance()->movieModel()->movies()) {
-        if (!movie->set().name.isEmpty()) {
-            if (m_sets.contains(movie->set().name)) {
-                m_sets[movie->set().name].append(movie);
-            } else {
-                QVector<Movie*> l;
-                QVector<Movie*> el;
-                l << movie;
-                m_sets.insert(movie->set().name, l);
-                m_moviesToSave.insert(movie->set().name, el);
-                m_setPosters.insert(movie->set().name, QImage());
-                m_setBackdrops.insert(movie->set().name, QImage());
-            }
-        }
+    // Regrouping here is what drops the sets whose last movie has left, and what a set
+    // added by the context menu but never filled does not survive -- both as before.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    setModel->reload();
+
+    QStringList setNames;
+    for (const MovieSet* movieSet : setModel->sets()) {
+        setNames.append(movieSet->name());
     }
-    for (const QString& set : asConst(m_addedSets)) {
-        if (!set.isEmpty() && !m_sets.contains(set)) {
-            m_sets.insert(set, QVector<Movie*>());
-            m_moviesToSave.insert(set, QVector<Movie*>());
-            m_setPosters.insert(set, QImage());
-            m_setBackdrops.insert(set, QImage());
-        }
-    }
-    QMapIterator<QString, QVector<Movie*>> it(m_sets);
-    while (it.hasNext()) {
-        it.next();
+    setNames.sort();
+
+    for (const QString& setName : asConst(setNames)) {
+        m_moviesToSave.insert(setName, QVector<Movie*>());
+        m_setPosters.insert(setName, QImage());
+        m_setBackdrops.insert(setName, QImage());
+
         int row = ui->sets->rowCount();
         ui->sets->insertRow(row);
-        ui->sets->setItem(row, 0, new QTableWidgetItem(it.key()));
-        ui->sets->item(row, 0)->setData(Qt::UserRole, it.key());
+        ui->sets->setItem(row, 0, new QTableWidgetItem(setName));
+        ui->sets->item(row, 0)->setData(Qt::UserRole, setName);
     }
     if (ui->sets->rowCount() > 0 && currentRow < ui->sets->rowCount()) {
         ui->sets->setCurrentItem(ui->sets->item(currentRow, 0));
@@ -183,7 +175,6 @@ void SetsWidget::clear()
     ui->posterResolution->clear();
     m_currentBackdrop = QImage();
     m_currentPoster = QImage();
-    m_addedSets.clear();
 }
 
 /**
@@ -199,7 +190,9 @@ void SetsWidget::loadSet(QString set)
     ui->buttonPreviewPoster->setEnabled(false);
     ui->movies->blockSignals(true);
 
-    for (Movie* movie : m_sets[set]) {
+    const MovieSet* movieSet = Manager::instance()->movieSetModel()->set(set);
+    const QVector<Movie*> movies = (movieSet != nullptr) ? movieSet->movies() : QVector<Movie*>();
+    for (Movie* movie : movies) {
         int row = ui->movies->rowCount();
         ui->movies->insertRow(row);
         ui->movies->setItem(row, 0, new QTableWidgetItem(movie->title()));
@@ -286,8 +279,8 @@ void SetsWidget::onSortTitleChanged(QTableWidgetItem* item)
 }
 
 /**
- * \brief Execs the MovieListDialog and (if accepted) adds a movie to the movies table,
- *        sets the setname in the movie and adds the movie to m_sets
+ * \brief Execs the MovieListDialog and (if accepted) adds a movie to the movies table
+ *        and sets the setname in the movie, which is what makes it a member of the set
  */
 void SetsWidget::onAddMovie()
 {
@@ -321,8 +314,8 @@ void SetsWidget::onAddMovie()
         // id must not travel with it.
         MovieSetInfo set;
         set.name = setName;
+        // The model follows the movie's set name, so this is also what makes it a member.
         movie->setSet(set);
-        m_sets[setName].append(movie);
         if (!m_moviesToSave[setName].contains(movie)) {
             m_moviesToSave[setName].append(movie);
         }
@@ -331,8 +324,8 @@ void SetsWidget::onAddMovie()
 }
 
 /**
- * \brief Removes a movie from the movies table, sets and empty sorttitle and set for the movie
- *        and removes it from m_sets
+ * \brief Removes a movie from the movies table and sets an empty sorttitle and set for
+ *        the movie, which is what removes it from the set
  */
 void SetsWidget::onRemoveMovie()
 {
@@ -345,7 +338,6 @@ void SetsWidget::onRemoveMovie()
         return;
     }
     auto* movie = ui->movies->item(ui->movies->currentRow(), 0)->data(Qt::UserRole).value<Movie*>();
-    m_sets[movie->set().name].removeOne(movie);
     if (!m_moviesToSave[movie->set().name].contains(movie)) {
         m_moviesToSave[movie->set().name].append(movie);
     }
@@ -509,12 +501,8 @@ void SetsWidget::onAddMovieSet()
         setName.append(QString(" %1").arg(adder));
     }
 
-    m_addedSets << setName;
-
-    QVector<Movie*> l;
-    QVector<Movie*> el;
-    m_sets.insert(setName, l);
-    m_moviesToSave.insert(setName, el);
+    Manager::instance()->movieSetModel()->addSet(setName);
+    m_moviesToSave.insert(setName, QVector<Movie*>());
     m_setPosters.insert(setName, QImage());
     m_setBackdrops.insert(setName, QImage());
 
@@ -538,14 +526,19 @@ void SetsWidget::onRemoveMovieSet()
     QString origSetName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
     ui->sets->removeRow(ui->sets->currentRow());
 
-    for (Movie* movie : m_sets[origSetName]) {
-        movie->setSet(MovieSetInfo{});
-        movie->setSortTitle("");
+    // removeSet() detaches the movies from the set and marks them changed; the sort
+    // title is this tab's own doing and has to be cleared here.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    const MovieSet* movieSet = setModel->set(origSetName);
+    if (movieSet != nullptr) {
+        const QVector<Movie*> members = movieSet->movies();
+        for (Movie* movie : members) {
+            movie->setSortTitle("");
+        }
     }
-    m_sets.remove(setName);
+    setModel->removeSet(origSetName);
     m_setPosters.remove(setName);
     m_setBackdrops.remove(setName);
-    m_addedSets.removeOne(setName);
 }
 
 void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
@@ -558,11 +551,23 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
 
     // Renaming a set to the name of an existing one merges the two.  The movies then
     // end up in a collection that is not the one their overview and id describe.
-    bool mergesIntoExistingSet = false;
+    //
+    // Whether this is a rename or a merge is the model's answer, not the table's.  The
+    // table is the snapshot the last loadSets() took, and the model can hold a set it
+    // does not show; deciding from the table would then rename A to B while a second
+    // set called B is still in the model, and a set's name is its primary key (D-B).
+    // MovieSet::setName() is public and does not check, so the model cannot catch it
+    // afterwards either.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* origSet = setModel->set(origSetName);
+    MovieSet* targetSet = setModel->set(newName);
+    const bool mergesIntoExistingSet = targetSet != nullptr && targetSet != origSet;
+
+    // A second row showing the new name goes either way: it is the row being merged
+    // into, or a row left over from a set the model no longer has.
     for (int i = 0, n = ui->sets->rowCount(); i < n; ++i) {
         if (i != item->row() && ui->sets->item(i, 0)->text() == newName) {
             ui->sets->removeRow(i);
-            mergesIntoExistingSet = true;
             break;
         }
     }
@@ -589,7 +594,17 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
         m_moviesToSave.insert(newName, QVector<Movie*>());
     }
 
-    for (Movie* movie : m_sets[origSetName]) {
+    const QVector<Movie*> members = (origSet != nullptr) ? origSet->movies() : QVector<Movie*>();
+
+    // Rename the set object before its movies, so that a plain rename keeps the object
+    // -- and with it the set's overview, id and artwork -- instead of emptying it and
+    // creating a second one under the new name.  A merge cannot: the object it merges
+    // into already has that name.
+    if (origSet != nullptr && !mergesIntoExistingSet && !newName.isEmpty()) {
+        origSet->setName(newName);
+    }
+
+    for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);
         if (mergesIntoExistingSet) {
             MovieSetInfo set;
@@ -602,12 +617,10 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
 
     m_moviesToSave[origSetName].clear();
 
-    if (!m_sets.contains(newName)) {
-        m_sets[newName].append(QVector<Movie*>());
+    if (mergesIntoExistingSet) {
+        // Its movies are in the set they were merged into now; the emptied one goes.
+        setModel->removeSet(origSetName);
     }
-
-    m_sets[newName].append(m_sets[origSetName]);
-    m_sets.remove(origSetName);
 
     m_setPosters.remove(origSetName);
     m_setBackdrops.remove(origSetName);
@@ -623,13 +636,6 @@ void SetsWidget::onSetNameChanged(QTableWidgetItem* item)
     ui->sets->blockSignals(true);
     item->setData(Qt::UserRole, newName);
     ui->sets->blockSignals(false);
-
-    if (m_addedSets.contains(newName)) {
-        m_addedSets.removeOne(origSetName);
-        if (!m_addedSets.contains(newName)) {
-            m_addedSets.append(newName);
-        }
-    }
 
     loadSet(newName);
 }

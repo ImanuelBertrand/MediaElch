@@ -39,14 +39,28 @@ public:
     ///          neither dirties the set nor emits sigChanged.  That guarantee is
     ///          scoped to these three scalar setters; MovieSetImages::setImage()
     ///          and setChanged() below both fire unconditionally.
+    /// \warning Nothing here checks that no other set is called \p name, and the
+    ///          model cannot check afterwards either.  MovieSetModel::addSet() is
+    ///          the only uniqueness guard, so a caller renaming a set has to ask
+    ///          MovieSetModel::set() first and treat a hit as a merge.
     void setName(QString name);
     void setTmdbId(TmdbId id);
     void setOverview(QString overview);
 
     /// \brief Adds \p movie to this set's members.  Does nothing if it is already one.
+    /// \details A member that is destroyed removes itself again; see onMovieDestroyed().
     void addMovie(Movie* movie);
     /// \brief Removes \p movie from this set's members.  Does nothing if it is not one.
     void removeMovie(Movie* movie);
+    /// \brief Removes every member.  Does nothing if there are none.
+    void clearMovies();
+    /// \brief Removes the member that \p movie was, without ever dereferencing it.
+    /// \details This set heals itself on QObject::destroyed and calls this from there,
+    ///          so members need not do anything.  It is public for a second observer of
+    ///          the same signal -- MovieSetModel -- which cannot know whether its own
+    ///          handler runs before or after this set's, because that depends on when
+    ///          the set connected.  Calling it again is a no-op.
+    void forgetDestroyedMovie(QObject* movie);
 
     /// \brief Whether this set's own record differs from what is stored on disk.
     ELCH_NODISCARD bool hasChanged() const;
@@ -63,6 +77,16 @@ signals:
     ///          that and a membership edit is lost with no flag set anywhere,
     ///          while this signal has already claimed otherwise.
     void sigChanged(MovieSet* set);
+
+private slots:
+    /// \brief Drops a member that has been destroyed.
+    /// \details A set holds its members without owning them, and nothing else tells
+    ///          it when one dies: Movie::sigChanged is not emitted from ~Movie, and
+    ///          MovieModel neither resets nor names what it removed -- clear() only
+    ///          calls deleteLater() on every movie.  QObject::destroyed is therefore
+    ///          the one notification a set can rely on, so membership heals itself
+    ///          rather than being rebuilt from the outside.
+    void onMovieDestroyed(QObject* movie);
 
 private:
     QString m_name;

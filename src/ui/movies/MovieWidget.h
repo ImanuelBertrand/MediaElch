@@ -41,6 +41,11 @@ public slots:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    /// \brief Commits the set combo's typed text when its edit really ends.
+    /// \details Watches ui->set: an editable QComboBox is the focus proxy of its own
+    ///          line edit, so the combo box is the focus widget and the focus events
+    ///          arrive there, not at the line edit.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 signals:
     void actorDownloadStarted(QString, int);
