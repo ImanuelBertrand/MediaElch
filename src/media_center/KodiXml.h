@@ -42,10 +42,11 @@ public:
     bool saveMovie(Movie* movie) override;
     bool loadMovie(Movie* movie, QString initialNfoContent = "") override;
     // movie images (e.g. posters)
+    ELCH_NODISCARD bool movieSetArtworkEnabled() const override;
     QImage movieSetPoster(QString setName) override;
     QImage movieSetBackdrop(QString setName) override;
-    void saveMovieSetPoster(QString setName, QImage poster) override;
-    void saveMovieSetBackdrop(QString setName, QImage backdrop) override;
+    ELCH_NODISCARD bool saveMovieSetPoster(QString setName, QImage poster) override;
+    ELCH_NODISCARD bool saveMovieSetBackdrop(QString setName, QImage backdrop) override;
     // movie sets: the set's own record, `set.nfo`
     ELCH_NODISCARD bool movieSetRecordsEnabled() const override;
     ELCH_NODISCARD QStringList movieSetsWithRecord() override;
@@ -146,6 +147,7 @@ private:
     };
     QString movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise = LegalisePath::Yes);
     QImage movieSetImage(const QString& setName, DataFileType type);
+    ELCH_NODISCARD bool saveMovieSetImage(const QString& setName, DataFileType type, const QImage& image);
     /// \brief Where the record of the set called \p setName belongs, or an empty string.
     /// \details Empty whenever there is nowhere to put one: no folder configured, or no
     ///          set name.  Callers must treat an empty return as "records are off" and

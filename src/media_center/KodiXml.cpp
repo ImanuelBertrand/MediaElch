@@ -1185,6 +1185,21 @@ QStringList KodiXml::extraFanartNames(Artist* artist)
     return files;
 }
 
+bool KodiXml::movieSetArtworkEnabled() const
+{
+    // A disjunction, and it *calls* movieSetRecordsEnabled() rather than repeating its
+    // condition, so that the record predicate stays the only place that decides what a
+    // configured movie set information folder is.
+    //
+    // Artwork resolves in both layouts: "artwork next to movies" finds a member movie
+    // and writes beside its folder (movieSetFileName() below), which is what MediaElch
+    // ships with and what most users have.  A record resolves in one.  So the one
+    // configuration where artwork has nowhere to go is the separate folder with no
+    // folder chosen -- which is exactly what movieSetRecordsEnabled() already refuses.
+    return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies
+           || movieSetRecordsEnabled();
+}
+
 QImage KodiXml::movieSetPoster(QString setName)
 {
     return movieSetImage(setName, DataFileType::MovieSetPoster);
@@ -1223,51 +1238,56 @@ QImage KodiXml::movieSetImage(const QString& setName, DataFileType type)
 /**
  * \brief Save movie set poster
  */
-void KodiXml::saveMovieSetPoster(QString setName, QImage poster)
+bool KodiXml::saveMovieSetPoster(QString setName, QImage poster)
 {
     qCInfo(generic) << "[KodiXml] Saving movie set poster for movie set:" << setName;
-    for (DataFile dataFile : Settings::instance()->dataFiles(DataFileType::MovieSetPoster)) {
-        QString fileName = movieSetFileName(setName, &dataFile);
-        if (!fileName.isEmpty()) {
-            QDir dir = QFileInfo(fileName).dir();
-            bool success = true;
-
-            // TODO: Error handling!
-            if (!dir.exists()) {
-                success = dir.mkpath(".");
-            }
-
-            if (success) {
-                // TODO: Error handling!
-                poster.save(fileName, "jpg", 100);
-            }
-        }
-    }
+    return saveMovieSetImage(setName, DataFileType::MovieSetPoster, poster);
 }
 
 /**
  * \brief Save movie set backdrop
  */
-void KodiXml::saveMovieSetBackdrop(QString setName, QImage backdrop)
+bool KodiXml::saveMovieSetBackdrop(QString setName, QImage backdrop)
 {
-    qCInfo(generic) << "[KodiXml] Saving movie set poster for movie set:" << setName;
-    for (DataFile dataFile : Settings::instance()->dataFiles(DataFileType::MovieSetBackdrop)) {
-        QString fileName = movieSetFileName(setName, &dataFile);
-        if (!fileName.isEmpty()) {
-            QDir dir = QFileInfo(fileName).dir();
-            bool success = true;
+    qCInfo(generic) << "[KodiXml] Saving movie set backdrop for movie set:" << setName;
+    return saveMovieSetImage(setName, DataFileType::MovieSetBackdrop, backdrop);
+}
 
-            // TODO: Error handling!
-            if (!dir.exists()) {
-                success = dir.mkpath(".");
-            }
-
-            if (success) {
-                // TODO: Error handling!
-                backdrop.save(fileName, "jpg", 100);
-            }
+/// \brief Writes \p image under every file name configured for \p type.
+/// \return Whether the image reached the disk under every name that resolved to a path,
+///         and at least one did.  A configured name that resolves to nothing is skipped
+///         rather than counted as a failure, so this can be true while the image is not
+///         on disk under every *configured* name.
+/// \details "Nothing was attempted" is a failure, not a success.  It means either that
+///          movieSetFileName() refused -- the separate artwork folder selected with no
+///          folder chosen -- or that the set has no path in this layout at all, and in
+///          both cases the image the caller is holding did not reach the disk.  The
+///          caller has to be able to tell that apart from a save, because the image
+///          exists nowhere else; see MediaCenterInterface::saveMovieSetPoster().
+bool KodiXml::saveMovieSetImage(const QString& setName, DataFileType type, const QImage& image)
+{
+    int attempted = 0;
+    int failed = 0;
+    for (DataFile dataFile : Settings::instance()->dataFiles(type)) {
+        const QString fileName = movieSetFileName(setName, &dataFile);
+        if (fileName.isEmpty()) {
+            // Nowhere to put it.  Not counted as a failed attempt, but not counted as an
+            // attempt either, so a set with no resolvable path at all still answers no.
+            continue;
+        }
+        ++attempted;
+        QDir dir = QFileInfo(fileName).dir();
+        if (!dir.exists() && !dir.mkpath(".")) {
+            qCWarning(generic) << "[KodiXml] Cannot create movie set artwork directory" << dir.absolutePath();
+            ++failed;
+            continue;
+        }
+        if (!image.save(fileName, "jpg", 100)) {
+            qCWarning(generic) << "[KodiXml] Cannot write movie set artwork" << fileName;
+            ++failed;
         }
     }
+    return attempted > 0 && failed == 0;
 }
 
 bool KodiXml::saveFile(QString filename, QByteArray data)
@@ -1332,21 +1352,40 @@ mediaelch::DirectoryPath KodiXml::getPath(const Concert* concert)
     return mediaelch::DirectoryPath(fi.dir());
 }
 
-bool KodiXml::movieSetRecordsEnabled() const
+namespace {
+
+/// \brief Whether a movie set information folder is configured: the layout *and* a folder.
+/// \details The one place the two are asked *together*, and the only place isValid() is
+///          asked at all.  The layout on its own is a fair question and is asked in four
+///          other places in this file, all of them choosing between the two artwork
+///          layouts rather than deciding whether a folder exists.
+///
+///          The layout half, because a `set.nfo` and a per-set artwork folder only exist
+///          in that layout at all.
+///
+///          The folder half, because DirectoryPath's default constructor leaves
+///          isValid() false around a *default* QDir, whose absolutePath() is the
+///          process's current working directory.  "Separate folder selected, folder never
+///          chosen" therefore names a real, writable path in whatever directory MediaElch
+///          was started from.
+///
+///          movieSetFileName() refuses that path too, and the two guards are still not
+///          redundant -- but for one specific reason, so it is worth being exact.  Three
+///          of the four `set.nfo` paths (the read, the write and the removal) build their
+///          path through movieSetNfoFileName() and therefore through movieSetFileName(),
+///          so that guard already covers them.  The fourth, movieSetsWithRecord(), does
+///          not: it lists movieSetArtworkDirectory().dir() itself and never goes through
+///          movieSetFileName().  It does build a path to each record it finds -- that is
+///          how it opens them -- but it derives that path from the listing, so nothing on
+///          that route is guarded.  **That enumeration is what this predicate is for.**
+///          Without it, a `set.nfo` sitting in the working directory would be reported as
+///          a record, and having a record is what decides whether the model keeps or
+///          drops a set.  Both guards are pinned by tests in testKodi_v22_movie_set.cpp.
+bool movieSetFolderIsConfigured()
 {
-    // Two conditions, and the second one is not decoration.  DirectoryPath's default
-    // constructor leaves isValid() false around a default QDir, whose absolutePath() is
-    // the *process's current working directory*, and movieSetFileName() below calls
-    // .dir() without ever asking.  So "separate folder selected, folder never chosen"
-    // resolves to a real, writable path in whatever directory MediaElch was started
-    // from.  Refusing is the only correct answer: a record written there is invisible to
-    // Kodi, and -- worse -- a `set.nfo` *read* from there would mark a set as having a
-    // record, which is what decides whether the model keeps or drops it.
     return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder
            && Settings::instance()->movieSetArtworkDirectory().isValid();
 }
-
-namespace {
 
 /// \brief Opens and parses the movie set record at \p fileName.
 /// \return false if it could not be opened, which is the caller's cue to refuse.
@@ -1375,6 +1414,13 @@ bool readMovieSetRecord(const QString& fileName, QDomDocument& domDoc)
 }
 
 } // namespace
+
+bool KodiXml::movieSetRecordsEnabled() const
+{
+    // A record lives in the movie set information folder and nowhere else, so having one
+    // configured is the whole question.
+    return movieSetFolderIsConfigured();
+}
 
 QString KodiXml::movieSetNfoFileName(const QString& setName)
 {
@@ -1604,6 +1650,23 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
 QString KodiXml::movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise)
 {
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
+        if (!movieSetFolderIsConfigured()) {
+            // Inside this branch that is exactly "no folder was ever chosen", and it is
+            // asked through the shared predicate rather than by testing isValid() again,
+            // so that there is one derivation of it and not two.
+            //
+            // Without it the line below hands back a real, writable path in whatever
+            // directory MediaElch was started from -- see movieSetFolderIsConfigured() --
+            // and every caller acts on it: the savers mkpath() and write there, and the
+            // reader displays whatever it happens to find there as this set's artwork.
+            //
+            // Refused here, where the path is built, rather than in each caller: that
+            // closes it for all four of them and for any added later.  It has to come
+            // *before* the path is resolved and cannot be inferred from an empty result,
+            // because the other layout below returns an empty string for an entirely
+            // different reason.
+            return {};
+        }
         QDir dir = Settings::instance()->movieSetArtworkDirectory().dir();
         // Kodi legalises only the folder component of this path, so the file name keeps using
         // MediaElch's own sanitiser.  The two are intentionally different.

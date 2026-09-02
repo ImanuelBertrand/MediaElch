@@ -30,10 +30,53 @@ public:
     virtual bool saveMovie(Movie* movie) = 0;
     virtual bool loadMovie(Movie* movie, QString nfoContent = "") = 0;
     // movie images (e.g. posters)
+
+    /// \brief Whether the configured artwork layout resolves at all.
+    /// \details A question about the **layout**, not about any one set.  It is what the
+    ///          UI needs, and it is weaker than "this set's artwork can be written": in
+    ///          the artwork-next-to-movies layout the path is resolved through a member
+    ///          movie's folder, so a set whose members have no files still has nowhere to
+    ///          put artwork and its save still refuses, while this answers true.
+    ///
+    ///          Harmless today, because a refused save keeps the image and says so, and
+    ///          because a set with no members does not linger in that layout.  **Worth
+    ///          re-checking in step 6/7**, where an automatic or bulk artwork write would
+    ///          meet that gap without a user watching the result.
+    ///
+    ///          **Deliberately not the same question as movieSetRecordsEnabled().**  A
+    ///          set's *record* only ever lives in the movie set information folder, but
+    ///          its *artwork* lives in both layouts: "artwork next to movies" writes it
+    ///          beside the movie folders, and that is MediaElch's shipping default.
+    ///          Gating artwork on the record predicate would therefore take set artwork
+    ///          away from every user who has never opened the settings.
+    ///
+    ///          The only configuration with nowhere to put artwork is the separate
+    ///          folder selected without a folder having been chosen, which used to
+    ///          resolve to the process's working directory.
+    ///
+    ///          An implementation must answer this by *calling* movieSetRecordsEnabled()
+    ///          rather than repeating its condition, so that the two cannot drift apart.
+    ///          That the two are different questions, and which configurations separate
+    ///          them, is pinned by the truth-table section of
+    ///          test/integration/media_center/testKodi_v22_movie_set.cpp.
+    ELCH_NODISCARD virtual bool movieSetArtworkEnabled() const = 0;
     virtual QImage movieSetPoster(QString setName) = 0;
     virtual QImage movieSetBackdrop(QString setName) = 0;
-    virtual void saveMovieSetPoster(QString setName, QImage poster) = 0;
-    virtual void saveMovieSetBackdrop(QString setName, QImage backdrop) = 0;
+    /// \brief Writes \p poster as the set's poster.  Returns whether it was written.
+    /// \details Refuses when *this set* has nowhere to put it, which is a narrower thing
+    ///          than movieSetArtworkEnabled() answers -- see there -- and reports a write
+    ///          that failed.  **The caller has to listen.**  A
+    ///          set's artwork exists only in the sets tab's own map until it is saved,
+    ///          so a caller that clears that map on a refusal destroys the image and
+    ///          then reports success.  That is what this return value was added for.
+    ///
+    ///          ELCH_NODISCARD is silent on a virtual under GCC (reproduced, 14.2), so
+    ///          nothing but a test holds this refusal; see
+    ///          test/unit/ui/testSetsWidget.cpp.
+    ELCH_NODISCARD virtual bool saveMovieSetPoster(QString setName, QImage poster) = 0;
+    /// \brief Writes \p backdrop as the set's backdrop.  Returns whether it was written.
+    /// \details See saveMovieSetPoster(); the same refusals and the same obligation.
+    ELCH_NODISCARD virtual bool saveMovieSetBackdrop(QString setName, QImage backdrop) = 0;
 
     // movie sets: the set's own record, `set.nfo` (docs/concepts/movie-sets.md, D-A)
     //

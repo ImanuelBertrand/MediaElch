@@ -83,10 +83,13 @@ public:
     // Everything below is unused by MovieSetModel and does nothing.
     bool saveMovie(Movie* /*movie*/) override { return false; }
     bool loadMovie(Movie* /*movie*/, QString /*nfoContent*/ = "") override { return false; }
+    // Set artwork is exercised against the real KodiXml, where the two layouts and the
+    // file names actually exist; this mock has no notion of either.
+    ELCH_NODISCARD bool movieSetArtworkEnabled() const override { return true; }
     QImage movieSetPoster(QString /*setName*/) override { return {}; }
     QImage movieSetBackdrop(QString /*setName*/) override { return {}; }
-    void saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override {}
-    void saveMovieSetBackdrop(QString /*setName*/, QImage /*backdrop*/) override {}
+    ELCH_NODISCARD bool saveMovieSetPoster(QString /*setName*/, QImage /*poster*/) override { return true; }
+    ELCH_NODISCARD bool saveMovieSetBackdrop(QString /*setName*/, QImage /*backdrop*/) override { return true; }
     bool saveConcert(Concert* /*concert*/) override { return false; }
     bool loadConcert(Concert* /*concert*/, QString /*nfoContent*/ = "") override { return false; }
     bool loadTvShow(TvShow* /*show*/, QString /*nfoContent*/ = "") override { return false; }

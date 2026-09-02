@@ -82,7 +82,17 @@ void MovieSettingsWidget::loadSettings()
             break;
         }
     }
-    ui->movieSetArtworkDir->setText(m_settings->movieSetArtworkDirectory().toNativePathString());
+    // An invalid DirectoryPath must show as empty, not as a path.  toNativePathString()
+    // goes through QDir::absolutePath(), and an invalid path wraps a *default* QDir whose
+    // absolutePath() is the process's current working directory -- so "no directory
+    // chosen" was displayed as whatever directory MediaElch was started from, and
+    // saveSettings() below read that back as a real, valid choice.  One press of Save in
+    // this window, for any unrelated reason, then made movieSetRecordsEnabled() answer
+    // true forever and pointed the movie set information folder at the working directory:
+    // exactly the exposure KodiXml::movieSetFileName() refuses, laundered into a setting
+    // where it can no longer refuse it.
+    const mediaelch::DirectoryPath movieSetDir = m_settings->movieSetArtworkDirectory();
+    ui->movieSetArtworkDir->setText(movieSetDir.isValid() ? movieSetDir.toNativePathString() : QString());
     onComboMovieSetArtworkChanged(ui->comboMovieSetArtwork->currentIndex());
 
     const auto loadLineEdit = [this](auto* lineEdit) {
@@ -138,6 +148,10 @@ void MovieSettingsWidget::saveSettings()
     // Movie set artwork
     m_settings->setMovieSetArtworkType(static_cast<MovieSetArtworkType>(
         ui->comboMovieSetArtwork->itemData(ui->comboMovieSetArtwork->currentIndex()).toInt()));
+    // Written whichever layout is selected, and that is deliberate: the field is disabled
+    // in the artwork-next-to-movies layout but keeps its text, so a user who switches
+    // away and back finds their directory still there.  An empty field is an invalid
+    // DirectoryPath, which is what "no directory chosen" has to stay -- see loadSettings().
     m_settings->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(ui->movieSetArtworkDir->text()));
 }
 

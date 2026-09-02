@@ -1,20 +1,28 @@
 #include "test/test_helpers.h"
 
+#include "data/movie/Movie.h"
 #include "data/movie/MovieSet.h"
+#include "data/movie/MovieSetInfo.h"
 #include "globals/Manager.h"
 #include "media/Path.h"
 #include "media_center/MediaCenterInterface.h"
 #include "media_center/kodi/MovieSetXmlReader.h"
 #include "media_center/kodi/MovieSetXmlWriter.h"
+#include "model/MovieModel.h"
+#include "model/MovieSetModel.h"
+#include "settings/DataFile.h"
 #include "settings/Settings.h"
 #include "test/helpers/message_capture.h"
+#include "test/helpers/movie_set_settings.h"
 #include "test/helpers/resource_dir.h"
 
+#include <QApplication>
 #include <QDir>
 #include <QDomDocument>
 #include <QFile>
 #include <QFileDevice>
 #include <QFileInfo>
+#include <QImage>
 #include <memory>
 
 using namespace mediaelch;
@@ -277,9 +285,14 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
     {
         // The hazard this guards.  DirectoryPath's default constructor leaves isValid()
         // false around a default QDir, whose absolutePath() is the process's current
-        // working directory, and movieSetFileName() never asks.  Selecting the separate
-        // folder without choosing one must not scatter files into whatever directory
-        // MediaElch was started from.
+        // working directory.  Selecting the separate folder without choosing one must not
+        // scatter files into whatever directory MediaElch was started from.
+        //
+        // movieSetFileName() asks too, and covers the three record paths that build a
+        // path through it.  What this predicate covers on its own is movieSetsWithRecord(),
+        // which lists the folder itself and never goes through movieSetFileName() -- it
+        // does build a path to each record, but derives it from the listing.  Its check is
+        // below.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
@@ -569,5 +582,180 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         REQUIRE(mediaCenter->saveMovieSet(set));
         CHECK(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
         CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Mission: Impossible Collection"});
+    }
+}
+
+namespace {
+
+/// \brief Puts one movie with a real file into the library, and takes it out again.
+/// \details "Artwork next to movies" resolves a set's artwork path through a member
+///          movie's folder (KodiXml::movieSetFileName()), so that layout cannot be
+///          exercised at all without a movie in the library that has files.
+class LibraryMovieGuard
+{
+public:
+    LibraryMovieGuard(const QDir& movieDir, const QString& setName)
+    {
+        REQUIRE(QDir().mkpath(movieDir.absolutePath()));
+        QFile file(movieDir.absoluteFilePath("Alien.mkv"));
+        REQUIRE(file.open(QIODevice::WriteOnly));
+        file.write("not really a movie");
+        file.close();
+
+        auto* movie = new Movie(QStringList{file.fileName()}, nullptr);
+        movie->setTitle("Alien");
+        MovieSetInfo info;
+        info.name = setName;
+        movie->setSetInfo(info);
+        movie->setChanged(false);
+        Manager::instance()->movieModel()->addMovie(movie);
+    }
+    ~LibraryMovieGuard()
+    {
+        Manager::instance()->movieModel()->clear();
+        qApp->processEvents();
+        // The set model is a singleton and has just been told about a set; put it back
+        // the way the next test in this binary expects to find it.
+        Manager::instance()->movieSetModel()->reload();
+    }
+    LibraryMovieGuard(const LibraryMovieGuard&) = delete;
+    LibraryMovieGuard& operator=(const LibraryMovieGuard&) = delete;
+};
+
+} // namespace
+
+TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
+{
+    const MovieSetFolderGuard guard;
+    const test::DataFileGuard dataFiles;
+    MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
+
+    QImage poster(4, 4, QImage::Format_RGB32);
+    poster.fill(Qt::red);
+
+    SECTION("Artwork and records are different questions")
+    {
+        // The truth table, in one place, because the difference between these two is
+        // what this whole guard turns on.  Artwork resolves in *both* layouts; a record
+        // resolves only in the movie set information folder.  So gating the artwork
+        // paths on the record predicate would take set artwork away from every user who
+        // has never opened the settings, "artwork next to movies" being the default.
+        SECTION("Artwork next to movies: artwork yes, records no")
+        {
+            Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+            CHECK(mediaCenter->movieSetArtworkEnabled());
+            CHECK_FALSE(mediaCenter->movieSetRecordsEnabled());
+        }
+
+        SECTION("A configured separate folder: both yes")
+        {
+            MovieSetFolderGuard::useFolder(emptyMsif("artwork_both"));
+            CHECK(mediaCenter->movieSetArtworkEnabled());
+            CHECK(mediaCenter->movieSetRecordsEnabled());
+        }
+
+        SECTION("A separate folder that was never chosen: both no")
+        {
+            Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+            Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+            REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
+            CHECK_FALSE(mediaCenter->movieSetArtworkEnabled());
+            CHECK_FALSE(mediaCenter->movieSetRecordsEnabled());
+        }
+    }
+
+    SECTION("Artwork is not written into the working directory")
+    {
+        // The hazard the record paths closed, arriving through the other door.
+        // movieSetFileName() called .dir().absolutePath() without asking isValid(), and
+        // QDir("").absolutePath() is the *process's current working directory* -- so the
+        // savers created a folder and wrote a poster into whatever directory MediaElch
+        // happened to be started from.  The folder matters as much as the file:
+        // saveMovieSetPoster() calls mkpath() before it writes.
+        const QDir cwd = QDir::current();
+        QDir(cwd.absoluteFilePath("Alien Collection")).removeRecursively();
+
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
+
+        CHECK_FALSE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+        CHECK_FALSE(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
+
+        CHECK_FALSE(QFileInfo::exists(cwd.absoluteFilePath("Alien Collection")));
+    }
+
+    SECTION("Artwork is not read out of the working directory")
+    {
+        // The read half, and it is not decoration: a poster sitting next to wherever
+        // MediaElch was launched from would be displayed as this set's artwork.  That is
+        // the same split between "what the path resolves to" and "what the user
+        // configured" that the record paths had to close, and a read is what decides
+        // what the user is shown.
+        const QDir cwd = QDir::current();
+        QDir(cwd.absoluteFilePath("Alien Collection")).removeRecursively();
+        REQUIRE(QDir().mkpath(cwd.absoluteFilePath("Alien Collection")));
+
+        // Written under every name the reader probes, so the check below cannot pass
+        // merely by having guessed the wrong file name.
+        const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
+        REQUIRE_FALSE(posterFiles.isEmpty());
+        for (DataFile dataFile : posterFiles) {
+            const QString fileName =
+                cwd.absoluteFilePath("Alien Collection/" + dataFile.saveFileName("Alien Collection"));
+            REQUIRE(poster.save(fileName, "jpg", 100));
+        }
+
+        // With the folder configured, those files are exactly what the reader finds ...
+        MovieSetFolderGuard::useFolder(cwd);
+        REQUIRE_FALSE(mediaCenter->movieSetPoster("Alien Collection").isNull());
+
+        // ... and with no folder configured, the very same files must not be found.
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
+        CHECK(mediaCenter->movieSetPoster("Alien Collection").isNull());
+
+        QDir(cwd.absoluteFilePath("Alien Collection")).removeRecursively();
+    }
+
+    SECTION("Artwork next to movies still works")
+    {
+        // The regression guard for this step's own guard, and the reason
+        // movieSetArtworkEnabled() exists as a question of its own.  "Artwork next to
+        // movies" is the shipping default; it resolves through a member movie's folder
+        // and has nothing to do with the movie set information folder.  Refusing it
+        // would have been a larger bug than the one being fixed.
+        QDir movieDir = test::makeTempDir("movie_set/next_to_movies");
+        movieDir.removeRecursively();
+        const LibraryMovieGuard movie(movieDir, "Alien Collection");
+
+        Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+        Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+        REQUIRE(mediaCenter->movieSetArtworkEnabled());
+
+        CHECK(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+        CHECK_FALSE(mediaCenter->movieSetPoster("Alien Collection").isNull());
+    }
+
+    SECTION("A write that reached the disk says so, and one that did not says so")
+    {
+        // ELCH_NODISCARD is silent on a virtual under GCC (reproduced, 14.2), so nothing
+        // but a test can hold this refusal -- and the caller that has to listen is
+        // SetsWidget::saveSet(), which loses the image if it does not.  Its side of this
+        // is in test/unit/ui/testSetsWidget.cpp.
+        SECTION("Written")
+        {
+            MovieSetFolderGuard::useFolder(emptyMsif("artwork_reported"));
+            CHECK(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+            CHECK(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
+        }
+
+        SECTION("Not written")
+        {
+            Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
+            Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
+            CHECK_FALSE(mediaCenter->saveMovieSetPoster("Alien Collection", poster));
+            CHECK_FALSE(mediaCenter->saveMovieSetBackdrop("Alien Collection", poster));
+        }
     }
 }
