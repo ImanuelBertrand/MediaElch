@@ -1688,8 +1688,9 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
             }
         }
 
-        // Nothing below is undone; the directory has moved already and a failure here is
-        // counted rather than latched, so that the caller can say how far the rename got.
+        // Nothing below is undone: whatever has moved stays moved, the directory included
+        // where it had to move at all.  So a failure here is counted rather than latched, and
+        // the caller can tell the user how far the rename got.
         const QDir folder(msif.absoluteFilePath(newFolder));
         int moved = sameFolder ? 0 : 1;
         int failed = 0;
