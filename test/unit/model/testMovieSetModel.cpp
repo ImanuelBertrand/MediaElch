@@ -11,10 +11,8 @@
 #include "test/mocks/media_center/MediaCenterInterfaceMock.h"
 #include "test/unit/scrapers/custom_movie_scraper/StubMovieScraper.h"
 
-#include <QAbstractItemModelTester>
 #include <QApplication>
 #include <QSignalSpy>
-#include <memory>
 
 namespace {
 
@@ -218,12 +216,10 @@ TEST_CASE("MovieSetModel is the only thing that changes membership", "[model][mo
 
     SECTION("syncMovie does nothing for a movie whose set has not moved")
     {
-        QSignalSpy changes(&sets, &QAbstractItemModel::dataChanged);
-
         sets.syncMovie(alien);
 
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
-        CHECK(changes.isEmpty());
+        CHECK_FALSE(alien->hasChanged());
     }
 
     SECTION("syncMovie does not bring back a set that removeSet took away")
@@ -342,7 +338,6 @@ TEST_CASE("MovieSetModel groups the library", "[model][movie][set]")
     {
         sets.setMovieModel(&movies);
         CHECK(sets.sets().isEmpty());
-        CHECK(sets.rowCount() == 0);
     }
 
     SECTION("the movies present are grouped by set name, once")
@@ -460,15 +455,12 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
 
     SECTION("a set whose movies leave the library is dropped")
     {
-        // The movies are only deleteLater()'d, so this is the one notification that arrives
-        // while they are still there to be detached.
-        QSignalSpy removals(&sets, &QAbstractItemModel::rowsRemoved);
-
+        // The movies are only deleteLater()'d, so rowsAboutToBeRemoved is the one
+        // notification that arrives while they are still there to be detached.
         movies.clear();
 
         CHECK(sets.sets().isEmpty());
         CHECK(sets.set("Alien Collection") == nullptr);
-        CHECK(removals.count() == 1);
     }
 
     SECTION("a set lets go of a movie that leaves the library")
@@ -616,30 +608,14 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(sets.set("Predator Collection")->movies() == QVector<Movie*>{predator});
     }
 
-    SECTION("a regroup announces one reset and nothing else")
+    SECTION("a regroup rebuilds the same list")
     {
-        // Without the reset guards a view hears about each of reload()'s steps separately.
         sets.clear();
-        QSignalSpy repaints(&sets, &QAbstractItemModel::dataChanged);
-        QSignalSpy insertions(&sets, &QAbstractItemModel::rowsInserted);
-        QSignalSpy resets(&sets, &QAbstractItemModel::modelReset);
 
         sets.reload();
 
         REQUIRE(sets.sets().size() == 1);
-        CHECK(resets.count() == 1);
-        CHECK(repaints.count() == 0);
-        CHECK(insertions.count() == 0);
-    }
-
-    SECTION("a set that changed announces a repaint")
-    {
-        QSignalSpy repaints(&sets, &QAbstractItemModel::dataChanged);
-
-        sets.set("Alien Collection")->setOverview("A science fiction horror franchise.");
-
-        REQUIRE(repaints.count() == 1);
-        CHECK(repaints.at(0).at(0).value<QModelIndex>().row() == 0);
+        CHECK(sets.set("Alien Collection") != nullptr);
     }
 }
 
@@ -760,61 +736,6 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         sets.clear();
 
         CHECK(sets.sets().isEmpty());
-        CHECK(sets.rowCount() == 0);
-    }
-}
-
-TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
-{
-    QObject owner;
-    MovieModel movies;
-    movies.addMovie(movieInSet(owner, "Alien", "Alien Collection"));
-    movies.addMovie(movieInSet(owner, "Predator", "Predator Collection"));
-
-    auto sets = std::make_unique<MovieSetModel>();
-    sets->setMovieModel(&movies);
-
-    SECTION("passes the Qt model checker while sets come and go")
-    {
-        auto tester = std::make_unique<QAbstractItemModelTester>(
-            sets.get(), QAbstractItemModelTester::FailureReportingMode::Fatal);
-        REQUIRE(sets->rowCount() == 2);
-
-        sets->addSet("Alien vs Predator Collection");
-        CHECK(sets->removeSet("Alien Collection"));
-        sets->reload();
-
-        CHECK(sets->rowCount() == 1);
-    }
-
-    SECTION("a row carries its set's name and the set itself")
-    {
-        const QModelIndex index = sets->index(0, 0);
-        REQUIRE(index.isValid());
-        CHECK(sets->data(index, Qt::DisplayRole).toString() == "Alien Collection");
-        CHECK(sets->data(index, MovieSetModel::NameRole).toString() == "Alien Collection");
-        CHECK(sets->data(index, MovieSetModel::MovieCountRole).toInt() == 1);
-        CHECK(
-            sets->data(index, MovieSetModel::MovieSetPointerRole).value<MovieSet*>() == sets->set("Alien Collection"));
-    }
-
-    SECTION("DisplayRole is what a person reads and NameRole is the key")
-    {
-        MovieSet* set = sets->set("Alien Collection");
-        REQUIRE(set != nullptr);
-        set->setTitle("The Alien Saga");
-
-        const QModelIndex index = sets->index(0, 0);
-        REQUIRE(index.isValid());
-        CHECK(sets->data(index, Qt::DisplayRole).toString() == "The Alien Saga");
-        CHECK(sets->data(index, MovieSetModel::NameRole).toString() == "Alien Collection");
-    }
-
-    SECTION("an invalid index carries nothing")
-    {
-        CHECK_FALSE(sets->index(2, 0).isValid());
-        CHECK_FALSE(sets->index(-1, 0).isValid());
-        CHECK_FALSE(sets->data(QModelIndex(), MovieSetModel::NameRole).isValid());
     }
 }
 

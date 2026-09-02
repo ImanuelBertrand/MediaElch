@@ -6,9 +6,9 @@
 #include "media_center/KodiVersion.h"
 #include "utils/Meta.h"
 
-#include <QAbstractItemModel>
 #include <QHash>
 #include <QModelIndex>
+#include <QObject>
 #include <QString>
 #include <QVector>
 
@@ -25,27 +25,12 @@ class MovieModel;
 ///          direct call to syncMovie().
 ///
 /// \see docs/concepts/movie-sets.md
-class MovieSetModel : public QAbstractItemModel
+class MovieSetModel : public QObject
 {
     Q_OBJECT
 
 public:
-    enum Roles
-    {
-        /// \brief The set's match key (MovieSet::name()); Qt::DisplayRole answers displayName().
-        NameRole = Qt::UserRole,
-        MovieCountRole = Qt::UserRole + 1,
-        MovieSetPointerRole = Qt::UserRole + 22
-    };
-
-public:
     explicit MovieSetModel(QObject* parent = nullptr);
-
-    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
-    int columnCount(const QModelIndex& parent = QModelIndex()) const override;
-    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
-    QModelIndex index(int row, int column, const QModelIndex& parent = QModelIndex()) const override;
-    QModelIndex parent(const QModelIndex& child) const override;
 
     /// \brief Sets the movie model whose movies this model groups into sets, and loads them.
     void setMovieModel(MovieModel* movieModel);
@@ -123,7 +108,6 @@ public:
 private slots:
     void onMovieChanged(Movie* movie);
     void onMovieDestroyed(QObject* movie);
-    void onSetChanged(MovieSet* set);
     void onSetMovieAdded(MovieSet* set, Movie* movie);
     void onSetMovieRemoved(MovieSet* set, QObject* movie);
     void onMoviesInserted(const QModelIndex& parent, int first, int last);
@@ -164,6 +148,4 @@ private:
     MovieModel* m_movieModel = nullptr;
     /// \brief Where sets' records are read from and written to; null means no records.
     MediaCenterInterface* m_mediaCenter = nullptr;
-    /// \brief Whether reload() is running; it announces one reset instead of each change.
-    bool m_inReset = false;
 };

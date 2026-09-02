@@ -11,57 +11,8 @@
 
 #include <QSet>
 
-MovieSetModel::MovieSetModel(QObject* parent) : QAbstractItemModel(parent)
+MovieSetModel::MovieSetModel(QObject* parent) : QObject(parent)
 {
-}
-
-int MovieSetModel::rowCount(const QModelIndex& parent) const
-{
-    if (parent.isValid()) {
-        // Root has an invalid model index.
-        return 0;
-    }
-    return qsizetype_to_int(m_sets.size());
-}
-
-int MovieSetModel::columnCount(const QModelIndex& parent) const
-{
-    if (parent.isValid()) {
-        // Root has an invalid model index.
-        return 0;
-    }
-    return 1;
-}
-
-QVariant MovieSetModel::data(const QModelIndex& index, int role) const
-{
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_sets.size()) {
-        return {};
-    }
-    MovieSet* movieSet = m_sets.at(index.row());
-
-    switch (role) {
-    // DisplayRole is what a person reads; NameRole is the key a set is looked up by.
-    case Qt::DisplayRole: return movieSet->displayName();
-    case Roles::NameRole: return movieSet->name();
-    case Roles::MovieCountRole: return qsizetype_to_int(movieSet->movies().size());
-    case Roles::MovieSetPointerRole: return QVariant::fromValue(movieSet);
-    default: return {};
-    }
-}
-
-QModelIndex MovieSetModel::index(int row, int column, const QModelIndex& parent) const
-{
-    if (parent.isValid() || row < 0 || row >= m_sets.size() || column != 0) {
-        return {};
-    }
-    return createIndex(row, column);
-}
-
-QModelIndex MovieSetModel::parent(const QModelIndex& child) const
-{
-    Q_UNUSED(child);
-    return {};
 }
 
 void MovieSetModel::setMovieModel(MovieModel* movieModel)
@@ -181,18 +132,12 @@ bool MovieSetModel::removeSet(const QString& name)
 
 void MovieSetModel::dropSet(MovieSet* movieSet)
 {
-    const int row = qsizetype_to_int(m_sets.indexOf(movieSet));
+    const qsizetype row = m_sets.indexOf(movieSet);
     if (row < 0) {
         return;
     }
     warnIfRecordIsLost(movieSet);
-    if (!m_inReset) {
-        beginRemoveRows(QModelIndex(), row, row);
-    }
     m_sets.removeAt(row);
-    if (!m_inReset) {
-        endRemoveRows();
-    }
     // Take the deleted set out of the membership index so that no dangling MovieSet* is handed out.
     const QVector<Movie*> members = movieSet->movies();
     for (Movie* movie : members) {
@@ -278,9 +223,6 @@ void MovieSetModel::warnIfRecordIsLost(const MovieSet* movieSet) const
 
 void MovieSetModel::reload()
 {
-    beginResetModel();
-    m_inReset = true;
-
     for (MovieSet* movieSet : asConst(m_sets)) {
         movieSet->clearMovies();
     }
@@ -325,9 +267,6 @@ void MovieSetModel::reload()
 
     // Drop the sets that no movie names any more and that have no record to exist by.
     dropEmptySets();
-
-    m_inReset = false;
-    endResetModel();
 }
 
 void MovieSetModel::clear()
@@ -340,10 +279,8 @@ void MovieSetModel::clear()
     for (const MovieSet* movieSet : asConst(m_sets)) {
         warnIfRecordIsLost(movieSet);
     }
-    beginRemoveRows(QModelIndex(), 0, qsizetype_to_int(m_sets.size()) - 1);
     qDeleteAll(m_sets);
     m_sets.clear();
-    endRemoveRows();
 }
 
 void MovieSetModel::onMovieChanged(Movie* movie)
@@ -384,20 +321,6 @@ void MovieSetModel::onMovieDestroyed(QObject* movie)
         movieSet->forgetDestroyedMovie(movie);
     }
     dropEmptySets();
-}
-
-void MovieSetModel::onSetChanged(MovieSet* movieSet)
-{
-    if (m_inReset) {
-        // A reset announces everything at once.
-        return;
-    }
-    const int row = qsizetype_to_int(m_sets.indexOf(movieSet));
-    if (row < 0) {
-        return;
-    }
-    const QModelIndex changed = createIndex(row, 0);
-    emit dataChanged(changed, changed);
 }
 
 void MovieSetModel::onSetMovieAdded(MovieSet* movieSet, Movie* movie)
@@ -554,19 +477,11 @@ MovieSet* MovieSetModel::createSet(const QString& name)
     if (m_mediaCenter != nullptr) {
         movieSet->setHasRecord(m_mediaCenter->loadMovieSet(*movieSet));
     }
-    connect(movieSet, &MovieSet::sigChanged, this, &MovieSetModel::onSetChanged);
     // Fed from the set, so that memberships made through the public MovieSet::addMovie() are
     // indexed too.
     connect(movieSet, &MovieSet::sigMovieAdded, this, &MovieSetModel::onSetMovieAdded);
     connect(movieSet, &MovieSet::sigMovieRemoved, this, &MovieSetModel::onSetMovieRemoved);
 
-    const int row = qsizetype_to_int(m_sets.size());
-    if (!m_inReset) {
-        beginInsertRows(QModelIndex(), row, row);
-    }
     m_sets.append(movieSet);
-    if (!m_inReset) {
-        endInsertRows();
-    }
     return movieSet;
 }
