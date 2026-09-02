@@ -81,6 +81,45 @@ TEST_CASE("Movie set mirror in the movie NFO", "[data][movie][movie_set][kodi][n
         set.overview = "Ripley versus the Alien.";
         CHECK_THAT(writeMovieInSet(set), Contains("<overview>Ripley versus the Alien.</overview>"));
     }
+
+    SECTION("A document-wide scan of the written NFO yields the movie's own TMDB id")
+    {
+        // The collection's id must not be written as a second <uniqueid type="tmdb">.  Kodi
+        // reads direct children of <movie> only and would be safe either way, but every
+        // reader that collects them document-wide and keeps the last one -- MediaElch itself
+        // up to and including the release this branch forks from -- would take the
+        // collection's id for the movie's and write it back onto the movie at the next save.
+        Movie movie;
+        movie.setTitle("Alien");
+        movie.setTmdbId(TmdbId("348"));
+        MovieSetInfo set;
+        set.name = "Alien Collection";
+        set.tmdbId = TmdbId("8091");
+        movie.setSetInfo(set);
+
+        mediaelch::kodi::MovieXmlWriterGeneric writer(mediaelch::KodiVersion(18), movie);
+        QDomDocument doc;
+        REQUIRE(doc.setContent(writer.getMovieXml(true)));
+
+        QString lastTmdbId;
+        const QDomNodeList uniqueIds = doc.elementsByTagName("uniqueid");
+        for (int i = 0, n = uniqueIds.size(); i < n; ++i) {
+            const QDomElement uniqueId = uniqueIds.at(i).toElement();
+            if (uniqueId.attribute("type") == "tmdb") {
+                lastTmdbId = uniqueId.text();
+            }
+        }
+        CHECK(lastTmdbId == "348");
+        CHECK(doc.documentElement().firstChildElement("set").elementsByTagName("uniqueid").isEmpty());
+
+        // And the collection's id is still written, and still read back.
+        CHECK(doc.documentElement().firstChildElement("tmdbcolid").text() == "8091");
+        Movie reread;
+        mediaelch::kodi::MovieXmlReader reader(reread);
+        REQUIRE(reader.parseNfoDom(doc));
+        CHECK(reread.tmdbId() == TmdbId(348));
+        CHECK(reread.set().tmdbId == TmdbId(8091));
+    }
 }
 
 TEST_CASE("Movie XML writer for Kodi v18", "[data][movie][kodi][nfo]")

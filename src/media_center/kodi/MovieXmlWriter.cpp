@@ -102,16 +102,25 @@ QByteArray MovieXmlWriterGeneric::getMovieXml(bool testMode)
     KodiXml::writeStringsAsOneTagEach(xml, "genre", m_movie.genres());
     KodiXml::writeStringsAsOneTagEach(xml, "country", m_movie.countries());
 
+    // <tmdbcolid>...</tmdbcolid>
     // <set>
     //   <name>...</name>
     //   <overview>...</overview>
-    //   <uniqueid type="tmdb">...</uniqueid>
     // </set>
     //
-    // Kodi ignores unknown children of <set>; the collection's id is stored so that
-    // MediaElch can identify the collection again after a restart.
+    // The collection's id is kept so that MediaElch can identify the collection again after a
+    // restart (#2012).  Under Ember Media Manager's movie-level <tmdbcolid> and not as a
+    // second <uniqueid type="tmdb"> inside <set>: Kodi reads direct children of <movie> only
+    // and would ignore either, but every reader that collects <uniqueid> document-wide with
+    // last-wins semantics -- MediaElch itself, up to and including the release this branch
+    // forks from -- would read the collection's id as the *movie's* and write it back onto
+    // the movie at its next save.  A tag nothing scans document-wide cannot be mistaken for
+    // one, and MovieXmlReader has always understood this one.
     MovieSetInfo set = m_movie.set();
     if (!set.name.isEmpty()) {
+        if (set.tmdbId.isValid()) {
+            xml.writeTextElement("tmdbcolid", set.tmdbId.toString());
+        }
         xml.writeStartElement("set");
         xml.writeTextElement("name", set.name);
         // Never written empty: XMLUtils::GetString() returns true for an existing-but-empty
@@ -119,12 +128,6 @@ QByteArray MovieXmlWriterGeneric::getMovieXml(bool testMode)
         // empty one, scanned last, then blanks the whole set's overview in the database.
         if (!set.overview.isEmpty()) {
             xml.writeTextElement("overview", set.overview);
-        }
-        if (set.tmdbId.isValid()) {
-            xml.writeStartElement("uniqueid");
-            xml.writeAttribute("type", "tmdb");
-            xml.writeCharacters(set.tmdbId.toString());
-            xml.writeEndElement();
         }
         xml.writeEndElement();
     }
