@@ -895,9 +895,12 @@ void SetsWidget::performAllMovieFilesRename(
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     const QVector<Movie*> members = origSet->movies();
 
-    // Before its movies, so that the object -- and with it the set's overview and id -- is
-    // kept instead of being emptied and a second one created under the new name.
-    origSet->setName(newName);
+    // Through the model, which owns the uniqueness of the key.  Before its movies, so that the
+    // object -- and with it the set's overview and id -- is kept instead of being emptied and a
+    // second one created under the new name.  It cannot refuse here: refuseIfNameIsTaken()
+    // above turned a taken name away, before anything was moved on disk.
+    const bool renamed = setModel->renameSet(origSet, newName);
+    Q_UNUSED(renamed)
 
     for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);

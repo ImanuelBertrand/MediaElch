@@ -51,6 +51,17 @@ public:
     ELCH_NODISCARD MovieSet* set(const QString& name) const;
     /// \brief The set called \p name, created if it does not exist yet; nullptr for an empty name.
     MovieSet* addSet(const QString& name);
+    /// \brief Renames \p movieSet's match key, keeping the object and everything else on it.
+    /// \details The only way the key can move: MovieSet::setName() is private to this model,
+    ///          because m_sets is keyed by the name and two sets sharing one cannot be told
+    ///          apart afterwards.  Renaming a set to the name it already has does nothing, and
+    ///          a real rename clears the display title, the two names being one again.
+    ///          Only the object is renamed; moving the members' `<set><name>` and the set's
+    ///          files is the caller's half of the rename.
+    /// \return Whether the set is called \p newName now.  False means \p newName is empty, is
+    ///         already taken -- that is a merge, which this refuses -- or that \p movieSet is
+    ///         not one of this model's sets; nothing is changed then.
+    ELCH_NODISCARD bool renameSet(MovieSet* movieSet, const QString& newName);
     /// \brief Puts \p movie into the set that \p set names, out of the one it is in.
     /// \details The only entry point for a membership edit: writes the value onto the movie and
     ///          marks it changed, but only if the whole MovieSetInfo differs (operator==).  An

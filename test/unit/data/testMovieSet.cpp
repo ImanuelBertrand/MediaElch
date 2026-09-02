@@ -186,8 +186,7 @@ TEST_CASE("MovieSet change notification", "[data][movie][set]")
         CHECK(set.hasChanged());
 
         set.setTmdbId(TmdbId(8091));
-        set.setName("Alien Anthology");
-        CHECK(changes == 3);
+        CHECK(changes == 2);
     }
 
     SECTION("setting a value to what it already is changes nothing")
@@ -199,7 +198,6 @@ TEST_CASE("MovieSet change notification", "[data][movie][set]")
         int changes = 0;
         QObject::connect(&set, &MovieSet::sigChanged, [&changes](MovieSet*) { ++changes; });
 
-        set.setName("Alien Collection");
         set.setOverview("A science fiction horror film franchise.");
         set.setTmdbId(TmdbId::NoId);
         // Setting the title to the name normalises to empty, which is what it already holds.
@@ -265,57 +263,8 @@ TEST_CASE("MovieSet display title", "[data][movie][set]")
         CHECK(set.title().isEmpty());
     }
 
-    SECTION("moving the key re-unifies the two names")
-    {
-        // An all-movie-files rename moves the key itself, so no display title is left to hold.
-        MovieSet set{"Alien Collection"};
-        set.setTitle("The Alien Saga");
-        set.setName("Alien Anthology");
-
-        CHECK(set.name() == "Alien Anthology");
-        CHECK(set.title().isEmpty());
-        CHECK(set.displayName() == "Alien Anthology");
-    }
-
-    SECTION("an observer of the rename never sees the abolished display title")
-    {
-        // setChanged() emits sigChanged synchronously, so an observer reads the set from inside
-        // its own slot: clear the title after the emit and every observer sees the new key still
-        // carrying the abolished display title.  Asserted inside the slot, because afterwards
-        // both orders look identical.
-        MovieSet set{"Alien Collection"};
-        set.setTitle("The Alien Saga");
-        set.setChanged(false);
-
-        int observed = 0;
-        QString seenDisplayName;
-        QString seenTitle;
-        QObject::connect(&set, &MovieSet::sigChanged, [&](MovieSet* changed) {
-            ++observed;
-            seenDisplayName = changed->displayName();
-            seenTitle = changed->title();
-        });
-
-        set.setName("Alien Anthology");
-
-        REQUIRE(observed == 1);
-        CHECK(seenDisplayName == "Alien Anthology");
-        CHECK(seenTitle.isEmpty());
-        CHECK(set.hasChanged());
-    }
-
-    SECTION("a key moved onto its own display title still re-unifies and dirties")
-    {
-        MovieSet set{"Alien Collection"};
-        set.setTitle("The Alien Saga");
-        set.setChanged(false);
-
-        set.setName("The Alien Saga");
-
-        CHECK(set.name() == "The Alien Saga");
-        CHECK(set.title().isEmpty());
-        CHECK(set.hasChanged());
-    }
+    // Moving the key is MovieSetModel::renameSet()'s alone; what it does to the display title
+    // is pinned in "MovieSetModel renames a set".
 }
 
 TEST_CASE("MovieSet announces membership per movie", "[data][movie][set]")

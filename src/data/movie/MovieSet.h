@@ -37,11 +37,6 @@ public:
     /// \brief The set's member movies.  Not owned.
     ELCH_NODISCARD const QVector<Movie*>& movies() const;
 
-    /// \brief Sets the match key.  Clears title(), since an all-movie-files rename re-unifies the two.
-    /// \details Like the other scalar setters, assigning the current value does nothing at all.
-    /// \warning Does not check that no other set is called \p name; callers must ask
-    ///          MovieSetModel::set() first and treat a hit as a merge.
-    void setName(QString name);
     /// \brief Sets the display title, the half a set-file-only rename moves.
     /// \details Empty means "the same as name()".  A display title lives only in the set's
     ///          record, so a set without one cannot have it.
@@ -89,6 +84,16 @@ signals:
 private slots:
     /// \brief Drops a member that has been destroyed; QObject::destroyed is the only notice a set gets.
     void onMovieDestroyed(QObject* movie);
+
+private:
+    /// \brief Sets the match key.  Clears title(), since an all-movie-files rename re-unifies the two.
+    /// \details Private, and MovieSetModel::renameSet() is the only caller: the model keys its
+    ///          sets by this name and cannot detect a duplicate after the fact.  Like the other
+    ///          scalar setters, assigning the current value does nothing at all.
+    void setName(QString name);
+
+    /// \brief For setName() alone; see there.
+    friend class MovieSetModel;
 
 private:
     QString m_name;

@@ -76,6 +76,25 @@ MovieSet* MovieSetModel::addSet(const QString& name)
     return createSet(name);
 }
 
+bool MovieSetModel::renameSet(MovieSet* movieSet, const QString& newName)
+{
+    if (movieSet == nullptr || newName.isEmpty() || !m_sets.contains(movieSet)) {
+        return false;
+    }
+    if (movieSet->name() == newName) {
+        // Like the scalar setters, assigning the current value is not an edit.
+        return true;
+    }
+    if (set(newName) != nullptr) {
+        // Refused rather than performed: with two sets called `newName`, set() answers with
+        // whichever came first for every lookup in the application and nothing recovers from
+        // it.  A caller that meant a merge has to move the movies itself.
+        return false;
+    }
+    movieSet->setName(newName);
+    return true;
+}
+
 void MovieSetModel::assign(Movie* movie, const MovieSetInfo& setInfo)
 {
     if (movie == nullptr) {

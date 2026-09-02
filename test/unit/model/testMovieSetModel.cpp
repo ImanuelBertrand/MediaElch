@@ -739,6 +739,134 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
     }
 }
 
+TEST_CASE("MovieSetModel renames a set", "[model][movie][set]")
+{
+    // MovieSet::setName() is private to the model, so this is the only way a set's key moves.
+    MovieSetModel sets;
+    MovieSet* alienCollection = sets.addSet("Alien Collection");
+    REQUIRE(alienCollection != nullptr);
+
+    SECTION("the key moves and the set stays the same object")
+    {
+        alienCollection->setOverview("A science fiction horror franchise.");
+
+        CHECK(sets.renameSet(alienCollection, "Alien Anthology"));
+
+        CHECK(alienCollection->name() == "Alien Anthology");
+        CHECK(sets.set("Alien Anthology") == alienCollection);
+        CHECK(sets.set("Alien Collection") == nullptr);
+        CHECK(sets.sets().size() == 1);
+        // The overview and the id ride along; that is why the object is renamed, not replaced.
+        CHECK(alienCollection->overview() == "A science fiction horror franchise.");
+    }
+
+    SECTION("moving the key re-unifies the two names")
+    {
+        // An all-movie-files rename moves the key itself, so no display title is left to hold.
+        alienCollection->setTitle("The Alien Saga");
+
+        CHECK(sets.renameSet(alienCollection, "Alien Anthology"));
+
+        CHECK(alienCollection->title().isEmpty());
+        CHECK(alienCollection->displayName() == "Alien Anthology");
+        CHECK(alienCollection->hasChanged());
+    }
+
+    SECTION("a key moved onto its own display title still re-unifies and dirties")
+    {
+        alienCollection->setTitle("The Alien Saga");
+        alienCollection->setChanged(false);
+
+        CHECK(sets.renameSet(alienCollection, "The Alien Saga"));
+
+        CHECK(alienCollection->name() == "The Alien Saga");
+        CHECK(alienCollection->title().isEmpty());
+        CHECK(alienCollection->hasChanged());
+    }
+
+    SECTION("an observer of the rename never sees the abolished display title")
+    {
+        // setChanged() emits sigChanged synchronously, so an observer reads the set from inside
+        // its own slot: clear the title after the emit and every observer sees the new key still
+        // carrying the abolished display title.  Asserted inside the slot, because afterwards
+        // both orders look identical.
+        alienCollection->setTitle("The Alien Saga");
+        alienCollection->setChanged(false);
+
+        int observed = 0;
+        QString seenDisplayName;
+        QString seenTitle;
+        QObject::connect(alienCollection, &MovieSet::sigChanged, [&](MovieSet* changed) {
+            ++observed;
+            seenDisplayName = changed->displayName();
+            seenTitle = changed->title();
+        });
+
+        CHECK(sets.renameSet(alienCollection, "Alien Anthology"));
+
+        REQUIRE(observed == 1);
+        CHECK(seenDisplayName == "Alien Anthology");
+        CHECK(seenTitle.isEmpty());
+    }
+
+    SECTION("renaming a set to the name it already has is not an edit")
+    {
+        alienCollection->setChanged(false);
+        int changes = 0;
+        QObject::connect(alienCollection, &MovieSet::sigChanged, [&changes](MovieSet*) { ++changes; });
+
+        CHECK(sets.renameSet(alienCollection, "Alien Collection"));
+
+        CHECK(changes == 0);
+        CHECK_FALSE(alienCollection->hasChanged());
+    }
+
+    SECTION("a name another set already holds is refused")
+    {
+        // Two sets keyed alike would make set() answer with the first of them for every lookup
+        // in the application, and nothing detects or recovers from that.
+        MovieSet* predatorCollection = sets.addSet("Predator Collection");
+        predatorCollection->setChanged(false);
+
+        CHECK_FALSE(sets.renameSet(predatorCollection, "Alien Collection"));
+
+        CHECK(predatorCollection->name() == "Predator Collection");
+        CHECK(sets.set("Alien Collection") == alienCollection);
+        CHECK(sets.sets().size() == 2);
+        // Refused means nothing happened, not even the dirty flag.
+        CHECK_FALSE(predatorCollection->hasChanged());
+    }
+
+    SECTION("a display title another set holds is not the model's business")
+    {
+        // Only the match key is the model's index; SetsWidget checks the display titles, which
+        // Kodi never matches on.
+        MovieSet* predatorCollection = sets.addSet("Predator Collection");
+        alienCollection->setTitle("The Saga");
+
+        CHECK(sets.renameSet(predatorCollection, "The Saga"));
+
+        CHECK(predatorCollection->name() == "The Saga");
+    }
+
+    SECTION("an empty name is refused")
+    {
+        CHECK_FALSE(sets.renameSet(alienCollection, QString()));
+
+        CHECK(alienCollection->name() == "Alien Collection");
+    }
+
+    SECTION("a set this model does not hold is refused")
+    {
+        MovieSet stranger{"Predator Collection"};
+
+        CHECK_FALSE(sets.renameSet(&stranger, "Alien Anthology"));
+        CHECK_FALSE(sets.renameSet(nullptr, "Alien Anthology"));
+
+        CHECK(stranger.name() == "Predator Collection");
+    }
+}
+
 // The two tests below use the real Manager: MovieController reaches MovieSetModel through
 // the singleton, with no seam to substitute.
 namespace {
@@ -1059,7 +1187,7 @@ TEST_CASE("A set derived from movies knows what its members know", "[model][movi
         sets.setMovieModel(&movies);
         MovieSet* movieSet = sets.set("Alien Collection");
         REQUIRE(movieSet != nullptr);
-        movieSet->setName("Alien Anthology");
+        REQUIRE(sets.renameSet(movieSet, "Alien Anthology"));
         REQUIRE(movieSet->hasChanged());
 
         movies.addMovie(movieInSet(owner, "Aliens", setInfo("Alien Anthology", "Ripley returns.", TmdbId(8091))));
