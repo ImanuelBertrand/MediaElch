@@ -593,10 +593,12 @@ void SetsWidget::saveSet()
         }
     }
 
-    // The set's own record.  Its overview, collection id and artwork are authoritative
-    // in `set.nfo` (D-A), so saving a set means writing that file -- and writing it is
-    // also what gives the set an existence apart from its movies, so that an empty one
-    // is still there after the next reload.
+    // The set's own record.  `set.nfo` is where the overview and the collection id are
+    // authoritative (D-A) -- every member NFO carries a mirror of both, and the artwork
+    // is the image files written above, which the record never holds -- so saving a set
+    // means writing that file as well.  Writing it is also what gives the set an
+    // existence apart from its movies, so that an empty one is still there after the next
+    // reload.
     //
     // The write can refuse, in more ways than it once could: no movie set information
     // folder configured, a name that legalises away to nothing, a file already there

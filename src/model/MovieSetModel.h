@@ -199,8 +199,17 @@ public:
     ///          settings-changed plumbing to keep in step.  The question is asked once
     ///          for the whole library rather than once per set, but it is not cheap:
     ///          answering it means parsing every `set.nfo` in the folder, since only the
-    ///          file says which set it belongs to.  The cost is one parse per record,
-    ///          plus a second for each set that has to be created from one.
+    ///          file says which set it belongs to.  That is one parse per `set.nfo`,
+    ///          plus one for every set this pass actually *probes* -- one it builds, or
+    ///          one that has just gained a record -- whose legalised path lands on a
+    ///          file.  A set that already had its record and still has it is not probed
+    ///          at all, so a reload that finds nothing changed costs the listing and
+    ///          nothing more.  loadMovieSet() cannot avoid that second parse where it
+    ///          does happen: it has to read the document before it can ask which set the
+    ///          document names, and asking those two in the other order is what once let
+    ///          a set claim its neighbour's record.  A set whose path resolves to no file
+    ///          at all costs nothing.  Bounded by the folder and the number of sets,
+    ///          never by the size of the library.
     ///
     ///          A set that already exists does *not* have its record re-read.  What is
     ///          refreshed is only whether a record exists; the record's contents are
@@ -233,6 +242,69 @@ private:
     void dropSet(MovieSet* movieSet);
     /// \brief Takes \p movie out of the membership index entry for \p movieSet.
     void unindexMembership(QObject* movie, MovieSet* movieSet);
+    /// \brief Fills a record-less set's empty overview and id from its members' NFOs.
+    /// \details Membership lives in the member movies and nowhere else (D-A), so a
+    ///          movie's `<set><name>` is the only thing that can say that movie is in a
+    ///          set.  That makes the `movie.nfo` -> set path one that can never be
+    ///          retired, and makes a set with no `set.nfo` the normal first state of a
+    ///          *derived* set rather than a leftover to be migrated away.
+    ///
+    ///          Derivation is the axis, not membership.  A set can have members that no
+    ///          movie NFO ever named it in -- "Add Movie Set" creates one from a click and
+    ///          the sets tab assigns movies into it afterwards -- and a set can have no
+    ///          members at all, which is what reload() builds from a record.
+    ///
+    ///          This function does not sort those apart and does not need to.  Its only
+    ///          question is hasRecord(), below.  A set made by "Add Movie Set" is seeded
+    ///          exactly like a derived one, and that is right: its members name it from
+    ///          the moment they are assigned, so they are as good a source as any other
+    ///          member.
+    ///
+    ///          A set with no record is built from a name and nothing else, so it was
+    ///          born with an empty overview and no id even when every member NFO carried
+    ///          both -- and the first `set.nfo` written for it was written from that
+    ///          emptiness, because the writer skips what is not there
+    ///          (MovieSetXmlWriter::getMovieSetXml()).  Nothing was lost, but the
+    ///          authoritative copy was blank while the mirror held the data, which
+    ///          inverts D-A's table; it turns destructive as soon as an edited overview
+    ///          is mirrored back down into every member.
+    ///
+    ///          Read-side only: nothing is written to disk here, and no set gains a
+    ///          record it did not have.
+    ///
+    ///          Called for every membership addition, from onSetMovieAdded(), because a
+    ///          set can acquire its first member at any moment and not only while the
+    ///          library is loading: reload(), a movie entering the library afterwards and
+    ///          a membership edit all arrive there.  So would a MovieSet::addMovie() made
+    ///          from outside this model; there is no such caller in `src/` today, and the
+    ///          signal is used because it cannot be bypassed, not because one exists.
+    ///
+    ///          The cost is one walk of the members per addition.  A set that has both
+    ///          values short-circuits, so the quadratic case is precisely the set that
+    ///          never gets them: *building up* to N members costs O(N^2) and copies a
+    ///          MovieSetInfo by value at each step (Movie::set() returns by value).
+    ///          Probably the common case, since a library MediaElch has never written
+    ///          carries no set overviews at all -- an estimate about libraries in the
+    ///          wild, not a measurement.  Accepted rather than overlooked: a set holds a
+    ///          handful of movies.
+    ///
+    ///          Walking the members rather than inspecting only the movie that just
+    ///          arrived is *not* about choosing a different winner.  MovieSet::addMovie()
+    ///          appends and emits once per call, so member order is call order and the two
+    ///          would pick the same member every time.  What the walk buys is
+    ///          re-evaluation at a moment when a member that was *already there* could not
+    ///          be read, and the reachable one is PR-6's: a user clears the overview of a
+    ///          set with no record, and the next movie to join refills it from the members
+    ///          that were there all along.  An O(1) look at the arriving movie would not,
+    ///          and would leave nothing to show that it had stopped.
+    ///
+    ///          One more such moment exists with no caller in `src/` today, named so that
+    ///          the first is not mistaken for the whole reason: a movie put into this set
+    ///          through the public MovieSet::addMovie() while its own `<set><name>` still
+    ///          pointed elsewhere is passed over by the name guard below, and reassigning
+    ///          it to this set afterwards announces nothing, because addMovie() returns
+    ///          early for a movie that is already a member.  Only a later walk sees it.
+    void seedFromMembers(MovieSet* movieSet);
     /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
     /// \brief Whether \p movieSet has a `set.nfo` of its own.

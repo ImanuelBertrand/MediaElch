@@ -238,11 +238,13 @@ void MovieSetModel::dropEmptySets()
     for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
         MovieSet* movieSet = m_sets.at(row);
         // No members left *and* no record of its own (D-A).  A set with a `set.nfo` is
-        // more than the grouping of its movies: it has an overview, a collection id and
-        // artwork that belong to the set and not to any movie, so it outlives its last
-        // member.  A set without one is nothing but that grouping, and goes when the
-        // grouping does -- otherwise its name would sit in the set combo box and the set
-        // filter with no movie answering to it.
+        // more than the grouping of its movies, and not because the file holds anything
+        // the movies do not -- the overview and the id are mirrored into every member
+        // NFO, and the artwork is the image files beside the record rather than in it.
+        // It is that the file exists at all: a fact about the file system that no movie
+        // supplies, so such a set outlives its last member.  A set without one is nothing
+        // but that grouping, and goes when the grouping does -- otherwise its name would
+        // sit in the set combo box and the set filter with no movie answering to it.
         //
         // The record is a fact about the file system, established when the set was
         // created and refreshed by reload().  It is deliberately *not* approximated by
@@ -293,13 +295,41 @@ void MovieSetModel::reload()
     // Which sets have a record is asked once for the whole library, and every set here is
     // told whether it is among the answers.  It is not a cheap question: the media center
     // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names, so this costs one parse per record -- plus a second one for each set that
-    // has to be created from a record below, which goes through loadMovieSet() again.
-    // It is bounded by the number of sets, not by the size of the library.
+    // names.  That is one parse per `set.nfo`, plus one for every set this pass actually
+    // *probes* -- one it builds, or one that has just gained a record -- whose legalised
+    // path lands on a file.  A set that already had its record and still has it is not
+    // probed: the branch below is guarded on hasRecord && !movieSet->hasRecord(), and
+    // addSet() returns an existing set untouched.  So the steady state -- open the tab
+    // twice with nothing changed -- is the listing and nothing more.
+    //
+    // KodiXml::loadMovieSet() cannot avoid that second parse where it does happen: it has
+    // to read the document before it can ask which set the document names, so a set whose
+    // path lands on a neighbour's record parses the file and only then answers false.  A
+    // set whose path resolves to no file at all costs nothing.
+    //
+    // Bounded by the folder and the number of sets, never by the size of the library.
+    //
+    // A standing rule about the three sentences above, because five successive versions of
+    // them have been wrong, each in its own way.  Three were enumerations of which sets
+    // take the second parse: two of those missed a call site, and the third named both
+    // call sites correctly but misattributed the empty-model state to setMovieModel() and
+    // setRecordSource() -- neither of which touches m_sets -- and overcounted it as "every
+    // set".  The fourth traded the enumeration for a guarantee, "at most two parses per
+    // record", which the folder-collision case falsified.  The fifth had the condition
+    // right and dropped the restriction, counting every set whose path lands on a file
+    // including the ones that are never probed.  Each fix answered the error that had just
+    // been found, which is exactly why it kept taking another round.
+    //
+    // **If this is ever found wrong a sixth time, delete the quantified claim instead of
+    // repairing it.**  The mechanism -- a parse happens where a probed path lands on a
+    // file -- and the bound above carry the whole useful warning between them, and a
+    // comment that has been wrong six times is worth less than no comment at all.
     //
     // Only the *existence* of a record is refreshed.  Its contents are read once, when
     // the set is created, because re-reading would overwrite an overview or an id the
-    // user has edited and not saved yet.
+    // user has edited and not saved yet.  The one exception is the branch below: a set
+    // that had no record and now has one has to be read, or it would write the emptiness
+    // it was created with over the file.
     //
     // Skipped entirely when records are not configured, and that is not just an
     // optimisation: with no folder there is nothing to re-derive from, so clearing every
@@ -461,6 +491,131 @@ void MovieSetModel::onSetMovieAdded(MovieSet* movieSet, Movie* movie)
     if (!memberships.contains(movieSet)) {
         memberships.append(movieSet);
     }
+    // Every membership addition in the application arrives here, which is why the seed
+    // hangs off this signal rather than off this model's own call sites: reload(),
+    // onMoviesInserted() for a movie that enters the library afterwards, onMovieChanged()
+    // for a membership edit, and a MovieSet::addMovie() made from outside the model all
+    // pass through it.  Placing it in reload() and onMovieChanged() instead would miss
+    // the other two.
+    seedFromMembers(movieSet);
+}
+
+void MovieSetModel::seedFromMembers(MovieSet* movieSet)
+{
+    if (movieSet == nullptr) {
+        return;
+    }
+    // Never over a record.  A set that has read a `set.nfo` already holds the
+    // authoritative overview and id, and seeding over them would be the hazard reload()
+    // refuses to take when it declines to re-read a record: a value the user edited
+    // replaced by one derived from somewhere else.  The mirror is a copy of the record,
+    // not a source for it.
+    //
+    // hasRecord() and deliberately *not* isBacked(), which is the same question plus
+    // "is a folder configured".  That second half is right for dropEmptySets(), where a
+    // record nothing can reach cannot keep a set standing, and wrong here: the contents
+    // this set read out of its record do not stop being the record's because the folder
+    // was switched off.  Nothing would re-derive them either.  reload() skips the whole
+    // record-refresh block while records are off, so the flag survives untouched, and the
+    // re-read branch fires only false->true, so switching the folder back on does not
+    // read the file again.  Gated on isBacked(), one reload in the artwork-next-to-movies
+    // layout -- the shipping default -- would let a member's overview and id into a set
+    // that has a record, permanently, and the next save would write them over the file.
+    // The id is the sharper half: `<set><uniqueid type="tmdb">` is #2012 and unmerged, so
+    // nearly every `set.nfo` in the wild carries no id at all and would acquire one.
+    if (movieSet->hasRecord()) {
+        return;
+    }
+    // Only what is missing is filled, so this never overwrites a value that is there --
+    // neither one an earlier member supplied nor one the user typed.  Two consequences,
+    // both deliberate and neither of them obvious.
+    //
+    // A seeded value is not refreshed when a member's NFO changes afterwards.  The seed
+    // fills a hole once; it does not track the members.
+    //
+    // And "missing" is emptiness, not intent.  Once PR-6 lands the overview editor, a user
+    // who *clears* the overview of a set with no record leaves a hole like any other, and
+    // the next movie to join fills it again from a member.
+    //
+    // Be exact about what that costs, because the obvious summary is wrong: the set is
+    // dirty and a drop *would* warn -- the user's own clearing edit set the flag, and the
+    // restore below preserves it rather than clearing it.  What the refill destroys is not
+    // the warning but the distinction.  It adds no mark of its own, so nothing tells "the
+    // clear is still pending" apart from "the clear has been silently undone".
+    //
+    // A set that has a record is safe, because the guard above stops the seed outright.
+    // A set with no record is not, and closing it needs a "deliberately empty" state this
+    // object does not have -- PR-6's decision, not this step's.  Worth knowing before the
+    // editor is written, because the editor is what makes it reachable.
+    const bool overviewIsMissing = movieSet->overview().isEmpty();
+    const bool idIsMissing = !movieSet->tmdbId().isValid();
+    if (!overviewIsMissing && !idIsMissing) {
+        return;
+    }
+
+    // First member with a non-empty value, in member order, and the two are decided
+    // independently: a set may take its overview from one member and its id from another,
+    // because a member NFO that carries one and not the other is ordinary and demanding
+    // both from one movie would throw away the half that is there.
+    //
+    // Members can legitimately disagree -- nothing in MediaElch has ever forced D2's
+    // "identical text in every member", so a library assembled by other tools will have
+    // sets whose members differ -- and first-wins is the rule that matches what Kodi 19
+    // and 20 do with the same input: AddSet keeps the first-scanned member's copy and
+    // runs no UPDATE at all.  Whichever value is picked here becomes authoritative once
+    // the user saves the set, so it is picked by a stated rule rather than by hash order.
+    QString overview;
+    TmdbId tmdbId = TmdbId::NoId;
+    for (const Movie* movie : movieSet->movies()) {
+        const MovieSetInfo info = movie->set();
+        // A member that names some other set describes some other collection, and its
+        // overview and id belong to that one.  MovieSet::addMovie() is public, so this
+        // set can hold a movie whose own `<set><name>` points elsewhere -- reload() cures
+        // that, but until it runs such a member must not donate anything.
+        //
+        // Note where this guard's correctness comes from after a rename: nothing in
+        // MovieSet::setName() moves the members' names with it, so every member would
+        // stop matching.  What keeps them matching is SetsWidget::onSetNameChanged(),
+        // which rewrites every member's MovieSetInfo immediately after renaming the
+        // object, and it is the only setName() caller in `src/`.  A second caller that
+        // did not do the same would leave this set unable to seed from its own members.
+        if (info.name != movieSet->name()) {
+            continue;
+        }
+        if (overview.isEmpty()) {
+            overview = info.overview;
+        }
+        if (!tmdbId.isValid()) {
+            tmdbId = info.tmdbId;
+        }
+        if (!overview.isEmpty() && tmdbId.isValid()) {
+            break;
+        }
+    }
+
+    const bool seedsOverview = overviewIsMissing && !overview.isEmpty();
+    const bool seedsId = idIsMissing && tmdbId.isValid();
+    if (!seedsOverview && !seedsId) {
+        return;
+    }
+
+    // Seeding is not an edit.  Both setters mark the set as needing to be saved, and this
+    // is not a change the user made: it is the same value the library already held, just
+    // read into the object that was missing it.  Leaving the flag set would have
+    // warnIfRecordIsLost() report discarding unsaved changes on every ordinary drop, and
+    // it would do so for a set nobody touched -- the same reason KodiXml::loadMovieSet()
+    // clears it after the reader has run.
+    //
+    // The previous value is restored rather than cleared: a set that really does have an
+    // unsaved rename waiting must not have it forgotten because a movie joined it.
+    const bool wasChanged = movieSet->hasChanged();
+    if (seedsOverview) {
+        movieSet->setOverview(overview);
+    }
+    if (seedsId) {
+        movieSet->setTmdbId(tmdbId);
+    }
+    movieSet->setChanged(wasChanged);
 }
 
 void MovieSetModel::onSetMovieRemoved(MovieSet* movieSet, QObject* movie)

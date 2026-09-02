@@ -32,6 +32,28 @@ Movie* movieInSet(QObject& owner, const QString& title, const QString& setName)
     return movie;
 }
 
+/// \brief The whole `<set>` block a member NFO carries: name, overview and id.
+MovieSetInfo setInfo(const QString& name, const QString& overview, TmdbId tmdbId = TmdbId::NoId)
+{
+    MovieSetInfo info;
+    info.name = name;
+    info.overview = overview;
+    info.tmdbId = tmdbId;
+    return info;
+}
+
+/// \brief A movie whose NFO carries the set's overview and id as well as its name.
+/// \details What MovieXmlReader actually reads out of `<set>`: the join key plus the
+///          mirrored overview and collection id (D-A).
+Movie* movieInSet(QObject& owner, const QString& title, const MovieSetInfo& info)
+{
+    auto* movie = new Movie({}, &owner);
+    movie->setTitle(title);
+    movie->setSetInfo(info);
+    movie->setChanged(false);
+    return movie;
+}
+
 /// \brief Puts \p movie into \p setName, the way the rest of MediaElch still does it.
 void moveToSet(Movie* movie, const QString& setName)
 {
@@ -886,8 +908,10 @@ TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
     // D-A's other half, and the reason MovieSet::hasRecord() exists.  Until `set.nfo`
     // was written, a set was nothing but the movies that named it, so re-deriving the
     // library and finding none left meant the set was gone.  A set with a record of its
-    // own is not derived from anything: it has an overview, a collection id and artwork
-    // that belong to the set, and it stays.
+    // own is not derived from anything: the file on disk says it exists, whatever the
+    // movies say, and it stays.  Not because the record holds anything the members do not
+    // -- the overview and the id are mirrored into every member NFO, and the artwork is
+    // the image files beside the record -- but because it exists at all.
     QObject owner;
     MovieModel movies;
     MediaCenterInterfaceMock mediaCenter;
@@ -1104,5 +1128,382 @@ TEST_CASE("A set with a record but no movie is found at all", "[model][movie][se
         sets.reload();
         CHECK(sets.set("Curated Collection") == nullptr);
         CHECK(sets.set("Alien Collection") != nullptr);
+    }
+}
+
+TEST_CASE("A set derived from movies knows what its members know", "[model][movie][set]")
+{
+    // A set is born from a movie NFO -- that is the only place MediaElch ever learns a
+    // set exists, because membership lives in the member movies and nowhere else (D-A).
+    // Such a set used to be built from a name alone, so it carried an empty overview and
+    // no collection id even though every member NFO held both, and the first `set.nfo`
+    // written for it was written from that emptiness: MovieSetXmlWriter skips an empty
+    // overview and an invalid id, so the authoritative copy was blank while the mirror
+    // held the data.
+    QObject owner;
+    MovieModel movies;
+
+    SECTION("The overview and the id come from the member NFOs")
+    {
+        movies.addMovie(
+            movieInSet(owner, "Alien", setInfo("Alien Collection", "Ripley versus the Alien.", TmdbId(8091))));
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview() == "Ripley versus the Alien.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+    }
+
+    SECTION("Seeding is not an edit")
+    {
+        // Both setters mark the set as needing to be saved, and this is not a change the
+        // user made: it is the value the library already held, read into the object that
+        // was missing it.  Left set, the flag would have the model report discarding
+        // unsaved changes every time an ordinary drop destroyed such a set.
+        movies.addMovie(
+            movieInSet(owner, "Alien", setInfo("Alien Collection", "Ripley versus the Alien.", TmdbId(8091))));
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK_FALSE(sets.set("Alien Collection")->hasChanged());
+    }
+
+    SECTION("An unsaved edit is not forgotten because a movie joined")
+    {
+        // The flag is restored, not cleared.  A set with a rename waiting to be saved
+        // must not lose it because the seed ran, and the seed runs on every membership
+        // addition.
+        movies.addMovie(movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId)));
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        MovieSet* movieSet = sets.set("Alien Collection");
+        REQUIRE(movieSet != nullptr);
+        movieSet->setName("Alien Anthology");
+        REQUIRE(movieSet->hasChanged());
+
+        movies.addMovie(movieInSet(owner, "Aliens", setInfo("Alien Anthology", "Ripley returns.", TmdbId(8091))));
+
+        CHECK(movieSet->overview() == "Ripley returns.");
+        CHECK(movieSet->hasChanged());
+    }
+
+    SECTION("Members that disagree are resolved by the first one that has a value")
+    {
+        // Nothing in MediaElch has ever forced D2's "identical text in every member", so
+        // a library assembled by other tools has sets whose members disagree.  First
+        // member with a non-empty value, in member order, which is what Kodi 19 and 20
+        // do with the same input: AddSet keeps the first-scanned member's copy and runs
+        // no UPDATE at all.
+        movies.addMovie(
+            movieInSet(owner, "Alien", setInfo("Alien Collection", "Ripley versus the Alien.", TmdbId(8091))));
+        movies.addMovie(
+            movieInSet(owner, "Aliens", setInfo("Alien Collection", "A very different summary.", TmdbId(1234))));
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview() == "Ripley versus the Alien.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+    }
+
+    SECTION("A member with nothing to say does not win over a later one that has")
+    {
+        // "First member" means the first one that actually carries a value, not the first
+        // one in the set.  A member NFO with no `<set><overview>` at all is the ordinary
+        // case in a library MediaElch has not written yet, and letting it win would seed
+        // the emptiness this exists to remove.
+        movies.addMovie(movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId)));
+        movies.addMovie(movieInSet(owner, "Aliens", setInfo("Alien Collection", "Ripley returns.", TmdbId(8091))));
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview() == "Ripley returns.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+    }
+
+    SECTION("The overview and the id are decided independently")
+    {
+        // A member NFO that carries one and not the other is ordinary -- #2012's id is
+        // MediaElch's own addition and predates nothing -- so demanding both from one
+        // movie would throw away the half that is there.
+        movies.addMovie(
+            movieInSet(owner, "Alien", setInfo("Alien Collection", "Ripley versus the Alien.", TmdbId::NoId)));
+        movies.addMovie(
+            movieInSet(owner, "Aliens", setInfo("Alien Collection", "A very different summary.", TmdbId(8091))));
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview() == "Ripley versus the Alien.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+    }
+
+    SECTION("A member that names another set donates nothing")
+    {
+        // MovieSet::addMovie() is public, so a set can hold a movie whose own
+        // `<set><name>` points elsewhere.  That movie's overview and id describe the
+        // collection it names, not this one, and carrying them over would make this set
+        // authoritative for another set's text the moment the user saved it.
+        movies.addMovie(movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId)));
+        Movie* predator = movieInSet(owner, "Predator", setInfo("Predator Collection", "The hunt.", TmdbId(399)));
+        movies.addMovie(predator);
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+
+        sets.set("Alien Collection")->addMovie(predator);
+
+        CHECK(sets.set("Alien Collection")->overview().isEmpty());
+        CHECK_FALSE(sets.set("Alien Collection")->tmdbId().isValid());
+    }
+
+    SECTION("A movie that enters the library afterwards brings its set's overview")
+    {
+        // A set is not born only while the library is loading.  A movie NFO naming a set
+        // nothing else knows about arrives through the movie model at any time, and the
+        // set it creates has to be seeded there too.
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        REQUIRE(sets.sets().isEmpty());
+
+        movies.addMovie(
+            movieInSet(owner, "Alien", setInfo("Alien Collection", "Ripley versus the Alien.", TmdbId(8091))));
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview() == "Ripley versus the Alien.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+        CHECK_FALSE(sets.set("Alien Collection")->hasChanged());
+    }
+
+    SECTION("A membership edit that creates a set seeds it")
+    {
+        // A set created by a membership edit is seeded from whatever value assign() writes
+        // onto the movie.  This pins assign()'s contract, and deliberately not a user
+        // gesture: a full value like this one is not what either in-app caller sends.  The
+        // movie widget's set box and the sets tab's "Add Movie" both build a name-only
+        // MovieSetInfo on purpose, because the previous set's overview and id describe the
+        // set the movie is leaving (`MovieWidget.cpp:1301-1307`, `SetsWidget.cpp:424-431`).
+        // The path that really does carry a full value into a set that did not exist is
+        // the section below.
+        Movie* alien = movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId));
+        movies.addMovie(alien);
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+
+        sets.assign(alien, setInfo("Alien Anthology", "Ripley returns.", TmdbId(8091)));
+
+        REQUIRE(sets.set("Alien Anthology") != nullptr);
+        CHECK(sets.set("Alien Anthology")->overview() == "Ripley returns.");
+        CHECK(sets.set("Alien Anthology")->tmdbId() == TmdbId(8091));
+        // The *movie* is changed by the edit, and the set is not: nothing about the set's
+        // own record was edited, only read out of the member that just joined.
+        CHECK(alien->hasChanged());
+        CHECK_FALSE(sets.set("Alien Anthology")->hasChanged());
+    }
+
+    SECTION("A set created by a reconciled NFO re-read is seeded")
+    {
+        // The production path that carries a member's overview and id into a set nothing
+        // knew about a moment ago, and the reason the seed is worth having at all:
+        // MovieController::loadData() re-reads a library movie's NFO under a
+        // QSignalBlocker, so Movie::sigChanged never reaches the model and syncMovie() is
+        // the notification that survives.  What the file holds is the whole `<set>` block
+        // -- name, overview and id together -- not a name on its own.
+        Movie* alien = movieInSet(owner, "Alien", setInfo("Alien Collection", "", TmdbId::NoId));
+        movies.addMovie(alien);
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        {
+            const QSignalBlocker blocker(alien);
+            alien->setSetInfo(setInfo("Alien Anthology", "Ripley returns.", TmdbId(8091)));
+        }
+        REQUIRE(sets.set("Alien Anthology") == nullptr);
+
+        sets.syncMovie(alien);
+
+        REQUIRE(sets.set("Alien Anthology") != nullptr);
+        CHECK(sets.set("Alien Anthology")->overview() == "Ripley returns.");
+        CHECK(sets.set("Alien Anthology")->tmdbId() == TmdbId(8091));
+        CHECK_FALSE(sets.set("Alien Anthology")->hasChanged());
+    }
+}
+
+TEST_CASE("A record beats the members", "[model][movie][set]")
+{
+    // A set that has read a `set.nfo` already holds the authoritative overview and id,
+    // and the members hold a mirror of it (D-A).  Seeding over that would be the hazard
+    // reload() refuses when it declines to re-read a record: an overview the user edited
+    // replaced by one derived from somewhere else.
+    QObject owner;
+    MovieModel movies;
+    MediaCenterInterfaceMock mediaCenter;
+    movies.addMovie(movieInSet(owner, "Alien", setInfo("Alien Collection", "What the members say.", TmdbId(1234))));
+
+    SECTION("A record read at the set's birth is not seeded over")
+    {
+        mediaCenter.putRecord("Alien Collection", {"What the record says.", TmdbId(8091)});
+        MovieSetModel sets;
+        sets.setRecordSource(&mediaCenter);
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE(sets.set("Alien Collection")->hasRecord());
+        CHECK(sets.set("Alien Collection")->overview() == "What the record says.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+        CHECK_FALSE(sets.set("Alien Collection")->hasChanged());
+    }
+
+    SECTION("A record found later replaces what was seeded")
+    {
+        // The folder is configured after the sets already exist, which is the reload that
+        // takes the false-to-true branch for every set that has a record.  It re-reads
+        // the record, and the record wins.
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        REQUIRE(sets.set("Alien Collection")->overview() == "What the members say.");
+
+        mediaCenter.putRecord("Alien Collection", {"What the record says.", TmdbId(8091)});
+        sets.setRecordSource(&mediaCenter);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview() == "What the record says.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+        CHECK_FALSE(sets.set("Alien Collection")->hasChanged());
+    }
+
+    SECTION("A record still counts while the folder is switched off")
+    {
+        // The gate is hasRecord(), not isBacked().  Switching the folder off does not make
+        // the values a set read out of its `set.nfo` stop being the record's, and nothing
+        // would put them back: reload() leaves the record flags alone while records are
+        // off, and its re-read branch fires only when a set *gains* a record, so turning
+        // the folder back on does not read the file again either.  Seeded here, a member's
+        // text would be permanent and the next save would write it over the file.
+        //
+        // An empty record is the case that bites, and it is the common one:
+        // `<set><uniqueid type="tmdb">` is #2012 and unmerged, so nearly every `set.nfo`
+        // in the wild carries no id at all.
+        mediaCenter.putRecord("Alien Collection", {"", TmdbId::NoId});
+        MovieSetModel sets;
+        sets.setRecordSource(&mediaCenter);
+        sets.setMovieModel(&movies);
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE(sets.set("Alien Collection")->hasRecord());
+
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->overview().isEmpty());
+        CHECK_FALSE(sets.set("Alien Collection")->tmdbId().isValid());
+
+        // And back on again, which is where it would show: the record is not re-read, so
+        // anything the seed had let in while the folder was off would still be here.
+        mediaCenter.setRecordsEnabled(true);
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE(sets.set("Alien Collection")->hasRecord());
+        CHECK(sets.set("Alien Collection")->overview().isEmpty());
+        CHECK_FALSE(sets.set("Alien Collection")->tmdbId().isValid());
+    }
+
+    SECTION("A set with no record is seeded while the folder is off")
+    {
+        // The other side of narrowing the gate to hasRecord(): it must not block the seed
+        // where there is no record to protect.  Artwork next to movies is the shipping
+        // default, so this is the configuration in which nearly every set is seeded.
+        mediaCenter.setRecordsEnabled(false);
+        MovieSetModel sets;
+        sets.setRecordSource(&mediaCenter);
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE_FALSE(sets.set("Alien Collection")->hasRecord());
+        CHECK(sets.set("Alien Collection")->overview() == "What the members say.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(1234));
+    }
+
+    SECTION("An empty record is still a record")
+    {
+        // The gate is "does this set have a record", not "is this set's overview empty".
+        // A `set.nfo` whose `<overview>` the user deliberately cleared says what the set's
+        // overview is just as much as a full one does, and the members must not refill it.
+        mediaCenter.putRecord("Alien Collection", {"", TmdbId::NoId});
+        MovieSetModel sets;
+        sets.setRecordSource(&mediaCenter);
+        sets.setMovieModel(&movies);
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE(sets.set("Alien Collection")->hasRecord());
+        CHECK(sets.set("Alien Collection")->overview().isEmpty());
+        CHECK_FALSE(sets.set("Alien Collection")->tmdbId().isValid());
+    }
+}
+
+TEST_CASE("A set with members survives a reload in every configuration", "[model][movie][set]")
+{
+    // Stated for its own sake, because it was covered only as a side effect of two tests
+    // about other things -- the record enumeration and a settings change -- and it is the
+    // property an existing user would notice if it broke.  A set derived from movie NFOs
+    // is re-derived on every reload() and dropEmptySets() spares it for having members,
+    // whichever way the movie set information folder is configured.  Nothing here needs a
+    // record, and nothing here writes a file.
+    QObject owner;
+    MovieModel movies;
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+
+    SECTION("With no media center at all")
+    {
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+    }
+
+    SECTION("With no movie set information folder configured")
+    {
+        // The shipping default, and the state every user who has never opened the
+        // settings is in: records are off, so no set has one and every set is its movies.
+        MediaCenterInterfaceMock mediaCenter;
+        mediaCenter.setRecordsEnabled(false);
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        sets.setRecordSource(&mediaCenter);
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+    }
+
+    SECTION("With a folder freshly configured and no records in it yet")
+    {
+        // The first reload after a folder is chosen: the listing is empty, so every
+        // existing set is told it has no record, and every one of them survives on its
+        // members alone.  No record is created for them, by this model or by anything
+        // else -- a set gets one when the user saves it.
+        MediaCenterInterfaceMock mediaCenter;
+        MovieSetModel sets;
+        sets.setMovieModel(&movies);
+        sets.setRecordSource(&mediaCenter);
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE_FALSE(sets.set("Alien Collection")->hasRecord());
+
+        sets.reload();
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+        CHECK_FALSE(mediaCenter.hasRecordOnDisk("Alien Collection"));
+        CHECK(mediaCenter.savedRecordCount() == 0);
     }
 }
