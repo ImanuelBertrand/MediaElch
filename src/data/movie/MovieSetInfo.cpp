@@ -8,3 +8,13 @@ MovieSetInfo MovieSetInfo::renamedTo(QString newName) const
     renamed.name = std::move(newName);
     return renamed;
 }
+
+bool MovieSetInfo::operator==(const MovieSetInfo& other) const
+{
+    return tmdbId == other.tmdbId && name == other.name && overview == other.overview;
+}
+
+bool MovieSetInfo::operator!=(const MovieSetInfo& other) const
+{
+    return !(*this == other);
+}

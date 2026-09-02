@@ -67,15 +67,34 @@ public:
     void setChanged(bool changed);
 
 signals:
+    /// \brief Emitted for every movie that becomes a member of this set.
+    /// \details Membership is announced per movie, and not only through sigChanged
+    ///          below, because MovieSetModel keeps an index of which sets a movie is
+    ///          in and an index cannot be maintained from a signal that does not say
+    ///          what changed.  Emitting it here rather than having the model update
+    ///          the index at its own call sites is what keeps the index right for a
+    ///          membership the model did not make itself: addMovie() is public.
+    void sigMovieAdded(MovieSet* set, Movie* movie);
+    /// \brief Emitted for every movie that stops being a member of this set.
+    /// \details Carries a QObject*, not a Movie*, because it is also emitted for a
+    ///          member that has been destroyed, whose Movie sub-object is gone by
+    ///          then; see forgetDestroyedMovie().  The pointer is for comparison only.
+    void sigMovieRemoved(MovieSet* set, QObject* movie);
+
     /// \brief Emitted whenever anything about this set changed, including its
     ///        membership.
     /// \warning A membership change deliberately marks *nothing* dirty -- not
     ///          this set (membership is not part of set.nfo, D-A) and not the
-    ///          movie (the model becomes the only writer in a later step).  So
-    ///          whoever calls addMovie()/removeMovie() -- MovieSetModel, once it
-    ///          exists -- has to mark the member movies changed itself.  Forget
-    ///          that and a membership edit is lost with no flag set anywhere,
-    ///          while this signal has already claimed otherwise.
+    ///          movie, whose MovieSetInfo is the value its own file carries and is
+    ///          not written from here.  So a caller that means an *edit* -- one that
+    ///          has to reach the member's NFO -- must mark the member movies changed
+    ///          itself, and MovieSetModel::assign() is the entry point that does.
+    ///          Most callers of addMovie()/removeMovie() are not edits at all: the
+    ///          model also calls them from attachMovie(), detachMovie(), reload() and
+    ///          onMovieChanged(), where it is following the library rather than
+    ///          changing it, and where dirtying a movie would be wrong.  Get that
+    ///          distinction backwards and either a membership edit is lost with no flag
+    ///          set anywhere, or every library reload offers to rewrite every NFO.
     void sigChanged(MovieSet* set);
 
 private slots:

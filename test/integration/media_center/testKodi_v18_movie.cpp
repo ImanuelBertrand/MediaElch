@@ -225,7 +225,7 @@ TEST_CASE("Movie XML writer for Kodi v18", "[data][movie][kodi][nfo]")
             "factions based on human virtues. Beatrice Prior (Tris) is warned that she is Divergent and thus will "
             "never fit into any one of the factions. She along with Tobias Eaton (Four) soon learn that a sinister "
             "plot is brewing in the seemingly perfect society.";
-        movie.setSet(set);
+        movie.setSetInfo(set);
 
         movie.addTag("Best Tag");
         movie.setDirector("Robert Schwentke");

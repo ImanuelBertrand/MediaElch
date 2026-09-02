@@ -88,10 +88,13 @@ void MovieSet::addMovie(Movie* movie)
     // is not a member.
     connect(movie, &QObject::destroyed, this, &MovieSet::onMovieDestroyed, Qt::UniqueConnection);
     // Membership is stored in the member movies' NFOs, not in `set.nfo` (D-A), so
-    // it does not make this set's own record dirty.  Writing it back to the movie
-    // is deliberately not done here: the movie-side setter is removed in the later
-    // "the model is the only writer" step, and doing it now would create the very
-    // two-writer problem that step exists to remove.
+    // it does not make this set's own record dirty.  Writing it back to the movie is
+    // deliberately not done here: a movie's MovieSetInfo is the value its own file
+    // carries, and writing it from here as well is the two-writer problem the split
+    // exists to remove.  A caller that means an edit does both halves through
+    // MovieSetModel::assign(); a caller that is only following the library, as the
+    // model itself is in attachMovie() and reload(), deliberately does neither.
+    emit sigMovieAdded(this, movie);
     emit sigChanged(this);
 }
 
@@ -100,6 +103,7 @@ void MovieSet::removeMovie(Movie* movie)
     if (m_movies.removeAll(movie) == 0) {
         return;
     }
+    emit sigMovieRemoved(this, movie);
     emit sigChanged(this);
 }
 
@@ -108,7 +112,12 @@ void MovieSet::clearMovies()
     if (m_movies.isEmpty()) {
         return;
     }
-    m_movies.clear();
+    // Taken first: a handler of sigMovieRemoved may look at movies() and has to see
+    // the membership this call leaves behind, not the one it is undoing.
+    const QVector<Movie*> former = std::exchange(m_movies, {});
+    for (Movie* movie : former) {
+        emit sigMovieRemoved(this, movie);
+    }
     emit sigChanged(this);
 }
 
@@ -128,6 +137,7 @@ void MovieSet::forgetDestroyedMovie(QObject* movie)
         return;
     }
     m_movies.erase(it, m_movies.end());
+    emit sigMovieRemoved(this, movie);
     emit sigChanged(this);
 }
 

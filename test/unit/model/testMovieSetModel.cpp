@@ -1,11 +1,16 @@
 #include "test/test_helpers.h"
 
 #include "data/movie/Movie.h"
+#include "data/movie/MovieController.h"
 #include "data/movie/MovieSet.h"
+#include "globals/Manager.h"
 #include "model/MovieModel.h"
 #include "model/MovieSetModel.h"
+#include "scrapers/movie/MovieMerger.h"
+#include "test/unit/scrapers/custom_movie_scraper/StubMovieScraper.h"
 
 #include <QAbstractItemModelTester>
+#include <QApplication>
 #include <QSignalSpy>
 #include <memory>
 
@@ -19,7 +24,7 @@ Movie* movieInSet(QObject& owner, const QString& title, const QString& setName)
     if (!setName.isEmpty()) {
         MovieSetInfo info;
         info.name = setName;
-        movie->setSet(info);
+        movie->setSetInfo(info);
     }
     movie->setChanged(false);
     return movie;
@@ -30,7 +35,7 @@ void moveToSet(Movie* movie, const QString& setName)
 {
     MovieSetInfo info;
     info.name = setName;
-    movie->setSet(info);
+    movie->setSetInfo(info);
 }
 
 /// \brief Captures qWarning() output for as long as it is in scope.
@@ -68,6 +73,235 @@ private:
 QStringList* WarningCapture::s_messages = nullptr;
 
 } // namespace
+
+TEST_CASE("MovieSetModel is the only thing that changes membership", "[model][movie][set]")
+{
+    QObject owner;
+    MovieModel movies;
+    MovieSetModel sets;
+
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+    sets.setMovieModel(&movies);
+    REQUIRE(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+
+    SECTION("assign moves a movie between sets and marks it changed")
+    {
+        MovieSetInfo predator;
+        predator.name = "Predator Collection";
+
+        sets.assign(alien, predator);
+
+        CHECK(alien->set().name == "Predator Collection");
+        CHECK(sets.set("Alien Collection")->movies().isEmpty());
+        REQUIRE(sets.set("Predator Collection") != nullptr);
+        CHECK(sets.set("Predator Collection")->movies() == QVector<Movie*>{alien});
+        // A membership change dirties neither the movie nor the set on its own, and it
+        // has to reach the member's NFO (D-A).  assign() is what marks it.
+        CHECK(alien->hasChanged());
+    }
+
+    SECTION("assign carries the whole value, not only the name")
+    {
+        MovieSetInfo predator;
+        predator.name = "Predator Collection";
+        predator.overview = "A science fiction action franchise.";
+        predator.tmdbId = TmdbId(399);
+
+        sets.assign(alien, predator);
+
+        CHECK(alien->set().overview == "A science fiction action franchise.");
+        CHECK(alien->set().tmdbId == TmdbId(399));
+    }
+
+    SECTION("assign with an empty name takes the movie out of its set")
+    {
+        sets.assign(alien, MovieSetInfo{});
+
+        CHECK(alien->set().name.isEmpty());
+        // An edit never destroys a set, even the one it just emptied.
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies().isEmpty());
+    }
+
+    SECTION("assign on a movie outside the library writes the value and no membership")
+    {
+        // A scrape result or a freshly parsed NFO has no membership here to change.
+        Movie* outsider = movieInSet(owner, "Alien 3", "");
+        MovieSetInfo predator;
+        predator.name = "Predator Collection";
+
+        sets.assign(outsider, predator);
+
+        CHECK(outsider->set().name == "Predator Collection");
+        CHECK(sets.sets() == QVector<MovieSet*>{sets.set("Alien Collection")});
+    }
+
+    SECTION("assign survives a caller that has blocked the movie's signals")
+    {
+        // The reconcile is a direct call, not a signal, which is the whole reason the
+        // model can be the authority on membership at all: MovieController::loadData()
+        // blocks a movie's signals across a whole NFO re-read.
+        MovieSetInfo predator;
+        predator.name = "Predator Collection";
+        {
+            const QSignalBlocker blocker(alien);
+            sets.assign(alien, predator);
+        }
+
+        REQUIRE(sets.set("Predator Collection") != nullptr);
+        CHECK(sets.set("Predator Collection")->movies() == QVector<Movie*>{alien});
+    }
+
+    SECTION("syncMovie catches a set written while the movie's signals were blocked")
+    {
+        // Exactly what MovieController::loadData() does around its NFO re-read: the
+        // movie's set comes back different from disk and Movie::sigChanged never fires.
+        {
+            const QSignalBlocker blocker(alien);
+            MovieSetInfo fromNfo;
+            fromNfo.name = "Alien Anthology";
+            alien->setSetInfo(fromNfo);
+        }
+        REQUIRE(sets.set("Alien Anthology") == nullptr);
+
+        sets.syncMovie(alien);
+
+        REQUIRE(sets.set("Alien Anthology") != nullptr);
+        CHECK(sets.set("Alien Anthology")->movies() == QVector<Movie*>{alien});
+        CHECK(sets.set("Alien Collection")->movies().isEmpty());
+    }
+
+    SECTION("syncMovie does nothing for a movie whose set has not moved")
+    {
+        QSignalSpy changes(&sets, &QAbstractItemModel::dataChanged);
+
+        sets.syncMovie(alien);
+
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+        CHECK(changes.isEmpty());
+    }
+
+    SECTION("syncMovie does not bring back a set that removeSet took away")
+    {
+        // removeSet() clears its members' set names as it detaches them, so there is
+        // nothing left for a later reconcile to read the set back out of.
+        sets.removeSet("Alien Collection");
+        REQUIRE(sets.sets().isEmpty());
+
+        sets.syncMovie(alien);
+
+        CHECK(sets.sets().isEmpty());
+        CHECK(alien->set().name.isEmpty());
+    }
+
+    SECTION("syncMovie is a no-op for a movie the model never attached")
+    {
+        Movie* outsider = movieInSet(owner, "Predator", "Predator Collection");
+
+        sets.syncMovie(outsider);
+
+        CHECK(sets.sets() == QVector<MovieSet*>{sets.set("Alien Collection")});
+    }
+
+    SECTION("assign to the set the movie is already in changes nothing at all")
+    {
+        // Putting a movie where it already is must not dirty it: MediaElch would then
+        // offer to rewrite an NFO the user never touched.  MovieSet's own setters make
+        // the same promise, and assign() is the membership entry point beside them.
+        MovieSetInfo same = alien->set();
+        QSignalSpy changes(alien, &Movie::sigChanged);
+
+        sets.assign(alien, same);
+
+        CHECK_FALSE(alien->hasChanged());
+        CHECK(changes.isEmpty());
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+    }
+
+    SECTION("assign compares the whole value, so a name-only one overwrites the rest")
+    {
+        // The sharp edge behind MovieWidget::onSetChange()'s own name comparison: the
+        // widget hands assign() a name and nothing else, so for a movie whose set
+        // carries an id or an overview the guard below never matches and the write goes
+        // through.  That is right when the user picked a different set and wrong when
+        // they picked the same one, which is why the widget guards on the name first.
+        MovieSetInfo rich;
+        rich.name = "Alien Collection";
+        rich.tmdbId = TmdbId(8091);
+        rich.overview = "A science fiction horror film franchise.";
+        sets.assign(alien, rich);
+        alien->setChanged(false);
+
+        MovieSetInfo nameOnly;
+        nameOnly.name = "Alien Collection";
+        sets.assign(alien, nameOnly);
+
+        CHECK(alien->set().name == "Alien Collection");
+        CHECK(alien->set().tmdbId == TmdbId::NoId);
+        CHECK(alien->set().overview.isEmpty());
+        CHECK(alien->hasChanged());
+    }
+
+    SECTION("assign still reconciles when the value it was given is unchanged")
+    {
+        // Only the write is skipped, not the reconcile: the model can be behind the
+        // movie for reasons that have nothing to do with this call.
+        {
+            // Exactly the shape of MovieController::loadData(): the whole re-read,
+            // including its closing setChanged(false), happens inside the blocker.
+            const QSignalBlocker blocker(alien);
+            MovieSetInfo fromNfo;
+            fromNfo.name = "Alien Anthology";
+            alien->setSetInfo(fromNfo);
+            alien->setChanged(false);
+        }
+        REQUIRE(sets.set("Alien Anthology") == nullptr);
+        REQUIRE_FALSE(alien->hasChanged());
+
+        sets.assign(alien, alien->set());
+
+        REQUIRE(sets.set("Alien Anthology") != nullptr);
+        CHECK(sets.set("Alien Anthology")->movies() == QVector<Movie*>{alien});
+        // The value did not change, so nothing was dirtied on its account.
+        CHECK_FALSE(alien->hasChanged());
+    }
+
+    SECTION("a scrape of a library movie needs syncMovie, because the merge is blocked")
+    {
+        // copyDetailsToMovie() blocks the target's signals for the whole merge, so a
+        // scrape writes a library movie's set where the model cannot see it.  Today
+        // MovieController::scraperLoadDone() happens to repair that a frame later --
+        // Movie::setChanged() emits sigChanged even when the flag does not change --
+        // but that is a coincidence, so the reconcile is made explicitly and this is
+        // what pins it.
+        Movie scraped;
+        MovieSetInfo fromScraper;
+        fromScraper.name = "Alien Anthology";
+        fromScraper.tmdbId = TmdbId(8091);
+        scraped.setSetInfo(fromScraper);
+
+        mediaelch::scraper::copyDetailsToMovie(
+            *alien, scraped, QSet<MovieScraperInfo>{MovieScraperInfo::Set}, false, false);
+
+        REQUIRE(alien->set().name == "Alien Anthology");
+        CHECK(sets.set("Alien Anthology") == nullptr); // the merge told the model nothing
+
+        sets.syncMovie(alien);
+
+        REQUIRE(sets.set("Alien Anthology") != nullptr);
+        CHECK(sets.set("Alien Anthology")->movies() == QVector<Movie*>{alien});
+        CHECK(sets.set("Alien Collection")->movies().isEmpty());
+    }
+
+    SECTION("assign and syncMovie ignore a null movie")
+    {
+        sets.assign(nullptr, MovieSetInfo{});
+        sets.syncMovie(nullptr);
+
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+    }
+}
 
 TEST_CASE("MovieSetModel groups the library", "[model][movie][set]")
 {
@@ -160,7 +394,7 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
 
     SECTION("a movie whose set is cleared leaves it")
     {
-        alien->setSet(MovieSetInfo{});
+        alien->setSetInfo(MovieSetInfo{});
 
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{aliens});
     }
@@ -255,6 +489,32 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         CHECK(sets.set("Predator Collection") == nullptr);
     }
 
+    SECTION("a set that is dropped while it still holds a movie is forgotten entirely")
+    {
+        // detachMovie() finds the sets a movie is in from an index rather than by
+        // scanning all of them, so a set that is deleted has to leave that index with
+        // it: nothing else would take it out, and the next detach of that movie would
+        // call removeMovie() on freed memory.
+        //
+        // removeSet() detaches by clearing each member's set name, which takes the
+        // movie out of the set that *names* it -- so a member added through the public
+        // MovieSet::addMovie(), whose own name points elsewhere, is still in the set
+        // when it is deleted.
+        MovieSet* alienCollection = sets.set("Alien Collection");
+        Movie* predator = movieInSet(owner, "Predator", "Predator Collection");
+        movies.addMovie(predator);
+        alienCollection->addMovie(predator);
+        REQUIRE(alienCollection->movies().contains(predator));
+
+        sets.removeSet("Alien Collection");
+        REQUIRE(sets.set("Alien Collection") == nullptr);
+
+        // The deleted set must not be reached for again on predator's way out.
+        movies.clear();
+
+        CHECK(sets.sets().isEmpty());
+    }
+
     SECTION("an unsaved record does not exempt a set from being dropped")
     {
         // MovieSet::hasChanged() is a one-way latch -- nothing calls setChanged(false)
@@ -298,8 +558,8 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         // the one they are about to fill again, and under D-A a set that has a
         // `set.nfo` outlives its last member.
         MovieSet* alienCollection = sets.set("Alien Collection");
-        alien->setSet(MovieSetInfo{});
-        aliens->setSet(MovieSetInfo{});
+        alien->setSetInfo(MovieSetInfo{});
+        aliens->setSetInfo(MovieSetInfo{});
 
         REQUIRE(sets.sets() == QVector<MovieSet*>{alienCollection});
         CHECK(alienCollection->movies().isEmpty());
@@ -552,5 +812,102 @@ TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
         CHECK_FALSE(sets->index(2, 0).isValid());
         CHECK_FALSE(sets->index(-1, 0).isValid());
         CHECK_FALSE(sets->data(QModelIndex(), MovieSetModel::NameRole).isValid());
+    }
+}
+
+// The only test here that uses the real Manager.  It has to: what it pins is the
+// wiring in MovieController, which reaches MovieSetModel through the singleton, and
+// there is no seam between them to substitute.  Manager works inside this binary --
+// measured -- so the cost is one test opting in, not the whole suite depending on it.
+namespace {
+
+/// \brief Empties Manager's movie model again, however the test leaves.
+struct LibraryGuard
+{
+    ~LibraryGuard()
+    {
+        Manager::instance()->movieModel()->clear();
+        // clear() only calls deleteLater(); let the sets hear about it.
+        qApp->processEvents();
+    }
+};
+
+} // namespace
+
+TEST_CASE("An NFO reload of a library movie reaches the set model", "[model][movie][set]")
+{
+    // MovieController::loadData() re-reads the NFO under a QSignalBlocker covering the
+    // whole load, including its closing setChanged(false), so nothing about this write
+    // reaches MovieSetModel by signal.  This is the pin for the explicit reconcile.
+    //
+    // Driven from cached NFO content rather than from a file: reloadFromNfo = false
+    // makes KodiXml parse Movie::nfoContent(), which is the path a movie restored from
+    // the database cache takes anyway, and it needs no fixture on disk.
+    Manager* manager = Manager::instance();
+    MovieSetModel* setModel = manager->movieSetModel();
+    LibraryGuard guard;
+
+    auto* movie = new Movie({}, nullptr);
+    MovieSetInfo beforeReload;
+    beforeReload.name = "Alien Collection";
+    movie->setSetInfo(beforeReload);
+    movie->setNfoContent(R"(<?xml version="1.0" encoding="UTF-8"?>
+<movie><title>Alien</title><set><name>Alien Anthology</name></set></movie>)");
+    movie->setChanged(false);
+    manager->movieModel()->addMovie(movie);
+    REQUIRE(setModel->set("Alien Collection") != nullptr);
+
+    REQUIRE(movie->controller()->loadData(manager->mediaCenterInterface(), true, false));
+
+    REQUIRE(movie->set().name == "Alien Anthology");
+    REQUIRE(setModel->set("Alien Anthology") != nullptr);
+    CHECK(setModel->set("Alien Anthology")->movies() == QVector<Movie*>{movie});
+    CHECK(setModel->set("Alien Collection")->movies().isEmpty());
+}
+
+TEST_CASE("A scrape of a library movie reaches the set model", "[model][movie][set]")
+{
+    // copyDetailsToMovie() blocks the target's signals for the whole merge, so a scrape
+    // writes a library movie's set where MovieSetModel cannot see it.  This is the pin
+    // for MovieController's explicit reconcile.
+    //
+    // The scrape is run inside a QSignalBlocker on purpose.  Without it the section
+    // passes either way: scraperLoadDone() calls Movie::setChanged(true) one frame
+    // later and that emits sigChanged even when the flag does not change, so the model
+    // is repaired by coincidence and the reconcile cannot be told from its absence.
+    // Blocking the movie removes the coincidence and leaves only the direct call, which
+    // is the thing under test -- a signal blocker cannot swallow it.
+    Manager* manager = Manager::instance();
+    MovieSetModel* setModel = manager->movieSetModel();
+    LibraryGuard guard;
+
+    auto* movie = new Movie({}, nullptr);
+    MovieSetInfo beforeScrape;
+    beforeScrape.name = "Alien Collection";
+    movie->setSetInfo(beforeScrape);
+    movie->setChanged(false);
+    manager->movieModel()->addMovie(movie);
+    REQUIRE(setModel->set("Alien Collection") != nullptr);
+
+    test::StubMovieScraper scraper("stub-set-scraper", nullptr);
+    MovieSetInfo fromScraper;
+    fromScraper.name = "Alien Anthology";
+    fromScraper.tmdbId = TmdbId(8091);
+    scraper.stub_movie.setSetInfo(fromScraper);
+
+    {
+        const QSignalBlocker blocker(movie);
+        movie->controller()->loadData({{&scraper, mediaelch::scraper::MovieIdentifier("stub-id")}},
+            mediaelch::Locale("en-US"),
+            QSet<MovieScraperInfo>{MovieScraperInfo::Set});
+        // MovieScrapeJob::start() defers to the event loop.
+        for (int spin = 0; spin < 20; ++spin) {
+            qApp->processEvents();
+        }
+
+        REQUIRE(movie->set().name == "Alien Anthology");
+        REQUIRE(setModel->set("Alien Anthology") != nullptr);
+        CHECK(setModel->set("Alien Anthology")->movies() == QVector<Movie*>{movie});
+        CHECK(setModel->set("Alien Collection")->movies().isEmpty());
     }
 }

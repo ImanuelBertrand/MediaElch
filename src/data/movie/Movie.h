@@ -135,7 +135,19 @@ public:
     void addCountry(QString country);
     void setPlayCount(int playCount);
     void setLastPlayed(QDateTime lastPlayed);
-    void setSet(MovieSetInfo set);
+    /// \brief Sets the collection this movie's own file says it belongs to.
+    /// \details This is the per-movie *value*, the one the NFO reader parses, the
+    ///          scrapers fill in and MovieXmlWriter writes back out.  Writing it does
+    ///          **not** move the movie between MovieSet entities: membership belongs to
+    ///          MovieSetModel, and MovieSetModel::assign() is what changes it.
+    ///
+    ///          It stays public because the two call sites that reach it -- the NFO
+    ///          reader and the scrape merger -- serve a library movie and a transient
+    ///          parse or scrape product from the same line, and cannot tell which they
+    ///          have.  The model reconciles from this value instead; see
+    ///          MovieSetModel::syncMovie().
+    /// \see docs/concepts/movie-sets.md, D-C
+    void setSetInfo(MovieSetInfo set);
     void setUserRating(double rating);
     void setChanged(bool changed);
     void setDownloadsInProgress(bool inProgress);

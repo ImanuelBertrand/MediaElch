@@ -3,6 +3,7 @@
 #include "data/movie/Movie.h"
 #include "data/movie/MovieSet.h"
 
+#include <QSignalSpy>
 #include <QVector>
 
 TEST_CASE("MovieSet membership", "[data][movie][set]")
@@ -160,14 +161,28 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
 
     SECTION("membership does not write the set onto the movie")
     {
-        // The movie-side value stays untouched; the model becomes the only writer
-        // in a later step.  See docs/concepts/movie-sets.md, D-C.
+        // This section was planted as a tripwire, to be retired by the step that made
+        // MovieSetModel the writer.  That step has now been taken, and the assertion
+        // survives it -- because the division of labour it describes turned out to be
+        // the permanent one rather than an interim state.
+        //
+        // A movie's MovieSetInfo is the value its own file carries.  A MovieSet's
+        // membership is the model's.  Putting a movie into a set here would write the
+        // value from a second place, which is the duplicated state the split exists to
+        // remove.  MovieSetModel::assign() does both halves, and it is the only thing
+        // that does; see docs/concepts/movie-sets.md, D-C, and the test case
+        // "MovieSetModel is the only thing that changes membership".
         MovieSet set{"Alien Collection"};
         Movie alien;
 
         set.addMovie(&alien);
 
         CHECK(alien.set().name.isEmpty());
+        CHECK(set.movies() == QVector<Movie*>{&alien});
+        // Nor does it dirty the movie, which is the other half of the same warning:
+        // a membership edit that has to reach disk is marked by MovieSetModel::assign(),
+        // and by nothing here.
+        CHECK_FALSE(alien.hasChanged());
     }
 }
 
@@ -313,5 +328,92 @@ TEST_CASE("MovieSetImages", "[data][movie][set]")
         CHECK(MovieSetImages::isSupportedImageType(ImageType::MovieSetPoster));
         CHECK(MovieSetImages::isSupportedImageType(ImageType::MovieSetBackdrop));
         CHECK_FALSE(MovieSetImages::isSupportedImageType(ImageType::MoviePoster));
+    }
+}
+
+TEST_CASE("MovieSet announces membership per movie", "[data][movie][set]")
+{
+    // sigChanged says only "something about this set changed", which is enough to
+    // repaint a row and not enough to maintain an index of which sets a movie is in.
+    // MovieSetModel keeps such an index, so membership is announced per movie as well.
+
+    SECTION("addMovie announces the movie that joined")
+    {
+        MovieSet set{"Alien Collection"};
+        Movie alien;
+        QSignalSpy added(&set, &MovieSet::sigMovieAdded);
+
+        set.addMovie(&alien);
+
+        REQUIRE(added.size() == 1);
+        CHECK(added.at(0).at(0).value<MovieSet*>() == &set);
+        CHECK(added.at(0).at(1).value<Movie*>() == &alien);
+    }
+
+    SECTION("adding the same movie twice announces it once")
+    {
+        MovieSet set{"Alien Collection"};
+        Movie alien;
+        QSignalSpy added(&set, &MovieSet::sigMovieAdded);
+
+        set.addMovie(&alien);
+        set.addMovie(&alien);
+
+        CHECK(added.size() == 1);
+    }
+
+    SECTION("removeMovie announces the movie that left")
+    {
+        MovieSet set{"Alien Collection"};
+        Movie alien;
+        set.addMovie(&alien);
+        QSignalSpy removed(&set, &MovieSet::sigMovieRemoved);
+
+        set.removeMovie(&alien);
+
+        REQUIRE(removed.size() == 1);
+        CHECK(removed.at(0).at(0).value<MovieSet*>() == &set);
+        CHECK(removed.at(0).at(1).value<QObject*>() == static_cast<QObject*>(&alien));
+
+        // A movie that is not a member announces nothing.
+        set.removeMovie(&alien);
+        CHECK(removed.size() == 1);
+    }
+
+    SECTION("clearMovies announces every member, not just the fact that it emptied")
+    {
+        // An index keyed by movie cannot be repaired from one collective signal, so
+        // emptying a set has to name each movie it drops.
+        MovieSet set{"Alien Collection"};
+        Movie alien;
+        Movie aliens;
+        set.addMovie(&alien);
+        set.addMovie(&aliens);
+        QSignalSpy removed(&set, &MovieSet::sigMovieRemoved);
+
+        set.clearMovies();
+
+        REQUIRE(removed.size() == 2);
+        CHECK(removed.at(0).at(1).value<QObject*>() == static_cast<QObject*>(&alien));
+        CHECK(removed.at(1).at(1).value<QObject*>() == static_cast<QObject*>(&aliens));
+        // The membership a handler sees is the one the call leaves behind.
+        CHECK(set.movies().isEmpty());
+
+        set.clearMovies();
+        CHECK(removed.size() == 2);
+    }
+
+    SECTION("a destroyed member is announced like any other departure")
+    {
+        MovieSet set{"Alien Collection"};
+        QSignalSpy removed(&set, &MovieSet::sigMovieRemoved);
+        {
+            Movie alien;
+            set.addMovie(&alien);
+            REQUIRE(removed.isEmpty());
+        }
+
+        REQUIRE(removed.size() == 1);
+        CHECK(removed.at(0).at(0).value<MovieSet*>() == &set);
     }
 }

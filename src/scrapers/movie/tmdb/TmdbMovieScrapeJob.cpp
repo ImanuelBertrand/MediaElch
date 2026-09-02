@@ -144,7 +144,7 @@ void TmdbMovieScrapeJob::loadCollection(const TmdbId& collectionTmdbId)
             set.tmdbId = TmdbId(parsedJson.value("id").toInt());
             set.name = parsedJson.value("name").toString();
             set.overview = parsedJson.value("overview").toString();
-            m_movie->setSet(set);
+            m_movie->setSetInfo(set);
         });
 }
 
@@ -181,7 +181,7 @@ void TmdbMovieScrapeJob::parseAndAssignInfos(const QJsonDocument& json)
         MovieSetInfo set;
         set.tmdbId = TmdbId(collection.value("id").toInt());
         set.name = collection.value("name").toString();
-        m_movie->setSet(set);
+        m_movie->setSetInfo(set);
     }
     {
         QTextDocument doc;

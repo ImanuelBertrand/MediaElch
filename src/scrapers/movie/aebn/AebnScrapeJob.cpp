@@ -101,7 +101,7 @@ void AebnScrapeJob::parseAndAssignInfos(const QString& html, QStringList& actorI
     if (match.hasMatch()) {
         MovieSetInfo set;
         set.name = match.captured(2);
-        m_movie->setSet(set);
+        m_movie->setSetInfo(set);
     }
 
     rx.setPattern("<span class=\"detailsLink\" itemprop=\"director\" itemscope "

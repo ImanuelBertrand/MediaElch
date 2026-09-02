@@ -45,7 +45,7 @@ auto setupCustomMovieScraperStubs(std::size_t N) -> CustomMovieScraperTestSetup
         MovieSetInfo movieSet;
         movieSet.name = QStringLiteral("movie-set-name-%1").arg(i);
         movieSet.overview = QStringLiteral("movie-set-overview-%1").arg(i);
-        setup.scrapers[i]->stub_movie.setSet(movieSet);
+        setup.scrapers[i]->stub_movie.setSetInfo(movieSet);
 
         MovieScrapeJob::Config subConfig;
         subConfig.details = mediaelch::scraper::allMovieScraperInfos();

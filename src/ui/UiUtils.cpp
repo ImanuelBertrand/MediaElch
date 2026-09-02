@@ -39,5 +39,13 @@ bool shouldCommitOnFocusOut(const QComboBox* comboBox, const QObject* watched, c
            && !isOwnPopupOpen(comboBox);
 }
 
+QStringList withCurrentValue(QStringList entries, const QString& current)
+{
+    if (!entries.contains(current)) {
+        entries.append(current);
+    }
+    return entries;
+}
+
 } // namespace ui
 } // namespace mediaelch

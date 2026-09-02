@@ -186,7 +186,7 @@ void AdultDvdEmpireScrapeJob::parseAndAssignInfos(const QString& html)
         }
         MovieSetInfo set;
         set.name = setName.trimmed();
-        m_movie->setSet(set);
+        m_movie->setSetInfo(set);
     }
 
     {

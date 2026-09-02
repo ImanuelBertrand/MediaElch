@@ -464,7 +464,7 @@ WikidataId Movie::wikidataId() const
  * \property Movie::set
  * \brief Holds the set of the movie
  * \return Set of the movie
- * \see Movie::setSet
+ * \see Movie::setSetInfo
  */
 MovieSetInfo Movie::set() const
 {
@@ -772,11 +772,11 @@ void Movie::setWikidataId(WikidataId wikidataId)
 }
 
 /**
- * \brief Sets the movies set
- * \param set Setname of the movie
- * \see Movie::set
+ * \brief Sets the collection this movie's own file says it belongs to
+ * \param set The movie's own set value; not its membership, see the header
+ * \see Movie::set, MovieSetModel::assign
  */
-void Movie::setSet(MovieSetInfo set)
+void Movie::setSetInfo(MovieSetInfo set)
 {
     m_set = std::move(set);
     setChanged(true);
