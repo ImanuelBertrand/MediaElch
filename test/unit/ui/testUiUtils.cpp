@@ -123,8 +123,8 @@ TEST_CASE("isOwnPopupOpen tells a combo box's own drop-down from anything else",
 
 TEST_CASE("shouldCommitOnFocusOut is the whole commit rule for an editable combo box", "[ui][movie][set]")
 {
-    // MovieWidget::eventFilter() is this predicate plus a call to onSetChange(), and no test
-    // can build a MovieWidget, so the rule lives here where each term can be falsified alone.
+    // MovieWidget::eventFilter() is this predicate plus a call to onSetChange(); the rule
+    // lives here so that each of its terms can be falsified on its own.
     ComboFixture f;
     QFocusEvent focusOut(QEvent::FocusOut, Qt::MouseFocusReason);
     QFocusEvent focusIn(QEvent::FocusIn, Qt::MouseFocusReason);
@@ -257,6 +257,9 @@ TEST_CASE("hasUncommittedEdit tells a typed set name from a stale display", "[ui
         REQUIRE(f.combo->currentText() != renamedElsewhere);
 
         CHECK_FALSE(ui::hasUncommittedEdit(f.combo, "Alien Collection"));
+        // What the box was filled with is the only thing it can hold an edit of: compared
+        // against the set's name now, an untouched box would read as one and be committed.
+        CHECK(ui::hasUncommittedEdit(f.combo, renamedElsewhere));
     }
 
     SECTION("a name picked from the drop-down is an edit until it is committed")

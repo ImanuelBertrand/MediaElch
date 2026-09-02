@@ -48,6 +48,7 @@ target_sources(
     tv_shows/testSeasonNumber.cpp
     ui/testMovieSettingsWidget.cpp
     ui/testSetsWidget.cpp
+    ui/testMovieWidget.cpp
     ui/testUiUtils.cpp
     utils/testMath.cpp
     utils/testContainers.cpp
