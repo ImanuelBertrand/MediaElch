@@ -193,23 +193,12 @@ MovieWidget::MovieWidget(QWidget* parent) : QWidget(parent), ui(new Ui::MovieWid
 
     connect(ui->trailer,          &QLineEdit::textEdited,           this, &MovieWidget::onTrailerChange);
     connect(ui->certification,    &QComboBox::editTextChanged,      this, &MovieWidget::onCertificationChange);
-    // The set is committed when the edit is finished, not on every keystroke: the
-    // per-keystroke wiring called Movie::setSetInfo() -- and with it Movie::setChanged() --
-    // once per typed character, and MovieSetModel would see one membership change per
-    // character too.  ui->certification above is deliberately left as it was.
-    // Deliberately not QLineEdit::editingFinished: that signal is spent by the first
-    // focus-out of an edit, and opening this combo's drop-down is one.  Suppressing it
-    // there -- which is necessary, see eventFilter() -- therefore loses the only
-    // notification Qt will send, so the typed name is committed from the focus-out
-    // itself instead, where the question can be asked again every time.
-    //
-    // Return commits without any focus change, so it is wired separately -- and this
-    // connect is not redundant with textActivated below.  Clearing the box and pressing
-    // Return is how a movie is taken out of its set (the set list at :648 starts with an
-    // empty entry), and QComboBoxPrivate::_q_returnPressed does nothing at all when the
-    // line edit is empty, at any insert policy: measured on Qt 6.8.2 as
-    // textActivated=0, returnPressed=1.  Without this line that removal is silently
-    // dropped.
+    // Committed when the edit is finished, not on every keystroke, which would dirty the
+    // movie once per typed character.  Not through QLineEdit::editingFinished either: that
+    // signal is spent by the first focus-out, and eventFilter() has to suppress the one that
+    // opening the drop-down causes.  Return commits without any focus change and is not
+    // covered by textActivated below, because _q_returnPressed does nothing when the line
+    // edit is empty -- which is exactly how a movie is taken out of its set.
     connect(ui->set->lineEdit(), &QLineEdit::returnPressed, this, [this]() { onSetChange(ui->set->currentText()); });
     connect(ui->set,              &QComboBox::textActivated,        this, &MovieWidget::onSetChange);
     ui->set->installEventFilter(this);
@@ -262,33 +251,13 @@ void MovieWidget::resizeEvent(QResizeEvent* event)
 /**
  * \brief Commits a set name typed into the combo when the edit genuinely ends.
  *
- * The set combo is editable, and a QComboBox makes itself the focus proxy of the line
- * edit it creates, so the combo box is the focus widget and QEvent::FocusOut is
- * delivered here.  Opening the drop-down causes one of those too, and it cannot be told
- * apart by focus reason: showPopup() delivers a FocusOut with Qt::PopupFocusReason and
- * then a second one with Qt::OtherFocusReason while the popup is still up, and
- * Qt::OtherFocusReason is also what disabling the widget produces (measured on Qt
- * 6.8.2).  Committing on either would create a set from the half-typed text -- type
- * "My Alien Trilogy", pick "Alien Collection" from the list, and the movie passes
- * through a set named "My Alien Trilogy" that, because an edit never drops a set (see
- * MovieSetModel), then sits in this very combo and in the set filter until the next
- * reload, with the movie marked changed for a set it does not belong to.
- *
- * So the commit is skipped exactly while this combo's own drop-down is open.  It is
- * then deferred rather than dropped *as long as closing the drop-down gives the focus
- * back to the combo box*, which is what dismissing it with Escape or by picking an item
- * does: the following focus-out commits whatever the user left in the box, and that is
- * the path the previous editingFinished() wiring lost outright.
- *
- * The boundary is worth stating, because it is not "nothing can be lost": if the edit
- * ends while the drop-down is still up -- the group box disabled under it, the window
- * closed, focus moved programmatically -- the typed name is lost, measured as zero
- * commits on Qt 6.8.2.  No user-reachable sequence in this widget does that, because
- * every setDisabledTrue() here is downstream of a click that an open popup's grab
- * consumes first, so this is a limit of the mechanism rather than a live defect.
- *
- * The commit rule itself lives in mediaelch::ui::shouldCommitOnFocusOut() so that it can
- * be unit-tested; building a MovieWidget in a test is not possible.
+ * A QComboBox is the focus proxy of the line edit it creates, so QEvent::FocusOut arrives
+ * here -- including the one that opening the drop-down causes, which no focus reason tells
+ * apart.  Committing on that would create a set from the half-typed text, so the commit is
+ * skipped while the drop-down is open and left to the next focus-out.  A typed name is
+ * therefore lost if the edit ends while the drop-down is still up, which no user-reachable
+ * sequence in this widget does.  The rule itself lives in
+ * mediaelch::ui::shouldCommitOnFocusOut(), where it can be tested without a MovieWidget.
  */
 bool MovieWidget::eventFilter(QObject* watched, QEvent* event)
 {
@@ -663,19 +632,17 @@ void MovieWidget::updateMovieInfo()
         }
     }
 
-    // The set list comes from the one model that holds it, instead of grouping the
-    // whole library by set name here.  See docs/concepts/movie-sets.md, D-C.
+    // The set list comes from the one model that holds it, instead of grouping the whole
+    // library by set name here.
     const auto& movieSets = Manager::instance()->movieSetModel()->sets();
     for (const MovieSet* movieSet : movieSets) {
         if (!movieSet->name().isEmpty() && !sets.contains(movieSet->name())) {
             sets.append(movieSet->name());
         }
     }
-    // The movie's own set name has to be in the list, or setCurrentIndex(-1) below
-    // empties this editable box and the next focus loss commits "" over it -- see
-    // onSetChange() and mediaelch::ui::withCurrentValue().  Reading the names from
-    // the library kept that true by construction, because m_movie is in the library;
-    // reading them from a model that can be a step behind it does not.
+    // The movie's own set name has to be in the list, or setCurrentIndex(-1) below empties
+    // this editable box and the next focus loss commits "" over it.  Reading the names from
+    // the library kept that true by construction; a model that can be a step behind it does not.
     sets = mediaelch::ui::withCurrentValue(sets, m_movie->set().name);
 
     QStringList certificationsSorted = certifications.values();
@@ -978,10 +945,8 @@ void MovieWidget::onPlayLocalTrailer()
 void MovieWidget::saveInformation()
 {
     qCDebug(generic) << "[Movie] Save movie";
-    // The set combo commits when its edit is finished, and saving does not finish it:
-    // the navbar's save button is a QToolButton, which does not take focus, and Ctrl+S
-    // moves focus nowhere at all.  Without this a set name typed and then saved
-    // straight away would never reach the movie.
+    // The set combo commits when its edit is finished, and saving does not finish it: the
+    // navbar's save button takes no focus and Ctrl+S moves focus nowhere at all.
     onSetChange(ui->set->currentText());
     setDisabledTrue();
 
@@ -1276,38 +1241,17 @@ void MovieWidget::onSortTitleChange(QString text)
  */
 void MovieWidget::onSetChange(QString text)
 {
+    // eventFilter() calls this on every focus loss, edited or not, so the name comparison is
+    // what stops tabbing through the box from dirtying the movie.  assign()'s own guard is no
+    // substitute: it compares the whole MovieSetInfo, and the value below is name-only.
     if (m_movie == nullptr || text == m_movie->set().name) {
-        // eventFilter() calls this on every focus loss, whether the text was edited or
-        // not -- and twice over when another widget's popup opens, which is two
-        // focus-outs.  So this comparison is what stops merely tabbing through the set
-        // box from dirtying the movie.
-        //
-        // MovieSetModel::assign() has a guard of its own, and it is *not* a substitute
-        // for this one: it compares the whole MovieSetInfo, while the value built below
-        // carries a name and nothing else.  For a movie whose set has a TMDB id or an
-        // overview the two values therefore never match, so assign() would write, dirty
-        // the movie and wipe both.  Deleting this comparison as redundant is exactly
-        // the harm assign()'s guard exists to prevent.
-        //
-        // It depends on updateMovieInfo() having actually
-        // put the movie's set name in the box: with sets.indexOf() returning -1 there,
-        // setCurrentIndex(-1) empties an editable combo and the next focus loss arrives
-        // here with an empty text that is not the movie's set name, so it commits "" and
-        // detaches the movie with no user action.  That is reachable whenever the set
-        // model is a step behind the library, which is why updateMovieInfo() now runs
-        // the list through mediaelch::ui::withCurrentValue().
         return;
     }
-    // Deliberately name-only: reaching this line means the user named a different set,
-    // and the previous set's overview and id describe the set the movie is leaving, so
-    // they must not travel with it.  Losing them here is the point, which is why the
-    // guard above -- not assign()'s whole-value one -- is what protects a movie whose
-    // set did not change.  SetsWidget::onAddMovie() builds the same value for the same
-    // reason and guards on the name in the same way.
+    // Name only: the user named a different set, and the previous set's overview and id
+    // describe the set the movie is leaving, so they must not travel with it.
     MovieSetInfo set;
     set.name = text;
-    // The model performs the membership edit; this widget does not write the movie's
-    // set itself.  See docs/concepts/movie-sets.md, D-C.
+    // The model performs the membership edit; this widget does not write the movie's set.
     Manager::instance()->movieSetModel()->assign(m_movie, set);
     ui->buttonRevert->setVisible(true);
 }

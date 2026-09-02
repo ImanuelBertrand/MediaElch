@@ -305,10 +305,8 @@ void Settings::loadSettings()
     m_movieSetArtworkType = MovieSetArtworkType(settings()->value(KEY_MOVIE_SET_ARTWORK_STORING_TYPE, 0).toInt());
     m_movieSetArtworkDirectory =
         mediaelch::DirectoryPath(settings()->value(KEY_MOVIE_SET_ARTWORK_DIRECTORY).toString());
-    // Anything that is not one of the three known modes is Automatic.  A settings file
-    // written by a newer MediaElch, or edited by hand, must not leave the rename mode
-    // holding an integer no branch answers to -- Automatic is the mode that is correct
-    // without being told anything.
+    // Anything that is not one of the three known modes is Automatic: a settings file from a
+    // newer MediaElch, or edited by hand, must not leave a value no branch answers to.
     const int renameMode = settings()->value(KEY_MOVIE_SET_RENAME_MODE, 0).toInt();
     m_movieSetRenameMode = (renameMode == static_cast<int>(MovieSetRenameMode::SetFileOnly)
                                || renameMode == static_cast<int>(MovieSetRenameMode::AllMovieFiles))

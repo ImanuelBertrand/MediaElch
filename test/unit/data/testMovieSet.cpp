@@ -81,9 +81,8 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
 
     SECTION("a destroyed movie removes itself from the set")
     {
-        // A set does not own its members, and nothing else tells it when one dies:
-        // Movie::sigChanged is not emitted from ~Movie and MovieModel::clear() only
-        // calls deleteLater() on every movie.  See docs/concepts/movie-sets.md, D-C.
+        // A set does not own its members and nothing else tells it when one dies:
+        // Movie::sigChanged is not emitted from ~Movie.
         MovieSet set{"Alien Collection"};
         Movie aliens;
         {
@@ -127,7 +126,7 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
         set.clearMovies();
 
         CHECK(set.movies().isEmpty());
-        // Membership is not part of the set's own record (D-A).
+        // Membership is not part of the set's own record.
         CHECK_FALSE(set.hasChanged());
     }
 
@@ -150,8 +149,7 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
             Movie alien;
             set.addMovie(&alien);
             set.clearMovies();
-            // The destroyed() connection outlives the membership on purpose, so the
-            // handler has to be a no-op for a movie that is no longer a member.
+            // The destroyed() connection outlives the membership on purpose.
             QObject::connect(&set, &MovieSet::sigChanged, [&changes](MovieSet*) { ++changes; });
         }
 
@@ -161,17 +159,8 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
 
     SECTION("membership does not write the set onto the movie")
     {
-        // This section was planted as a tripwire, to be retired by the step that made
-        // MovieSetModel the writer.  That step has now been taken, and the assertion
-        // survives it -- because the division of labour it describes turned out to be
-        // the permanent one rather than an interim state.
-        //
-        // A movie's MovieSetInfo is the value its own file carries.  A MovieSet's
-        // membership is the model's.  Putting a movie into a set here would write the
-        // value from a second place, which is the duplicated state the split exists to
-        // remove.  MovieSetModel::assign() does both halves, and it is the only thing
-        // that does; see docs/concepts/movie-sets.md, D-C, and the test case
-        // "MovieSetModel is the only thing that changes membership".
+        // A movie's MovieSetInfo is the value its own file carries; a MovieSet's membership is
+        // the model's.  MovieSetModel::assign() does both halves and is the only thing that does.
         MovieSet set{"Alien Collection"};
         Movie alien;
 
@@ -179,9 +168,7 @@ TEST_CASE("MovieSet membership", "[data][movie][set]")
 
         CHECK(alien.set().name.isEmpty());
         CHECK(set.movies() == QVector<Movie*>{&alien});
-        // Nor does it dirty the movie, which is the other half of the same warning:
-        // a membership edit that has to reach disk is marked by MovieSetModel::assign(),
-        // and by nothing here.
+        // Nor does it dirty the movie; MovieSetModel::assign() is what marks it.
         CHECK_FALSE(alien.hasChanged());
     }
 }
@@ -215,9 +202,7 @@ TEST_CASE("MovieSet change notification", "[data][movie][set]")
         set.setName("Alien Collection");
         set.setOverview("A science fiction horror film franchise.");
         set.setTmdbId(TmdbId::NoId);
-        // The fourth scalar setter.  Empty is what a set with no display title of its
-        // own already holds, and setting the title *to the name* normalises to empty --
-        // so neither is a change.
+        // Setting the title to the name normalises to empty, which is what it already holds.
         set.setTitle(QString());
         set.setTitle("Alien Collection");
 
@@ -227,7 +212,7 @@ TEST_CASE("MovieSet change notification", "[data][movie][set]")
 
     SECTION("adding a movie notifies but does not dirty the set's own record")
     {
-        // Membership lives in the member movies' NFOs, not in set.nfo (D-A).
+        // Membership lives in the member movies' NFOs, not in set.nfo.
         MovieSet set{"Alien Collection"};
         Movie alien;
         int changes = 0;
@@ -273,9 +258,8 @@ TEST_CASE("MovieSet display title", "[data][movie][set]")
 
     SECTION("a title equal to the key is stored as no title at all")
     {
-        // One representation for "there is no divergence", or the writer would emit a
-        // redundant <title> that the reader then declines to read back, and the two
-        // would disagree about what an un-renamed set looks like.
+        // One representation for "there is no divergence", or the writer emits a <title> the
+        // reader then declines to read back.
         MovieSet set{"Alien Collection"};
         set.setTitle("Alien Collection");
         CHECK(set.title().isEmpty());
@@ -283,8 +267,7 @@ TEST_CASE("MovieSet display title", "[data][movie][set]")
 
     SECTION("moving the key re-unifies the two names")
     {
-        // An all-movie-files rename rewrites every member's <set><name> and the record's
-        // <originaltitle> alike, so there is no separate display title left to hold.
+        // An all-movie-files rename moves the key itself, so no display title is left to hold.
         MovieSet set{"Alien Collection"};
         set.setTitle("The Alien Saga");
         set.setName("Alien Anthology");
@@ -296,15 +279,10 @@ TEST_CASE("MovieSet display title", "[data][movie][set]")
 
     SECTION("an observer of the rename never sees the abolished display title")
     {
-        // The order inside setName() is load bearing and this is the only thing that
-        // detects it: setChanged() emits sigChanged synchronously, so an observer reads
-        // the set from inside its own slot.  Clear the title *after* the emit and every
-        // observer sees the new key still carrying the old display title -- the name the
-        // rename just abolished -- and paints it back on screen.
-        //
-        // Asserted inside the slot rather than after the call, because after the call
-        // both orders look identical.  An earlier version of this test checked
-        // hasChanged() afterwards and could not tell the two apart at all.
+        // setChanged() emits sigChanged synchronously, so an observer reads the set from inside
+        // its own slot: clear the title after the emit and every observer sees the new key still
+        // carrying the abolished display title.  Asserted inside the slot, because afterwards
+        // both orders look identical.
         MovieSet set{"Alien Collection"};
         set.setTitle("The Alien Saga");
         set.setChanged(false);
@@ -398,9 +376,8 @@ TEST_CASE("MovieSetImages", "[data][movie][set]")
 
     SECTION("re-adding a removed image cancels its pending deletion")
     {
-        // Deliberately unlike MovieImages::setImage(), which does not clear the
-        // pending deletion: otherwise a writer honouring both would write the new
-        // poster and then delete it again, or lose the write, depending on order.
+        // Deliberately unlike MovieImages::setImage(): a writer honouring both a new poster and
+        // a pending deletion would write it and delete it again, depending on order.
         MovieSet set{"Alien Collection"};
         set.images().setHasImage(ImageType::MovieSetPoster, true);
         set.images().removeImage(ImageType::MovieSetPoster);
@@ -437,9 +414,8 @@ TEST_CASE("MovieSetImages", "[data][movie][set]")
 
 TEST_CASE("MovieSet announces membership per movie", "[data][movie][set]")
 {
-    // sigChanged says only "something about this set changed", which is enough to
-    // repaint a row and not enough to maintain an index of which sets a movie is in.
-    // MovieSetModel keeps such an index, so membership is announced per movie as well.
+    // sigChanged says only "something changed", which is enough to repaint a row and not
+    // enough to maintain MovieSetModel's index of which sets a movie is in.
 
     SECTION("addMovie announces the movie that joined")
     {
@@ -479,15 +455,13 @@ TEST_CASE("MovieSet announces membership per movie", "[data][movie][set]")
         CHECK(removed.at(0).at(0).value<MovieSet*>() == &set);
         CHECK(removed.at(0).at(1).value<QObject*>() == static_cast<QObject*>(&alien));
 
-        // A movie that is not a member announces nothing.
         set.removeMovie(&alien);
         CHECK(removed.size() == 1);
     }
 
     SECTION("clearMovies announces every member, not just the fact that it emptied")
     {
-        // An index keyed by movie cannot be repaired from one collective signal, so
-        // emptying a set has to name each movie it drops.
+        // An index keyed by movie cannot be repaired from one collective signal.
         MovieSet set{"Alien Collection"};
         Movie alien;
         Movie aliens;

@@ -13,8 +13,8 @@
 using namespace mediaelch;
 
 /// \brief Builds an editable combo box in a shown, active window.
-/// \details The window has to be shown and active or the combo never becomes the
-///          focus widget and showPopup() has nothing to take focus away from.
+/// \details The window has to be shown and active or the combo never becomes the focus
+///          widget and showPopup() has nothing to take focus away from.
 namespace {
 
 struct ComboFixture
@@ -53,10 +53,8 @@ struct ComboFixture
 
 TEST_CASE("isOwnPopupOpen tells a combo box's own drop-down from anything else", "[ui][movie][set]")
 {
-    // MovieWidget commits the set name on the set combo's focus-out, and opening that
-    // combo's drop-down causes a focus-out too -- one that must not commit the
-    // half-typed text as a set.  Qt's focus reason cannot separate the two, so this
-    // predicate is the separator, and it is the whole correctness of that guard.
+    // MovieWidget commits the set name on the set combo's focus-out, and opening that combo's
+    // drop-down causes one too.  Qt's focus reason cannot separate them; this predicate does.
     ComboFixture f;
 
     SECTION("no popup at all")
@@ -89,8 +87,7 @@ TEST_CASE("isOwnPopupOpen tells a combo box's own drop-down from anything else",
 
     SECTION("another widget's drop-down is open")
     {
-        // A different popup must not suppress the commit: the user really is leaving
-        // the set box, and the typed name has to reach the movie.
+        // A different popup must not suppress the commit: the user really is leaving the box.
         f.combo->setFocus();
         qApp->processEvents();
         f.otherCombo->showPopup();
@@ -108,9 +105,8 @@ TEST_CASE("isOwnPopupOpen tells a combo box's own drop-down from anything else",
 
     SECTION("a null combo box has no popup while an unrelated one is open")
     {
-        // Without the null-combo guard the test degenerates to
-        // "popup->parentWidget() == nullptr", which any parentless popup satisfies --
-        // so the guard is load-bearing, not decoration.
+        // Without the null-combo guard this degenerates to "popup->parentWidget() == nullptr",
+        // which any parentless popup satisfies.
         QMenu menu;
         menu.addAction("unrelated");
         menu.popup(QPoint(0, 0));
@@ -127,10 +123,8 @@ TEST_CASE("isOwnPopupOpen tells a combo box's own drop-down from anything else",
 
 TEST_CASE("shouldCommitOnFocusOut is the whole commit rule for an editable combo box", "[ui][movie][set]")
 {
-    // MovieWidget::eventFilter() is nothing but this predicate plus a call to
-    // onSetChange(), and no test can build a MovieWidget -- it needs Manager::instance(),
-    // MovieFilesWidget::instance() and its .ui file.  So the rule lives here, where each
-    // of its four terms can be falsified on its own.
+    // MovieWidget::eventFilter() is this predicate plus a call to onSetChange(), and no test
+    // can build a MovieWidget, so the rule lives here where each term can be falsified alone.
     ComboFixture f;
     QFocusEvent focusOut(QEvent::FocusOut, Qt::MouseFocusReason);
     QFocusEvent focusIn(QEvent::FocusIn, Qt::MouseFocusReason);
@@ -142,8 +136,7 @@ TEST_CASE("shouldCommitOnFocusOut is the whole commit rule for an editable combo
 
     SECTION("another object's focus-out does not")
     {
-        // The filter is installed on one widget today, so this term is only reachable
-        // through this predicate -- which is the reason to have the predicate.
+        // The filter is installed on one widget today, so this term is reachable only here.
         CHECK_FALSE(ui::shouldCommitOnFocusOut(f.combo, f.otherCombo, &focusOut));
         CHECK_FALSE(ui::shouldCommitOnFocusOut(f.combo, f.otherEdit, &focusOut));
     }
@@ -156,8 +149,7 @@ TEST_CASE("shouldCommitOnFocusOut is the whole commit rule for an editable combo
     SECTION("a blocked combo box is being repopulated, not edited")
     {
         // Events are delivered whatever blockSignals() says, so the bracket that
-        // MovieWidget::updateMovieInfo() holds while it refills the box has to be read
-        // here explicitly.
+        // updateMovieInfo() holds while it refills the box is read explicitly.
         f.combo->blockSignals(true);
         CHECK_FALSE(ui::shouldCommitOnFocusOut(f.combo, f.combo, &focusOut));
         f.combo->blockSignals(false);
@@ -206,25 +198,21 @@ TEST_CASE("withCurrentValue keeps an editable combo box able to show its value",
 
     SECTION("a value the list is missing is added, so indexOf() cannot return -1")
     {
-        // What MovieWidget::updateMovieInfo() faces when MovieSetModel has not seen a
-        // movie's set yet: the movie says "Alien Anthology", the model still says
-        // "Alien Collection".  Without this the combo box would be set to index -1,
-        // which empties it, and the next focus loss would commit "" over the name.
+        // What updateMovieInfo() faces when MovieSetModel has not seen a movie's set yet:
+        // without this the box lands on index -1 and the next focus loss commits "".
         const QStringList sets{"", "Alien Collection"};
 
         const QStringList result = ui::withCurrentValue(sets, "Alien Anthology");
 
         CHECK(result.contains("Alien Anthology"));
         CHECK(result.indexOf("Alien Anthology") >= 0);
-        // Everything that was there is still there; this only ever adds.
         CHECK(result.mid(0, sets.size()) == sets);
     }
 
     SECTION("the empty name is a value like any other")
     {
-        // A movie in no set at all.  MovieWidget's list starts with an empty entry, so
-        // this normally changes nothing -- but a list without one must still be able to
-        // show it rather than falling back to -1.
+        // MovieWidget's list starts with an empty entry, but a list without one must still be
+        // able to show it rather than fall back to -1.
         CHECK(ui::withCurrentValue({"", "Alien Collection"}, "") == QStringList{"", "Alien Collection"});
         CHECK(ui::withCurrentValue({"Alien Collection"}, "").indexOf("") >= 0);
     }

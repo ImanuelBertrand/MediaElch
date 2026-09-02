@@ -83,22 +83,17 @@ enum class MovieSetArtworkType : int
 };
 
 /// \brief How renaming a movie set is written to disk.
-/// \details A `set.nfo` decouples the name Kodi 22 displays from the name it matches
-///          on, so there are two genuinely different renames and which one is correct
-///          depends on the target Kodi version.  See docs/concepts/movie-sets.md, D-B.
+/// \details A `set.nfo` decouples the name Kodi 22 displays from the name it matches on, so
+///          there are two different renames and which is correct depends on the Kodi version.
 enum class MovieSetRenameMode : int
 {
-    /// Follow the configured Kodi version, and what the artwork layout can actually
-    /// do: set-file-only from Kodi 22 where movie set records exist, all movie files
-    /// otherwise.  The default, and right for almost everyone.
+    /// Set-file-only from Kodi 22 where movie set records exist, all movie files otherwise.
     Automatic = 0,
-    /// Rewrite `set.nfo`'s `<title>` alone.  The join key does not move, so Kodi 22
-    /// renames the set's row in place and keeps its artwork and its id -- and Kodi 21
-    /// and earlier, which never read `set.nfo`, do not see the rename at all.
+    /// Rewrite `set.nfo`'s `<title>` alone.  The join key does not move, so Kodi 22 renames
+    /// the set's row in place; Kodi 21 and earlier never read `set.nfo` and see no rename.
     SetFileOnly = 1,
-    /// Rewrite every member's `<set><name>` plus `set.nfo`'s `<title>` and
-    /// `<originaltitle>`.  Correct on every Kodi; on Kodi 22 the match key moves, so
-    /// the old set row is left behind empty until the user runs Clean Library.
+    /// Rewrite every member's `<set><name>` plus `set.nfo`'s `<title>` and `<originaltitle>`.
+    /// Correct on every Kodi, but on 22 the old set row is left behind until Clean Library.
     AllMovieFiles = 2
 };
 
@@ -265,9 +260,8 @@ enum class DataFileType : int {
     ArtistLogo           = 35,
     AlbumThumb           = 36,
     AlbumCdArt           = 37,
-    // The movie set's own record.  Deliberately absent from Settings' data file lists:
-    // Kodi looks for exactly "set.nfo" in the movie set information folder, so unlike
-    // every type above it there is nothing for the user to configure.
+    // The movie set's own record.  Absent from Settings' data file lists: Kodi looks for
+    // exactly "set.nfo", so there is nothing for the user to configure.
     MovieSetNfo          = 38
 };
 // clang-format on

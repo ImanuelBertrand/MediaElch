@@ -149,10 +149,8 @@ private:
     QString movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise = LegalisePath::Yes);
     QImage movieSetImage(const QString& setName, DataFileType type);
     ELCH_NODISCARD bool saveMovieSetImage(const QString& setName, DataFileType type, const QImage& image);
-    /// \brief Where the record of the set called \p setName belongs, or an empty string.
-    /// \details Empty whenever there is nowhere to put one: no folder configured, or no
-    ///          set name.  Callers must treat an empty return as "records are off" and
-    ///          not construct a path of their own -- see movieSetRecordsEnabled().
+    /// \brief Where the record of the set called \p setName belongs; empty if records are off or
+    ///        \p setName is empty.  Callers must not construct a path of their own.
     ELCH_NODISCARD QString movieSetNfoFileName(const QString& setName);
 
 private:

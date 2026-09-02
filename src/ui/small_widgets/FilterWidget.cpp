@@ -317,8 +317,8 @@ QVector<Filter*> FilterWidget::setupMovieFilters()
         }
     }
 
-    // The set list comes from the one model that holds it, instead of grouping the
-    // whole library by set name here.  See docs/concepts/movie-sets.md, D-C.
+    // The set list comes from the one model that holds it, instead of grouping the whole
+    // library by set name here.
     for (const MovieSet* movieSet : Manager::instance()->movieSetModel()->sets()) {
         if (!movieSet->name().isEmpty() && !sets.contains(movieSet->name())) {
             sets.append(movieSet->name());

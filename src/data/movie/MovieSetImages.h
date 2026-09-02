@@ -15,9 +15,8 @@ class MovieSet;
 ///          downloaded, keyed by their ImageType, so that set artwork is written
 ///          verbatim instead of being re-encoded to JPEG.
 ///
-///          Which types a set supports is data (see supportedImageTypes()), not
-///          structure, so the additional Kodi set art types of D-D can be added
-///          without touching this class's members.
+///          Which types a set supports is data (see supportedImageTypes()), not structure,
+///          so further Kodi set art types can be added without touching the members.
 class MovieSetImages
 {
 public:

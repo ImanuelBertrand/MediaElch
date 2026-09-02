@@ -22,12 +22,8 @@ public:
     };
 
     /// \brief The newest version MediaElch knows how to write for.
-    /// \details The one place "the default Kodi version" is spelled.  It used to be
-    ///          spelled three times -- the constructor's default argument, the member
-    ///          initialiser and fromInt()'s out-of-range fallback -- which is how the
-    ///          bump to v22 came to be applied to isValid() and all() and to none of
-    ///          them, leaving latest() answering v20.  Bumping this constant is now the
-    ///          whole change, so the next bump cannot half-happen.
+    /// \details The one place "the default Kodi version" is spelled, so that a bump cannot
+    ///          reach some of the defaults and not others.
     static constexpr Version Latest = v22;
 
     /* implicit */ KodiVersion(Version version = Latest) : m_version(version) {}

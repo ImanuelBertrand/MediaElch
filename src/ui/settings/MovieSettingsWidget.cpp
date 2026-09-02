@@ -50,10 +50,7 @@ MovieSettingsWidget::MovieSettingsWidget(QWidget* parent) : QWidget(parent), ui(
         &MovieSettingsWidget::onChooseMovieSetArtworkDir);
 
     // The rename hint's warning turns on whether this field is empty, so it has to be
-    // recomputed when the field changes -- by the Choose button, which only calls
-    // setText(), and by the user typing a path in directly.  Without this the warning
-    // said "renaming a set will be refused" for the rest of the session after the user
-    // had just fixed exactly that.
+    // recomputed whenever the field changes -- by the Choose button as well as by typing.
     connect(ui->movieSetArtworkDir, &QLineEdit::textChanged, this, [this] {
         onComboMovieSetRenameChanged(ui->comboMovieSetRename->currentIndex());
     });
@@ -104,15 +101,9 @@ void MovieSettingsWidget::loadSettings()
             break;
         }
     }
-    // An invalid DirectoryPath must show as empty, not as a path.  toNativePathString()
-    // goes through QDir::absolutePath(), and an invalid path wraps a *default* QDir whose
-    // absolutePath() is the process's current working directory -- so "no directory
-    // chosen" was displayed as whatever directory MediaElch was started from, and
-    // saveSettings() below read that back as a real, valid choice.  One press of Save in
-    // this window, for any unrelated reason, then made movieSetRecordsEnabled() answer
-    // true forever and pointed the movie set information folder at the working directory:
-    // exactly the exposure KodiXml::movieSetFileName() refuses, laundered into a setting
-    // where it can no longer refuse it.
+    // An invalid DirectoryPath must show as empty, not as a path: toNativePathString() goes
+    // through QDir::absolutePath(), which for an invalid path is the process's working
+    // directory, and saveSettings() below would read that back as a real choice.
     const mediaelch::DirectoryPath movieSetDir = m_settings->movieSetArtworkDirectory();
     ui->movieSetArtworkDir->setText(movieSetDir.isValid() ? movieSetDir.toNativePathString() : QString());
     for (int i = 0, n = ui->comboMovieSetRename->count(); i < n; ++i) {
@@ -176,10 +167,9 @@ void MovieSettingsWidget::saveSettings()
     // Movie set artwork
     m_settings->setMovieSetArtworkType(static_cast<MovieSetArtworkType>(
         ui->comboMovieSetArtwork->itemData(ui->comboMovieSetArtwork->currentIndex()).toInt()));
-    // Written whichever layout is selected, and that is deliberate: the field is disabled
-    // in the artwork-next-to-movies layout but keeps its text, so a user who switches
-    // away and back finds their directory still there.  An empty field is an invalid
-    // DirectoryPath, which is what "no directory chosen" has to stay -- see loadSettings().
+    // Written whichever layout is selected: the field is disabled in the other layout but
+    // keeps its text, so switching away and back finds the directory still there.  An empty
+    // field stays an invalid DirectoryPath; see loadSettings().
     m_settings->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(ui->movieSetArtworkDir->text()));
     m_settings->setMovieSetRenameMode(static_cast<MovieSetRenameMode>(
         ui->comboMovieSetRename->itemData(ui->comboMovieSetRename->currentIndex()).toInt()));
@@ -204,17 +194,16 @@ void MovieSettingsWidget::onComboMovieSetArtworkChanged(int comboIndex)
     }
     }
 
-    // The rename hint depends on this combo as well as on its own: a set-file-only
-    // rename needs a `set.nfo`, which exists only in the separate-folder layout.
+    // The rename hint depends on this combo too: a set-file-only rename needs a `set.nfo`,
+    // which exists only in the separate-folder layout.
     onComboMovieSetRenameChanged(ui->comboMovieSetRename->currentIndex());
 }
 
 void MovieSettingsWidget::onComboMovieSetRenameChanged(int comboIndex)
 {
     const auto mode = MovieSetRenameMode(ui->comboMovieSetRename->itemData(comboIndex).toInt());
-    // Asked of the two widgets rather than of Settings, because the user may have
-    // changed the layout in this dialog and not pressed Save yet -- the hint has to
-    // describe what they are about to get, not what is still on disk.
+    // Asked of the two widgets rather than of Settings: the hint has to describe what the
+    // user is about to get, not what is still on disk.
     const bool recordsWouldExist =
         MovieSetArtworkType(ui->comboMovieSetArtwork->itemData(ui->comboMovieSetArtwork->currentIndex()).toInt())
             == MovieSetArtworkType::SeparateArtworkFolder
@@ -233,9 +222,7 @@ void MovieSettingsWidget::onComboMovieSetRenameChanged(int comboIndex)
                   "Your movie files keep the old name inside them, so Kodi 21 and earlier -- and other tools "
                   "that read movie NFOs -- will keep showing the old name.");
         if (!recordsWouldExist) {
-            // Said before the rename rather than after it.  A refusal the user only
-            // meets once they have typed a new name is a worse refusal than one they
-            // were warned about while choosing the setting that causes it.
+            // Warned here rather than at the rename the setting will cause to be refused.
             hint += "\n"
                     + tr("There is no movie set information folder, and set.nfo lives nowhere else, so renaming a "
                          "set will be refused. Choose \"Separate artwork directory\" above and pick a folder.");

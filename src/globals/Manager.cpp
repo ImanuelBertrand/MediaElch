@@ -43,9 +43,8 @@ Manager::Manager(QObject* parent) : QObject(parent)
     KodiXml::MediaPersistence persistence{
         *m_moviePersistence, *m_tvShowPersistence, *m_concertPersistence, *m_musicPersistence};
     m_mediaCenters.append(new KodiXml(*m_kodiSettings, persistence, this));
-    // After the media center exists, not with setMovieModel() above: the movie set model
-    // reads and writes the sets' records -- their `set.nfo` files -- through it, and the
-    // sets that have a record but no member movie can only be found once it is there.
+    // After the media center exists, not with setMovieModel() above: sets that have a
+    // record but no member movie can only be found through it.
     m_movieSetModel->setRecordSource(m_mediaCenters.at(0));
     m_mediaCentersTvShow.append(new KodiXml(*m_kodiSettings, persistence, this));
     m_mediaCentersConcert.append(new KodiXml(*m_kodiSettings, persistence, this));
@@ -61,17 +60,10 @@ Manager::Manager(QObject* parent) : QObject(parent)
 
 Manager::~Manager()
 {
-    // Runs before the children go, and they go in creation order: m_movieFileSearcher --
-    // the parent of every Movie -- dies first, and each movie's destroyed() would reach
-    // the set model, which asks the media center, which asks Settings::instance().
-    // Settings is an older child of the QApplication and gone by then; that read
-    // corrupted the heap and aborted MediaElch on exit.
-    //
-    // Pinned by "Manager detaches its set model from the library before it dies" in
-    // testMovieSetModel.cpp, which builds a Manager of its own because the singleton
-    // cannot be destroyed.  The four sections above it in that file exercise
-    // detachFromLibrary() and none of them touches this line: removing it leaves all
-    // four green, which was measured after the commit that added them claimed otherwise.
+    // Runs before the children go, and they go in creation order: m_movieFileSearcher, the
+    // parent of every Movie, dies first, and each movie's destroyed() would reach the set
+    // model, which asks the media center, which asks Settings -- an older child of the
+    // QApplication and gone by then.
     m_movieSetModel->detachFromLibrary();
 }
 

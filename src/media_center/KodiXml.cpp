@@ -1187,15 +1187,8 @@ QStringList KodiXml::extraFanartNames(Artist* artist)
 
 bool KodiXml::movieSetArtworkEnabled() const
 {
-    // A disjunction, and it *calls* movieSetRecordsEnabled() rather than repeating its
-    // condition, so that the record predicate stays the only place that decides what a
-    // configured movie set information folder is.
-    //
-    // Artwork resolves in both layouts: "artwork next to movies" finds a member movie
-    // and writes beside its folder (movieSetFileName() below), which is what MediaElch
-    // ships with and what most users have.  A record resolves in one.  So the one
-    // configuration where artwork has nowhere to go is the separate folder with no
-    // folder chosen -- which is exactly what movieSetRecordsEnabled() already refuses.
+    // Artwork resolves in both layouts, so the only configuration where it has nowhere to go
+    // is the separate folder with none chosen -- which movieSetRecordsEnabled() refuses.
     return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies
            || movieSetRecordsEnabled();
 }
@@ -1221,8 +1214,8 @@ QImage KodiXml::movieSetImage(const QString& setName, DataFileType type)
         }
     }
 
-    // Only if nothing was found above: older MediaElch versions used the set name verbatim as the
-    // folder name.  Kodi never read those folders, but MediaElch did, so keep reading them.
+    // Only if nothing was found above: older MediaElch versions used the set name verbatim as
+    // the folder name.  Kodi never read those folders, but MediaElch did, so keep reading them.
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
         for (DataFile dataFile : dataFiles) {
             QFileInfo fi(movieSetFileName(setName, &dataFile, LegalisePath::No));
@@ -1254,16 +1247,9 @@ bool KodiXml::saveMovieSetBackdrop(QString setName, QImage backdrop)
 }
 
 /// \brief Writes \p image under every file name configured for \p type.
-/// \return Whether the image reached the disk under every name that resolved to a path,
-///         and at least one did.  A configured name that resolves to nothing is skipped
-///         rather than counted as a failure, so this can be true while the image is not
-///         on disk under every *configured* name.
-/// \details "Nothing was attempted" is a failure, not a success.  It means either that
-///          movieSetFileName() refused -- the separate artwork folder selected with no
-///          folder chosen -- or that the set has no path in this layout at all, and in
-///          both cases the image the caller is holding did not reach the disk.  The
-///          caller has to be able to tell that apart from a save, because the image
-///          exists nowhere else; see MediaCenterInterface::saveMovieSetPoster().
+/// \return Whether the image reached the disk under every name that resolved to a path, and
+///         at least one did.  "Nothing was attempted" is a failure: the caller is holding
+///         the only copy of the image, see MediaCenterInterface::saveMovieSetPoster().
 bool KodiXml::saveMovieSetImage(const QString& setName, DataFileType type, const QImage& image)
 {
     int attempted = 0;
@@ -1271,8 +1257,8 @@ bool KodiXml::saveMovieSetImage(const QString& setName, DataFileType type, const
     for (DataFile dataFile : Settings::instance()->dataFiles(type)) {
         const QString fileName = movieSetFileName(setName, &dataFile);
         if (fileName.isEmpty()) {
-            // Nowhere to put it.  Not counted as a failed attempt, but not counted as an
-            // attempt either, so a set with no resolvable path at all still answers no.
+            // Nowhere to put it: neither a failed attempt nor an attempt, so a set with no
+            // resolvable path at all still answers no.
             continue;
         }
         ++attempted;
@@ -1355,32 +1341,10 @@ mediaelch::DirectoryPath KodiXml::getPath(const Concert* concert)
 namespace {
 
 /// \brief Whether a movie set information folder is configured: the layout *and* a folder.
-/// \details The one place the two are asked *together*, and the only place isValid() is
-///          asked at all.  The layout on its own is a fair question and is asked in four
-///          other places in this file, all of them choosing between the two artwork
-///          layouts rather than deciding whether a folder exists.
-///
-///          The layout half, because a `set.nfo` and a per-set artwork folder only exist
-///          in that layout at all.
-///
-///          The folder half, because DirectoryPath's default constructor leaves
-///          isValid() false around a *default* QDir, whose absolutePath() is the
-///          process's current working directory.  "Separate folder selected, folder never
-///          chosen" therefore names a real, writable path in whatever directory MediaElch
-///          was started from.
-///
-///          movieSetFileName() refuses that path too, and the two guards are still not
-///          redundant -- but for one specific reason, so it is worth being exact.  Three
-///          of the four `set.nfo` paths (the read, the write and the removal) build their
-///          path through movieSetNfoFileName() and therefore through movieSetFileName(),
-///          so that guard already covers them.  The fourth, movieSetsWithRecord(), does
-///          not: it lists movieSetArtworkDirectory().dir() itself and never goes through
-///          movieSetFileName().  It does build a path to each record it finds -- that is
-///          how it opens them -- but it derives that path from the listing, so nothing on
-///          that route is guarded.  **That enumeration is what this predicate is for.**
-///          Without it, a `set.nfo` sitting in the working directory would be reported as
-///          a record, and having a record is what decides whether the model keeps or
-///          drops a set.  Both guards are pinned by tests in testKodi_v22_movie_set.cpp.
+/// \details The folder half matters because an invalid DirectoryPath wraps a default QDir,
+///          whose absolutePath() is the process's working directory.  movieSetFileName()
+///          refuses that path too, but movieSetsWithRecord() lists the directory itself and
+///          never goes through it, which is what this guard covers.
 bool movieSetFolderIsConfigured()
 {
     return Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder
@@ -1389,18 +1353,9 @@ bool movieSetFolderIsConfigured()
 
 /// \brief Opens and parses the movie set record at \p fileName.
 /// \return false if it could not be opened, which is the caller's cue to refuse.
-/// \details Every path that touches a `set.nfo` -- the read, the write, the removal and
-///          the enumeration -- goes through this one function, so that they cannot drift
-///          into asking different questions about the same file.  There are exactly four
-///          of them and each one has to establish, before it acts, which set the file it
-///          is about to touch belongs to; the answer is
-///          MovieSetXmlReader::setNameOf(domDoc).
-///
-///          A file that cannot be opened yields *no* answer, and no caller may treat
-///          that as permission to proceed.  On Unix, unlinking needs write permission on
-///          the containing directory and nothing at all on the file, so a `set.nfo` that
-///          cannot be read can still be deleted -- which is precisely the case where
-///          falling through would destroy a file whose owner was never established.
+/// \details Every path that touches a `set.nfo` goes through here, because each has to ask
+///          which set the file belongs to before it acts.  A file that cannot be opened
+///          yields no answer, and no caller may take that as permission to proceed.
 bool readMovieSetRecord(const QString& fileName, QDomDocument& domDoc)
 {
     QFile file(fileName);
@@ -1417,8 +1372,7 @@ bool readMovieSetRecord(const QString& fileName, QDomDocument& domDoc)
 
 bool KodiXml::movieSetRecordsEnabled() const
 {
-    // A record lives in the movie set information folder and nowhere else, so having one
-    // configured is the whole question.
+    // A record lives in the movie set information folder and nowhere else.
     return movieSetFolderIsConfigured();
 }
 
@@ -1427,19 +1381,13 @@ QString KodiXml::movieSetNfoFileName(const QString& setName)
     if (setName.isEmpty() || !movieSetRecordsEnabled()) {
         return {};
     }
-    // A name that legalises away to nothing -- ".", "...", a run of spaces, all of which
-    // the sets tab's rename field accepts -- would otherwise build "<msif>//set.nfo" and
-    // drop the record straight into the movie set information folder's root.  Nothing
-    // enumerates that, since the listing descends into subfolders, so the record would be
-    // found by the direct probe and not by the listing: the same split answer that the
-    // hidden-folder case produced.  Such a set simply has nowhere to keep a record.
+    // A name that legalises away to nothing -- ".", a run of spaces -- would build
+    // "<msif>//set.nfo" and drop the record where the listing below never descends, so such a
+    // set has nowhere to keep one.  Before movieSetFileName(), which resolves in the other
+    // layout to a path Kodi never reads.
     if (mediaelch::kodi::makeLegalFileName(setName).isEmpty()) {
         return {};
     }
-    // The gate above has to come first.  movieSetFileName() does not resolve to nothing
-    // in the other artwork layout: for a set that has members it happily returns
-    // "<the first member's folder>/set.nfo", which is a real path Kodi never reads.
-    //
     // "set.nfo" is Kodi's fixed name for this file, so the DataFile is built here rather
     // than read from Settings, where every other file name is user-configurable.
     DataFile dataFile(DataFileType::MovieSetNfo, "set.nfo", 0);
@@ -1453,16 +1401,13 @@ QStringList KodiXml::movieSetsWithRecord()
     }
     const QDir msif = Settings::instance()->movieSetArtworkDirectory().dir();
     QStringList setNames;
-    // QDir::Hidden, because QDir::NoDotAndDotDot only drops "." and "..": without it a
-    // set whose legalised folder begins with a dot -- ".hack Collection" is a real
-    // collection -- is invisible here while loadMovieSet() opens its path directly and
-    // finds it.  That split answer is exactly what the two halves below exist to close,
-    // so the listing has to be able to see everything the probe can.
+    // QDir::Hidden, so that the listing sees everything the direct probe in loadMovieSet()
+    // can: a set whose legalised folder begins with a dot -- ".hack Collection" -- would
+    // otherwise have a record by one route and not by the other.
     const QStringList folders = msif.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
     for (const QString& folder : folders) {
-        // A folder holding artwork but no `set.nfo` is not a set.  The record is what
-        // makes a set exist in its own right; treating a pile of images as one would
-        // resurrect every set a user ever deliberately removed.
+        // A folder holding artwork but no `set.nfo` is not a set; treating one as a set
+        // would resurrect every set a user ever deliberately removed.
         const QString fileName = msif.absoluteFilePath(folder) + "/set.nfo";
         if (!QFileInfo::exists(fileName)) {
             continue;
@@ -1471,23 +1416,17 @@ QStringList KodiXml::movieSetsWithRecord()
         if (!readMovieSetRecord(fileName, domDoc)) {
             continue;
         }
-        // Read from the file, not taken from the folder name: the folder name is the
-        // set name run through Kodi's legalisation, which is lossy -- a set called
-        // "Mission: Impossible" lives in "Mission_ Impossible" -- and the name has to
+        // Read from the file, not taken from the folder name: legalisation is lossy -- a set
+        // called "Mission: Impossible" lives in "Mission_ Impossible" -- and the name has to
         // match the member NFOs' <set><name> byte for byte.
         const QString setName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
         if (setName.isEmpty()) {
             qCWarning(generic) << "[KodiXml] Movie set record names no set:" << fileName;
             continue;
         }
-        // And only if the name resolves back to the folder it was found in.  This is
-        // half of the one question every path here asks -- "is there a record whose
-        // <originaltitle> is this name, where that name's own path puts it?" -- and
-        // loadMovieSet() asks the other half.  Both halves are needed: a record reported
-        // from a folder the name does not resolve to would be looked for elsewhere by
-        // loadMovieSet(), written a second time elsewhere by saveMovieSet() and not
-        // removed at all by removeMovieSetRecord(), so the set would flip between having
-        // a record and not having one from one reload to the next.
+        // And only if the name resolves back to the folder it was found in: a record
+        // reported from anywhere else would be looked for, written and removed at the path
+        // the name derives, so the set would gain and lose its record between reloads.
         if (mediaelch::kodi::makeLegalFileName(setName) != folder) {
             qCWarning(generic) << "[KodiXml] Ignoring movie set record" << fileName << "-- it names" << setName
                                << "but that set's folder would be" << mediaelch::kodi::makeLegalFileName(setName);
@@ -1512,15 +1451,10 @@ bool KodiXml::loadMovieSet(MovieSet& set)
         return false;
     }
 
-    // Checked *before* anything is applied to the set.  The path is derived from the set
-    // name through a lossy legalisation, so the file sitting there is not necessarily
-    // this set's: two names can share one folder ("Mission: Impossible" and
-    // "Mission_ Impossible" both legalise to the latter), a case-insensitive file system
-    // hands back a folder whose name differs in case, and a folder can be renamed by
-    // hand.  Answering "found" for someone else's record would read their overview and
-    // id into this set and, worse, mark this set as having a record -- which is what
-    // decides whether it survives losing its last member and whether removeSet() deletes
-    // a file.
+    // Checked before anything is applied to the set.  Legalisation is lossy, so two names can
+    // share one folder, and answering "found" for someone else's record would read their
+    // fields into this set and mark it as backed, which is what decides whether removeSet()
+    // deletes a file.
     const QString recordName = mediaelch::kodi::MovieSetXmlReader::setNameOf(domDoc);
     if (recordName.isEmpty()) {
         qCWarning(generic) << "[KodiXml] Movie set record names no set:" << fileName;
@@ -1538,10 +1472,8 @@ bool KodiXml::loadMovieSet(MovieSet& set)
         qCWarning(generic) << "[KodiXml] Movie set record is not a <set> document:" << fileName;
         return false;
     }
-    // The reader wrote the set's fields, and every one of those setters marks the set as
-    // needing to be saved.  It does not: this *is* what is on disk.  Leaving the flag
-    // set would have MediaElch warn about discarding unsaved changes to a set nobody
-    // touched.
+    // The reader's setters marked the set as needing to be saved; it does not, because this
+    // is what is on disk.
     set.setChanged(false);
     return true;
 }
@@ -1555,22 +1487,9 @@ bool KodiXml::saveMovieSet(MovieSet& set)
                            << "configured, or the name legalises away to nothing.";
         return false;
     }
-    // The writer is the fourth path to this file and the last one to be brought under the
-    // same question, which is how it managed to be the one that destroyed data: it
-    // resolved the path and wrote whatever was there.  Two names can share one folder --
-    // "Alien Collection" and "Alien Collection ", since legalisation chops the trailing
-    // space, and a sloppy member NFO produces the padded one because the movie NFO reader
-    // does not trim `<set><name>` either -- so saving the second silently replaced the
-    // first's overview and id.  The owner's own read then failed the name check and the
-    // enumeration reported the lodger, so the owner lost its record flag and became
-    // droppable.
-    //
-    // The question is asked the other way round here, and the difference is not
-    // cosmetic.  loadMovieSet() may demand that the file names this set, because a record
-    // it cannot find simply does not exist.  A *write* has to be able to create a record
-    // where there is no file at all, so the refusal is "a file is already there and it
-    // names some other set" -- not "the file names this set".  Requiring a match would
-    // make it impossible to write the first record for any set.
+    // The same ownership question loadMovieSet() asks, the other way round: a write has to be
+    // able to create the first record for a set, so the refusal is "a file is already there
+    // and it names some other set", not "the file names this set".
     if (QFileInfo::exists(fileName)) {
         QDomDocument existing;
         if (!readMovieSetRecord(fileName, existing)) {
@@ -1593,10 +1512,7 @@ bool KodiXml::saveMovieSet(MovieSet& set)
         return false;
     }
     set.setHasRecord(true);
-    // The clearing edge for MovieSet::hasChanged().  Nothing else has ever cleared that
-    // flag, which is why it could not be used to decide whether a set survives losing
-    // its last member; it can be cleared now because there is finally a moment at which
-    // the set and its file agree.
+    // The clearing edge for MovieSet::hasChanged(): the set and its file agree now.
     set.setChanged(false);
     return true;
 }
@@ -1612,19 +1528,9 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
         // Already gone, which is what the caller wanted.
         return true;
     }
-    // The same lossy legalisation that loadMovieSet() guards against, at the one place
-    // where being wrong destroys a file: two set names can share a folder, and only one
-    // of them owns the record in it.
-    //
-    // This is a live guard, not a belt-and-braces one.  MovieSet::setName() does not
-    // clear hasRecord(), and making the record follow a rename is deferred to D3a, so
-    // renaming a set in the sets tab and then deleting it arrives here with a stale flag
-    // and a name whose folder holds somebody else's file.  Do not read it as dead code.
-    //
-    // And it fails *closed*.  A record that cannot be opened yields no owner, and on Unix
-    // unlinking needs write permission on the directory and nothing on the file, so an
-    // unreadable `set.nfo` is perfectly deletable -- proceeding would destroy a file
-    // whose owner was never established, and report success for it.
+    // The same ownership question as loadMovieSet(), at the one place where being wrong
+    // destroys a file, and it fails closed: an unreadable `set.nfo` yields no owner but is
+    // perfectly deletable, so proceeding would remove a file that was never shown to be ours.
     QDomDocument domDoc;
     if (!readMovieSetRecord(fileName, domDoc)) {
         qCWarning(generic) << "[KodiXml] Not removing movie set record" << fileName
@@ -1641,33 +1547,19 @@ bool KodiXml::removeMovieSetRecord(const QString& setName)
         qCWarning(generic) << "[KodiXml] Cannot remove movie set record" << fileName;
         return false;
     }
-    // Only the record.  The folder and any artwork in it stay: they may still be wanted,
-    // MediaElch has never deleted them, and a folder without a `set.nfo` is not a set,
-    // so leaving it behind cannot bring the set back.
+    // Only the record: a folder without a `set.nfo` is not a set, so the artwork left behind
+    // cannot bring this one back.
     return true;
 }
 
 namespace {
 
 /// \brief Renames \p dir's set artwork from \p oldName's file names to \p newName's.
-/// \details Artwork file names are user-configurable and the shipped ones **do** embed
-///          the set's name: `<setName>-poster.jpg` and `<setName>-fanart.jpg`
-///          (`Settings.cpp:97-98`).  There is one initial list and `Settings::dataFiles()`
-///          never consults the artwork layout, so those are the names in *both* layouts
-///          until the user opens the settings and switches -- at which point
-///          `MovieSettingsWidget::onComboMovieSetArtworkChanged()` rewrites the fields to
-///          "folder.jpg"/"fanart.jpg" for the separate-folder layout.  So this loop does
-///          real work on a default install, and the placeholder-free case is the
-///          configured one rather than the common one.
-///
-///          It runs in both layouts because moving a folder does not rename what is
-///          inside it: in the artwork-next-to-movies layout it is the whole move, in the
-///          separate-folder layout it is the part the directory rename could not do.
-///
-///          These can genuinely half-succeed, one file at a time, so the answer counts
-///          rather than latching a bool.  A file that did move is individually correct,
-///          so the ones that did are kept; putting them back would be a second batch of
-///          renames with the same failure mode.
+/// \details The shipped artwork file names embed the set's name (`<setName>-poster.jpg`) in
+///          both layouts, until MovieSettingsWidget rewrites them for the separate-folder
+///          one, and moving a folder does not rename what is inside it -- so this runs in
+///          both.  Files move one at a time and the ones that did are kept, so the answer
+///          counts rather than latching a bool.
 MediaCenterInterface::MovieSetFileMove renameSetArtworkFilesIn(
     const QDir& dir, const QString& oldName, const QString& newName)
 {
@@ -1711,16 +1603,14 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
 
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
         if (!movieSetFolderIsConfigured()) {
-            // No folder, so no record and no per-set artwork folder: nothing exists to
-            // be moved, which is a success and not a refusal.
+            // Nothing exists to be moved, which is a success and not a refusal.
             return MovieSetFileMove::Moved;
         }
         const QString oldFolder = mediaelch::kodi::makeLegalFileName(oldName);
         const QString newFolder = mediaelch::kodi::makeLegalFileName(newName);
         if (oldFolder.isEmpty() || newFolder.isEmpty() || oldFolder == newFolder) {
-            // Legalisation is lossy, so two different names can share one folder --
-            // "Mission: Impossible" and "Mission_ Impossible".  Renaming between them
-            // moves nothing on disk, and trying would rename a directory onto itself.
+            // Two names can share one folder, and renaming between them would rename a
+            // directory onto itself.
             return MovieSetFileMove::Moved;
         }
         QDir msif = Settings::instance()->movieSetArtworkDirectory().dir();
@@ -1728,12 +1618,9 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
             return MovieSetFileMove::Moved;
         }
 
-        // The same ownership question removeMovieSetRecord() asks, at the one other
-        // place where being wrong touches somebody else's files.  A folder is only this
-        // set's to move if the record in it names this set; a record that cannot be read
-        // yields no owner at all, and moving on that basis would carry away a folder
-        // whose owner was never established.  A folder with no record is artwork alone
-        // and has no other claimant, so it moves.
+        // The same ownership question removeMovieSetRecord() asks: the folder is only this
+        // set's to move if the record in it names this set.  A folder with no record at all
+        // is artwork alone and has no other claimant, so it moves.
         const QString oldRecord = msif.absoluteFilePath(oldFolder) + "/set.nfo";
         if (QFileInfo::exists(oldRecord)) {
             QDomDocument domDoc;
@@ -1752,50 +1639,36 @@ KodiXml::MovieSetFileMove KodiXml::renameMovieSetFiles(const QString& oldName, c
         }
 
         if (QFileInfo::exists(msif.absoluteFilePath(newFolder))) {
-            // Refused rather than merged.  The target holds either another set's record
-            // -- which a rename may not walk over -- or its artwork, and folding two art
-            // folders together would let this set's poster shadow the other's with no
-            // way to tell afterwards which came from where.
+            // Refused rather than merged: folding two folders together would let this set's
+            // artwork shadow another's with no way to tell afterwards which came from where.
             qCWarning(generic) << "[KodiXml] Not moving movie set folder" << oldFolder << "to" << newFolder
                                << "-- something is already there.";
             return MovieSetFileMove::NotMoved;
         }
 
-        // One rename, not a copy-and-delete loop.  Within a file system this cannot half
-        // succeed, and a partial move is worse than either endpoint: the record in one
-        // folder and the artwork in another is a state nothing here can recognise.
-        // Across file systems QDir::rename() fails outright rather than falling back to
-        // a copy, which is exactly the failure worth having -- nothing moved.
+        // One rename, not a copy-and-delete loop: within a file system it cannot half
+        // succeed, and across file systems QDir::rename() fails outright rather than
+        // leaving the record in one folder and the artwork in another.
         if (!msif.rename(oldFolder, newFolder)) {
             qCWarning(generic) << "[KodiXml] Cannot move movie set folder" << msif.absoluteFilePath(oldFolder) << "to"
                                << msif.absoluteFilePath(newFolder);
             return MovieSetFileMove::NotMoved;
         }
-        // The folder moved; what is inside it did not get a new name.  A configured
-        // artwork file name that embeds the set's name -- which is what ships -- would
-        // still spell the old one, and MediaElch would then look for this set's poster
-        // where it no longer is.
-        //
-        // The directory has moved by this point, so a failure in there is never
-        // "nothing moved": the record is at the new name and only some artwork is not.
-        // Saying otherwise sends the user to a folder that no longer exists.
+        // The folder moved but the files in it kept their names.  A failure from here is
+        // never "nothing moved": the record is at the new name already.
         return renameSetArtworkFilesIn(QDir(msif.absoluteFilePath(newFolder)), oldName, newName)
                        == MovieSetFileMove::Moved
                    ? MovieSetFileMove::Moved
                    : MovieSetFileMove::PartlyMoved;
     }
 
-    // Artwork next to movies.  There is no per-set folder here and no record at all; the
-    // artwork sits beside a member movie under a file name built from the set's name, so
-    // the files are renamed where they lie.  The directory is found through the *old*
-    // name -- movieSetFileName() locates a movie whose set().name is still that -- which
-    // is why this has to run before the members are reassigned; see the interface's
-    // warning.
+    // Artwork next to movies: no per-set folder and no record, so the files are renamed where
+    // they lie.  The directory is found through a movie whose set().name is still the old
+    // one, which is why this has to run before the members are reassigned.
     DataFile probe(DataFileType::MovieSetPoster, "probe", 0);
     const QString anchor = movieSetFileName(oldName, &probe);
     if (anchor.isEmpty()) {
-        // No member movie with a file, so this set has no artwork path in this layout at
-        // all and there is nothing to move.
+        // No member movie with a file, so this set has no artwork path here to move.
         return MovieSetFileMove::Moved;
     }
     return renameSetArtworkFilesIn(QFileInfo(anchor).dir(), oldName, newName);
@@ -1805,25 +1678,14 @@ QString KodiXml::movieSetFileName(QString setName, DataFile* dataFile, LegaliseP
 {
     if (Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::SeparateArtworkFolder) {
         if (!movieSetFolderIsConfigured()) {
-            // Inside this branch that is exactly "no folder was ever chosen", and it is
-            // asked through the shared predicate rather than by testing isValid() again,
-            // so that there is one derivation of it and not two.
-            //
-            // Without it the line below hands back a real, writable path in whatever
-            // directory MediaElch was started from -- see movieSetFolderIsConfigured() --
-            // and every caller acts on it: the savers mkpath() and write there, and the
-            // reader displays whatever it happens to find there as this set's artwork.
-            //
-            // Refused here, where the path is built, rather than in each caller: that
-            // closes it for all four of them and for any added later.  It has to come
-            // *before* the path is resolved and cannot be inferred from an empty result,
-            // because the other layout below returns an empty string for an entirely
-            // different reason.
+            // "No folder was ever chosen".  Without this the line below hands back a real,
+            // writable path in whatever directory MediaElch was started from.  Refused where
+            // the path is built, so that it is closed for every caller at once.
             return {};
         }
         QDir dir = Settings::instance()->movieSetArtworkDirectory().dir();
-        // Kodi legalises only the folder component of this path, so the file name keeps using
-        // MediaElch's own sanitiser.  The two are intentionally different.
+        // Kodi legalises only the folder component, so the file name keeps MediaElch's own
+        // sanitiser.  The two are intentionally different.
         QString fileName = dataFile->saveFileName(setName);
         QString folderName = legalise == LegalisePath::Yes ? mediaelch::kodi::makeLegalFileName(setName) : setName;
         return dir.absolutePath() + "/" + folderName + "/" + fileName;

@@ -84,9 +84,9 @@ private slots:
 
 private:
     /// \brief Tells MovieSetModel that this movie's set may have changed.
-    /// \details Both writes of a movie's set that go through this class are made with
-    ///          the movie's signals suppressed, so the model cannot see either one.
-    ///          This is the notification that survives that; see the definition.
+    /// \details Both writes of a movie's set that go through this class are made with the
+    ///          movie's signals suppressed, so this direct call is the only notification
+    ///          the model gets.
     void syncSetMembership();
 
 private:

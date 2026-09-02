@@ -20,23 +20,20 @@ QByteArray MovieSetXmlWriter::getMovieSetXml() const
 
     xml.writeStartElement("set");
 
-    // <title> is what Kodi 22 displays, <originaltitle> is what it matches on, and the
-    // latter has to be byte-identical to the <set><name> in every member movie's NFO.
-    // For a set that has never had a set-file-only rename the two are the same string;
-    // after one they part company, and this file is the only place that divergence can
-    // live, because a movie NFO has no element for a display title.  See D-B.
+    // <title> is what Kodi 22 displays, <originaltitle> what it matches on, and the latter
+    // has to be byte-identical to the <set><name> in every member movie's NFO.  The two part
+    // company after a set-file-only rename, and this file is the only place that can hold it.
     xml.writeTextElement("title", m_set.displayName());
     xml.writeTextElement("originaltitle", m_set.name());
 
-    // Never written empty (D2a).  XMLUtils::GetString() returns true for an
-    // existing-but-empty element, so an empty <overview> is a value to Kodi, not an
-    // absence, and it blanks a populated set overview in the database.
+    // Never written empty: XMLUtils::GetString() returns true for an existing-but-empty
+    // element, so to Kodi an empty <overview> is a value and it blanks the set's overview.
     if (!m_set.overview().isEmpty()) {
         xml.writeTextElement("overview", m_set.overview());
     }
 
-    // Kodi ignores unknown children of <set>, so the collection's id rides along here
-    // for MediaElch to read back (#2012).  CSetInfoTag has no id field at all.
+    // Kodi ignores unknown children of <set>, so the collection's id rides along here for
+    // MediaElch to read back (#2012).
     if (m_set.tmdbId().isValid()) {
         xml.writeStartElement("uniqueid");
         xml.writeAttribute("type", "tmdb");
@@ -44,8 +41,8 @@ QByteArray MovieSetXmlWriter::getMovieSetXml() const
         xml.writeEndElement();
     }
 
-    // No <art>: the set's artwork is the image files in this same folder, which every
-    // Kodi from 19 to 22 reads first.  See MovieSetXmlReader::parseNfoDom().
+    // No <art>: the set's artwork is the image files in this same folder, which every Kodi
+    // from 19 to 22 reads first.
 
     xml.writeEndElement();
     xml.writeEndDocument();

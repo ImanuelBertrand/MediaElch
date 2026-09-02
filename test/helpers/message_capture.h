@@ -6,15 +6,10 @@
 namespace test {
 
 /// \brief Captures Qt log output for as long as it is in scope.
-/// \details Some behaviour has no observable other than a log line: a warning that a
-///          set's unsaved record is being discarded, or the absence of a message
-///          claiming a set was renamed.  A test that does not read the log cannot tell
-///          such a message from its absence, and both directions matter -- a log line
-///          that should not be there is as much a defect as a missing one.
-///
-///          Warnings and info are both captured, because the messages worth asserting
-///          on are split across the two: qCWarning() for "something was discarded",
-///          qCInfo() for "this file says something unexpected".
+/// \details Some behaviour has no observable but a log line -- a warning that an unsaved
+///          record is being discarded, or the absence of one claiming a set was renamed --
+///          and both directions matter.  Warnings and info are both captured, because the
+///          messages worth asserting on are split across the two.
 class MessageCapture
 {
 public:

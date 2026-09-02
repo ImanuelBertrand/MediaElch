@@ -63,10 +63,9 @@ TEST_CASE("Movie set mirror in the movie NFO", "[data][movie][movie_set][kodi][n
 {
     SECTION("An empty set overview is not written at all")
     {
-        // D2a.  An existing-but-empty <overview> is a value to Kodi, not an absence:
-        // XMLUtils::GetString() returns true for it, and the member scanned last then
-        // blanks the whole set's stored overview.  MediaElch used to emit it
-        // unconditionally whenever the movie named a set.
+        // An existing-but-empty <overview> is a value to Kodi, not an absence:
+        // XMLUtils::GetString() returns true for it, and the member scanned last then blanks
+        // the whole set's stored overview.
         MovieSetInfo set;
         set.name = "Alien Collection";
         CHECK_THAT(writeMovieInSet(set), Contains("<name>Alien Collection</name>"));
@@ -75,8 +74,8 @@ TEST_CASE("Movie set mirror in the movie NFO", "[data][movie][movie_set][kodi][n
 
     SECTION("A set overview is written when there is one")
     {
-        // The mirror is written on every Kodi version, not just the ones that read it:
-        // 19-21 cannot see `set.nfo` at all, and neither can other tools (D1b).
+        // The mirror is written on every Kodi version, not just the ones that read `set.nfo`:
+        // Kodi 19-21 cannot see that file at all, and neither can other tools.
         MovieSetInfo set;
         set.name = "Alien Collection";
         set.overview = "Ripley versus the Alien.";

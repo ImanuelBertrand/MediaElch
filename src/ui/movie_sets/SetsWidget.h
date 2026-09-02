@@ -39,25 +39,12 @@ public slots:
 
 public:
     /// \brief Enables or disables the actions that need a movie set information folder.
-    /// \details Two questions, and they are deliberately different ones.  *Add Movie
-    ///          Set* needs a **record**: a set with no members and no `set.nfo` is
-    ///          dropped by the next reload (MovieSetModel::dropEmptySets()), so offering
-    ///          to create one with no folder configured is offering something that
-    ///          silently disappears -- and it is the only path that can create such a
-    ///          set, which is why disabling it is what keeps read-only mode from
-    ///          accumulating them.  The artwork needs a resolvable **path**, which the
-    ///          default "artwork next to movies" layout has and a separate folder that
-    ///          was never chosen has not.
+    /// \details Two different questions.  *Add Movie Set* needs a record, because a set with
+    ///          no members and no `set.nfo` is dropped by the next reload; the artwork needs
+    ///          a resolvable path, which the default "artwork next to movies" layout has.
+    ///          Everything else in this tab writes movie NFOs and stays enabled either way.
     ///
-    ///          Everything else in this tab writes movie NFOs -- renaming a set, moving
-    ///          movies in and out of it, the sort title, deleting it -- and stays
-    ///          enabled with no folder, because membership and the set's name are
-    ///          authoritative in the member movies (D-A/D1a).  Disabling the rename in
-    ///          particular would leave retyping the name on each movie as the only way
-    ///          to rename a set, which is exactly how a set forks in two (D3).
-    ///
-    ///          Cheap, and safe to call often: it reads two settings and touches a
-    ///          handful of widgets.  It must *not* reload the model.
+    ///          Cheap and safe to call often; it must not reload the model.
     void applyWriteAccess();
 
 signals:
@@ -87,8 +74,8 @@ private slots:
 
 private:
     /// \brief The three renames, kept apart because they are three different operations.
-    /// \details onSetNameChanged() decides which one a typed name means -- merge, or the
-    ///          rename mode of D-B -- and each of these performs exactly one of them.
+    /// \details onSetNameChanged() decides which one a typed name means; each of these
+    ///          performs exactly one of them.
     void performSetFileOnlyRename(
         QTableWidgetItem* item, MovieSet* origSet, const QString& origSetName, const QString& newName);
     void performAllMovieFilesRename(
@@ -114,16 +101,13 @@ private:
     /// \brief Kept so that it can be disabled; see applyWriteAccess().
     QAction* m_actionAddSet = nullptr;
     /// \brief What applyWriteAccess() last found, to notice the setting being changed.
-    /// \details Only the direction matters, and only one of the two directions does
-    ///          anything beyond re-enabling controls; see onSettingsSaved().
+    /// \details Only the direction matters; see onSettingsSaved().
     bool m_recordsAreConfigured = false;
     DownloadManager* m_downloadManager;
     QMovie* m_loadingMovie;
     /// \brief Whether the list is filtered down to the sets that have no movies.
-    /// \details A set with a `set.nfo` survives having no members (D-A), so the list can
-    ///          hold sets that nothing in the library points at.  They are not
-    ///          distinguishable from the others by looking, and in a long list they are
-    ///          not findable at all, so the tab needs a way to ask for them.
+    /// \details A set with a `set.nfo` survives having no members, so the list can hold sets
+    ///          nothing in the library points at, and nothing about a row says so.
     bool m_showOnlyEmptySets = false;
 
     void loadSet(QString set);

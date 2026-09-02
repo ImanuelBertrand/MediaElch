@@ -41,12 +41,7 @@ QVariant MovieSetModel::data(const QModelIndex& index, int role) const
     MovieSet* movieSet = m_sets.at(index.row());
 
     switch (role) {
-    // Split deliberately.  DisplayRole means "what to show a person", which after a
-    // set-file-only rename is not the set's key (D-B); NameRole is the key, which is what
-    // a caller looks a set up by and must never quietly become a display string.  Nothing
-    // reads DisplayRole from this model today -- the sets tab is a QTableWidget -- so this
-    // is the moment to get the two apart, before a view arrives and enshrines the wrong
-    // one.
+    // DisplayRole is what a person reads; NameRole is the key a set is looked up by.
     case Qt::DisplayRole: return movieSet->displayName();
     case Roles::NameRole: return movieSet->name();
     case Roles::MovieCountRole: return qsizetype_to_int(movieSet->movies().size());
@@ -93,9 +88,8 @@ void MovieSetModel::setRecordSource(MediaCenterInterface* mediaCenter)
     }
     m_mediaCenter = mediaCenter;
     if (m_movieModel != nullptr) {
-        // The sets have to be re-derived, because the answer to "which of you have a
-        // record?" has just changed for all of them -- and because the sets that have
-        // one but no member movie can only be found now.
+        // Which sets have a record has changed for all of them, and sets that have a record
+        // but no member movie can only be found now.
         reload();
     }
 }
@@ -110,8 +104,7 @@ MovieSet* MovieSetModel::set(const QString& name) const
     if (name.isEmpty()) {
         return nullptr;
     }
-    // A linear search rather than a name index: a library has few sets, and an index
-    // would silently go stale on MovieSet::setName().
+    // Linear search: a library has few sets, and a name index would go stale on MovieSet::setName().
     for (MovieSet* movieSet : m_sets) {
         if (movieSet->name() == name) {
             return movieSet;
@@ -138,30 +131,20 @@ void MovieSetModel::assign(Movie* movie, const MovieSetInfo& setInfo)
         return;
     }
     if (movie->set() != setInfo) {
-        // Marks the movie changed, which is the half of a membership edit that nothing
-        // else does: neither MovieSet nor this model dirties anything for a membership
-        // change on its own, and this one has to reach the member's NFO (D-A).
-        //
-        // Guarded, because putting a movie where it already is must change nothing at
-        // all -- MovieSet's own setters promise exactly that, and a dirty flag nobody
-        // asked for means MediaElch offers to rewrite an NFO the user never touched.
+        // Written and dirtied only if the value differs, so that an NFO the user never touched is
+        // not offered for rewriting.
         movie->setSetInfo(setInfo);
     }
-    // Outside the guard on purpose.  Writing the value is what has to be skipped when
-    // nothing changed; reconciling is not, because the model can be behind the movie
-    // for reasons that have nothing to do with this call -- see syncMovie().  Normally
-    // it is redundant, since setSetInfo() emits Movie::sigChanged and onMovieChanged()
-    // has already run; it is not redundant when the caller has blocked the movie's
-    // signals.  Reconciling twice is a no-op.
+    // Outside the guard: the model can be behind the movie when the caller blocked its signals,
+    // see syncMovie().  Reconciling twice is a no-op.
     syncMovie(movie);
 }
 
 void MovieSetModel::syncMovie(Movie* movie)
 {
     if (movie == nullptr || !m_setNameByMovie.contains(movie)) {
-        // A movie this model never attached is not in the library, so it has no
-        // membership here to reconcile.  Its set is picked up by attachMovie() if it
-        // ever joins.
+        // Not in the library, so there is no membership to reconcile; attachMovie() picks up
+        // the movie's set if it ever joins.
         return;
     }
     onMovieChanged(movie);
@@ -175,27 +158,9 @@ bool MovieSetModel::removeSet(const QString& name)
         return true;
     }
 
-    // The record goes first, and the refusal is honoured.
-    //
-    // It has to be what makes the set exist apart from its movies, so a `set.nfo` that
-    // outlived the set would be found by the next reload and bring the set back:
-    // "Delete Movie Set" would delete nothing that lasted.  The media center can refuse
-    // -- an unreadable record, a record that turns out to belong to another set, a
-    // read-only mount, a file locked by something else -- and a refusal that was ignored
-    // produced exactly that outcome through the door the guard opened.
-    //
-    // Attempted *before* the members are detached, and this ordering is the whole point.
-    // Detaching is an edit that dirties every member, so doing it first and bailing out
-    // afterwards would leave the members detached and dirty with the set still standing:
-    // half-done, and worse than either clean outcome.  Failing here leaves everything
-    // exactly as it was.
-    //
-    // This is the only place in this model that removes a file, and it is the only place
-    // that may.  removeSet() is reached exclusively from a deliberate removal in the sets
-    // tab; every automatic path goes through dropEmptySets(), which destroys objects and
-    // never touches the disk.  Only the record is removed -- the folder and any artwork
-    // in it stay, and a folder without a `set.nfo` is not a set, so it cannot resurrect
-    // this one.
+    // The record goes first and a refusal is honoured: a `set.nfo` that outlived its set would
+    // bring it back on the next reload, and detaching the members first would leave them dirty
+    // with the set still standing.  This is the only place in the model that removes a file.
     if (isBacked(movieSet) && !m_mediaCenter->removeMovieSetRecord(movieSet->name())) {
         qCWarning(generic) << "[MovieSetModel] Not removing movie set" << movieSet->name()
                            << "-- its record could not be removed, and a set whose record outlives it"
@@ -203,10 +168,8 @@ bool MovieSetModel::removeSet(const QString& name)
         return false;
     }
 
-    // Detaching the members has to reach disk, and nothing else marks it: a membership
-    // change dirties neither the set (membership is not in `set.nfo`, D-A) nor, by
-    // itself, the movie.  assign() is what marks it.
-    // The members are copied because each assign() removes one from the set.
+    // Membership lives in the members' NFOs, so assign() marks each former member changed.
+    // Copied because each assign() removes one from the set.
     const QVector<Movie*> members = movieSet->movies();
     for (Movie* movie : members) {
         assign(movie, MovieSetInfo{});
@@ -230,10 +193,7 @@ void MovieSetModel::dropSet(MovieSet* movieSet)
     if (!m_inReset) {
         endRemoveRows();
     }
-    // Nothing else takes a deleted set out of the membership index, and an entry that
-    // kept it would hand out a dangling MovieSet*.  Normally there is nothing to do:
-    // a set is dropped either for having no members or after its members have been
-    // detached.
+    // Take the deleted set out of the membership index so that no dangling MovieSet* is handed out.
     const QVector<Movie*> members = movieSet->movies();
     for (Movie* movie : members) {
         unindexMembership(movie, movieSet);
@@ -246,21 +206,9 @@ void MovieSetModel::dropEmptySets()
     // Iterated backwards because dropSet() removes from m_sets.
     for (int row = qsizetype_to_int(m_sets.size()) - 1; row >= 0; --row) {
         MovieSet* movieSet = m_sets.at(row);
-        // No members left *and* no record of its own (D-A).  A set with a `set.nfo` is
-        // more than the grouping of its movies, and not because the file holds anything
-        // the movies do not -- the overview and the id are mirrored into every member
-        // NFO, and the artwork is the image files beside the record rather than in it.
-        // It is that the file exists at all: a fact about the file system that no movie
-        // supplies, so such a set outlives its last member.  A set without one is nothing
-        // but that grouping, and goes when the grouping does -- otherwise its name would
-        // sit in the set combo box and the set filter with no movie answering to it.
-        //
-        // The record is a fact about the file system, established when the set was
-        // created and refreshed by reload().  It is deliberately *not* approximated by
-        // hasChanged(), which has been tried and reverted: that flag was a one-way latch
-        // until the `set.nfo` writer gave it a clearing edge, so exempting a changed set
-        // exempted every set that had ever been renamed for the rest of the session --
-        // immune even to reload(), the very thing meant to cure that.
+        // A set with a `set.nfo` outlives its last member; one without is nothing but the grouping
+        // of its movies.  Deliberately not approximated by hasChanged(), which would exempt every
+        // set with an unsaved rename for the rest of the session.
         if (movieSet->movies().isEmpty() && !isBacked(movieSet)) {
             dropSet(movieSet);
         }
@@ -269,21 +217,17 @@ void MovieSetModel::dropEmptySets()
 
 void MovieSetModel::detachFromLibrary()
 {
-    // The record source first: every path below could still run once more, and each of
-    // them ends in recordsAreConfigured(), which is what reaches Settings.
+    // Record source first: every path below ends in recordsAreConfigured(), which reaches Settings.
     m_mediaCenter = nullptr;
 
     if (m_movieModel != nullptr) {
         m_movieModel->disconnect(this);
         m_movieModel = nullptr;
     }
-    // The index names exactly the movies this model attached, and still does now that
-    // the movie model has been dropped.
     for (auto it = m_setNameByMovie.cbegin(), end = m_setNameByMovie.cend(); it != end; ++it) {
         it.key()->disconnect(this);
     }
-    // Destroyed, not merely emptied: that takes the sets' own destroyed() connections
-    // to the movies with them.
+    // Destroyed rather than emptied, so that the sets' own destroyed() connections go with them.
     clear();
 }
 
@@ -297,11 +241,8 @@ MovieSetModel::RenameMode MovieSetModel::resolveRenameMode(
 {
     switch (setting) {
     case MovieSetRenameMode::SetFileOnly:
-        // Explicit, so it is refused rather than downgraded where it cannot run.  The
-        // only fallback available is the all-movie-files rename, which rewrites every
-        // member's NFO -- a heavier and irreversible operation that this user chose this
-        // setting precisely to avoid.  Silently substituting it is not a graceful
-        // degradation; it is doing the opposite of what was asked.
+        // Explicit, so it is refused rather than downgraded to the all-movie-files rename the
+        // user chose this setting to avoid.
         return recordsAreConfigured ? RenameMode::SetFileOnly : RenameMode::Unavailable;
 
     case MovieSetRenameMode::AllMovieFiles: return RenameMode::AllMovieFiles;
@@ -309,10 +250,8 @@ MovieSetModel::RenameMode MovieSetModel::resolveRenameMode(
     case MovieSetRenameMode::Automatic: break;
     }
 
-    // Kodi 22 is the first release that reads `set.nfo` at all: 19-21 match a set with
-    // `SELECT idSet FROM sets WHERE strSet LIKE ...` and have no set NFO loader in the
-    // tree, so a set-file-only rename there is simply invisible.  And where there are no
-    // records, there is no file for the display title to live in -- see the header.
+    // Kodi 22 is the first release that reads `set.nfo`; earlier versions would not see a
+    // set-file-only rename at all.
     const bool kodiReadsSetFiles = kodiVersion.toInt() >= mediaelch::KodiVersion::v22;
     return kodiReadsSetFiles && recordsAreConfigured ? RenameMode::SetFileOnly : RenameMode::AllMovieFiles;
 }
@@ -334,11 +273,6 @@ void MovieSetModel::warnIfRecordIsLost(const MovieSet* movieSet) const
     if (!movieSet->hasChanged()) {
         return;
     }
-    // Every path that destroys a set object arrives here, through dropSet(): the
-    // deliberate removeSet(), the automatic dropEmptySets() and clear().  The flag means
-    // "this set differs from what is stored on disk", and since the `set.nfo` writer gave
-    // it a clearing edge it means that literally, so this fires exactly when an edit the
-    // user has not saved into the set's file is about to go.
     qCWarning(generic) << "[MovieSetModel] Discarding unsaved changes to movie set" << movieSet->name();
 }
 
@@ -353,51 +287,13 @@ void MovieSetModel::reload()
     m_setNameByMovie.clear();
     m_setsByMovie.clear();
 
-    // Which sets have a record is asked once for the whole library, and every set here is
-    // told whether it is among the answers.  It is not a cheap question: the media center
-    // has to open and parse every `set.nfo` in the folder to find out which set each one
-    // names.  That is one parse per `set.nfo`, plus one for every set this pass actually
-    // *probes* -- one it builds, or one that has just gained a record -- whose legalised
-    // path lands on a file.  A set that already had its record and still has it is not
-    // probed: the branch below is guarded on hasRecord && !movieSet->hasRecord(), and
-    // addSet() returns an existing set untouched.  So the steady state -- open the tab
-    // twice with nothing changed -- is the listing and nothing more.
+    // Which sets have a record is asked once for the whole library.  Only the existence of a
+    // record is refreshed; its contents were read when the set was created.  The exception is
+    // a set that gains a record: marked as backed while still holding the empty overview it
+    // was created with, it would write that emptiness over the file on the next save.
     //
-    // KodiXml::loadMovieSet() cannot avoid that second parse where it does happen: it has
-    // to read the document before it can ask which set the document names, so a set whose
-    // path lands on a neighbour's record parses the file and only then answers false.  A
-    // set whose path resolves to no file at all costs nothing.
-    //
-    // Bounded by the folder and the number of sets, never by the size of the library.
-    //
-    // A standing rule about the three sentences above, because five successive versions of
-    // them have been wrong, each in its own way.  Three were enumerations of which sets
-    // take the second parse: two of those missed a call site, and the third named both
-    // call sites correctly but misattributed the empty-model state to setMovieModel() and
-    // setRecordSource() -- neither of which touches m_sets -- and overcounted it as "every
-    // set".  The fourth traded the enumeration for a guarantee, "at most two parses per
-    // record", which the folder-collision case falsified.  The fifth had the condition
-    // right and dropped the restriction, counting every set whose path lands on a file
-    // including the ones that are never probed.  Each fix answered the error that had just
-    // been found, which is exactly why it kept taking another round.
-    //
-    // **If this is ever found wrong a sixth time, delete the quantified claim instead of
-    // repairing it.**  The mechanism -- a parse happens where a probed path lands on a
-    // file -- and the bound above carry the whole useful warning between them, and a
-    // comment that has been wrong six times is worth less than no comment at all.
-    //
-    // Only the *existence* of a record is refreshed.  Its contents are read once, when
-    // the set is created, because re-reading would overwrite an overview or an id the
-    // user has edited and not saved yet.  The one exception is the branch below: a set
-    // that had no record and now has one has to be read, or it would write the emptiness
-    // it was created with over the file.
-    //
-    // Skipped entirely when records are not configured, and that is not just an
-    // optimisation: with no folder there is nothing to re-derive from, so clearing every
-    // flag would throw away the last thing that was actually known.  isBacked() already
-    // returns false for every set while records are off, so a preserved flag changes no
-    // decision -- and it is what makes turning the folder back on restore every set's
-    // answer immediately rather than at the next reload.
+    // Skipped when records are off, so that the flags survive and turning the folder back on
+    // restores every set's answer at once.
     QStringList recordNames;
     if (recordsAreConfigured()) {
         recordNames = m_mediaCenter->movieSetsWithRecord();
@@ -405,34 +301,13 @@ void MovieSetModel::reload()
         for (MovieSet* movieSet : asConst(m_sets)) {
             bool hasRecord = setsWithRecord.contains(movieSet->name());
             if (hasRecord && !movieSet->hasRecord()) {
-                // A record this set did not have before -- the folder was configured or
-                // changed, the file was put there by something else, or the set was
-                // renamed onto one.  Its contents have to be read, and not only its
-                // existence: a set marked as having a record while still holding the
-                // empty overview it was created with would write that emptiness over the
-                // file on the next save.
-                //
-                // And if that read fails -- the listing found the file a moment ago, so
-                // this means an I/O error or a change underneath us -- the set does not
-                // get to claim the record.  Claiming it on a failed read is the same
-                // emptiness hazard by another route.
-                //
-                // Note what that costs, because it is not free: a set with no members
-                // whose read fails is unbacked for the rest of this pass, and
-                // dropEmptySets() at the end of it destroys it.  The enumeration loop
-                // below does not rescue it either -- addSet() finds the set already in
-                // m_sets and returns it without retrying the read.  So a transient error
-                // makes a memberless set vanish from the tab until the next reload, which
-                // reads it again and brings it back.  That is the better half of the
-                // trade: destroying an in-memory object that is rebuilt from disk is
-                // recoverable, and writing an empty overview over a real record is not.
+                // A failed read means an I/O error or a change underneath us; the set must not
+                // claim the record then.  A memberless set is dropped in that case and comes
+                // back on the next reload.
                 hasRecord = m_mediaCenter->loadMovieSet(*movieSet);
             }
-            // The other direction is deliberately left alone.  A set whose record has
-            // gone keeps the overview and id it read from it, so saving the set writes
-            // the file again with those contents.  That is the same thing that happens
-            // to any other unsaved value in this application and it is recoverable;
-            // silently emptying the object would not be.
+            // A set whose record has gone keeps the overview and id it read from it, which is
+            // recoverable; silently emptying the object would not be.
             movieSet->setHasRecord(hasRecord);
         }
     }
@@ -442,12 +317,8 @@ void MovieSetModel::reload()
             attachMovie(movie);
         }
     }
-    // A set can have a record and no member movie at all -- one the user curated and
-    // has not filled yet, or one whose last member left.  Nothing else finds it: sets
-    // are otherwise only ever derived from the movies that name them, and Kodi does not
-    // enumerate the folder either (it discovers sets from movies, exactly as this model
-    // did).  addSet() creates the ones that are missing, reading each one's record as it
-    // goes, and returns the ones that already exist untouched.
+    // Sets that have a record but no member movie can only be found from the records.
+    // addSet() returns existing sets untouched.
     for (const QString& name : recordNames) {
         addSet(name);
     }
@@ -480,8 +351,7 @@ void MovieSetModel::onMovieChanged(Movie* movie)
     if (movie == nullptr) {
         return;
     }
-    // Movie::sigChanged means "repaint me" and fires for every kind of edit, so most
-    // of them are not membership changes at all.
+    // sigChanged fires for every kind of edit; only a set-name change matters here.
     const QString newName = movie->set().name;
     const QString oldName = m_setNameByMovie.value(movie);
     if (newName == oldName) {
@@ -491,11 +361,8 @@ void MovieSetModel::onMovieChanged(Movie* movie)
 
     MovieSet* oldSet = set(oldName);
     if (oldSet != nullptr) {
-        // Deliberately no drop when this empties the set.  An edit never destroys a
-        // set: the set the user just emptied is very often the one they are about to
-        // fill again, and a set that has a `set.nfo` outlives its last member in any
-        // case (D-A).  Sets go when the library is re-derived and nothing is left to
-        // derive them from -- see dropEmptySets().
+        // Deliberately no drop when this empties the set: an edit never destroys a set, see
+        // dropEmptySets().
         oldSet->removeMovie(movie);
     }
     MovieSet* newSet = addSet(newName);
@@ -506,22 +373,12 @@ void MovieSetModel::onMovieChanged(Movie* movie)
 
 void MovieSetModel::onMovieDestroyed(QObject* movie)
 {
-    // Without this the entry would outlive the movie and could be read again for an
-    // unrelated movie allocated at the same address.
+    // The entry must not outlive the movie: its address may be reused.
     m_setNameByMovie.remove(movie);
 
-    // A movie that leaves the library normally has been detached already, by
-    // onMoviesAboutToBeRemoved(), which also disconnects this handler.  Reaching here
-    // means the movie died some other way, so this is the backstop.  The sets heal
-    // themselves on the same signal, but whether they have done so yet depends on when
-    // each of them connected, so they are asked rather than assumed -- forgetting a
-    // movie twice is a no-op.
-    //
-    // Taken, not read.  The sets normally empty this entry themselves, one
-    // sigMovieRemoved at a time, so taking it changes nothing when they do -- but an
-    // entry keyed by a movie that no longer exists is the hazard the line above
-    // guards against, and this is the same hazard with a heavier consequence: a
-    // MovieSet* read back for an unrelated movie at the same address.
+    // Normally onMoviesAboutToBeRemoved() has detached the movie already; this is the backstop
+    // for a movie that died some other way.  Taken, not read, so that the entry cannot outlive
+    // the movie either.
     const QVector<MovieSet*> memberships = m_setsByMovie.take(movie);
     for (MovieSet* movieSet : memberships) {
         movieSet->forgetDestroyedMovie(movie);
@@ -552,12 +409,8 @@ void MovieSetModel::onSetMovieAdded(MovieSet* movieSet, Movie* movie)
     if (!memberships.contains(movieSet)) {
         memberships.append(movieSet);
     }
-    // Every membership addition in the application arrives here, which is why the seed
-    // hangs off this signal rather than off this model's own call sites: reload(),
-    // onMoviesInserted() for a movie that enters the library afterwards, onMovieChanged()
-    // for a membership edit, and a MovieSet::addMovie() made from outside the model all
-    // pass through it.  Placing it in reload() and onMovieChanged() instead would miss
-    // the other two.
+    // Seeded on the set's signal rather than at this model's call sites, so that a
+    // MovieSet::addMovie() made from outside the model is covered too.
     seedFromMembers(movieSet);
 }
 
@@ -566,80 +419,29 @@ void MovieSetModel::seedFromMembers(MovieSet* movieSet)
     if (movieSet == nullptr) {
         return;
     }
-    // Never over a record.  A set that has read a `set.nfo` already holds the
-    // authoritative overview and id, and seeding over them would be the hazard reload()
-    // refuses to take when it declines to re-read a record: a value the user edited
-    // replaced by one derived from somewhere else.  The mirror is a copy of the record,
-    // not a source for it.
-    //
-    // hasRecord() and deliberately *not* isBacked(), which is the same question plus
-    // "is a folder configured".  That second half is right for dropEmptySets(), where a
-    // record nothing can reach cannot keep a set standing, and wrong here: the contents
-    // this set read out of its record do not stop being the record's because the folder
-    // was switched off.  Nothing would re-derive them either.  reload() skips the whole
-    // record-refresh block while records are off, so the flag survives untouched, and the
-    // re-read branch fires only false->true, so switching the folder back on does not
-    // read the file again.  Gated on isBacked(), one reload in the artwork-next-to-movies
-    // layout -- the shipping default -- would let a member's overview and id into a set
-    // that has a record, permanently, and the next save would write them over the file.
-    // The id is the sharper half: `<set><uniqueid type="tmdb">` is #2012 and unmerged, so
-    // nearly every `set.nfo` in the wild carries no id at all and would acquire one.
+    // Never over a record: a set that has read a `set.nfo` holds the authoritative values.
+    // hasRecord() and deliberately not isBacked(): switching the folder off does not make those
+    // values any less the record's, and reload() does not re-read the file when it comes back.
     if (movieSet->hasRecord()) {
         return;
     }
-    // Only what is missing is filled, so this never overwrites a value that is there --
-    // neither one an earlier member supplied nor one the user typed.  Two consequences,
-    // both deliberate and neither of them obvious.
-    //
-    // A seeded value is not refreshed when a member's NFO changes afterwards.  The seed
-    // fills a hole once; it does not track the members.
-    //
-    // And "missing" is emptiness, not intent.  Once PR-6 lands the overview editor, a user
-    // who *clears* the overview of a set with no record leaves a hole like any other, and
-    // the next movie to join fills it again from a member.
-    //
-    // Be exact about what that costs, because the obvious summary is wrong: the set is
-    // dirty and a drop *would* warn -- the user's own clearing edit set the flag, and the
-    // restore below preserves it rather than clearing it.  What the refill destroys is not
-    // the warning but the distinction.  It adds no mark of its own, so nothing tells "the
-    // clear is still pending" apart from "the clear has been silently undone".
-    //
-    // A set that has a record is safe, because the guard above stops the seed outright.
-    // A set with no record is not, and closing it needs a "deliberately empty" state this
-    // object does not have -- PR-6's decision, not this step's.  Worth knowing before the
-    // editor is written, because the editor is what makes it reachable.
+    // Only what is missing is filled, so a value an earlier member or the user supplied is never
+    // overwritten.  A cleared overview counts as missing and is refilled by the next member to join.
     const bool overviewIsMissing = movieSet->overview().isEmpty();
     const bool idIsMissing = !movieSet->tmdbId().isValid();
     if (!overviewIsMissing && !idIsMissing) {
         return;
     }
 
-    // First member with a non-empty value, in member order, and the two are decided
-    // independently: a set may take its overview from one member and its id from another,
-    // because a member NFO that carries one and not the other is ordinary and demanding
-    // both from one movie would throw away the half that is there.
-    //
-    // Members can legitimately disagree -- nothing in MediaElch has ever forced D2's
-    // "identical text in every member", so a library assembled by other tools will have
-    // sets whose members differ -- and first-wins is the rule that matches what Kodi 19
-    // and 20 do with the same input: AddSet keeps the first-scanned member's copy and
-    // runs no UPDATE at all.  Whichever value is picked here becomes authoritative once
-    // the user saves the set, so it is picked by a stated rule rather than by hash order.
+    // First member with a non-empty value wins, decided independently for the overview and the
+    // id.  Members can disagree, and first-wins is what Kodi does with the same input.
     QString overview;
     TmdbId tmdbId = TmdbId::NoId;
     for (const Movie* movie : movieSet->movies()) {
         const MovieSetInfo info = movie->set();
-        // A member that names some other set describes some other collection, and its
-        // overview and id belong to that one.  MovieSet::addMovie() is public, so this
-        // set can hold a movie whose own `<set><name>` points elsewhere -- reload() cures
-        // that, but until it runs such a member must not donate anything.
-        //
-        // Note where this guard's correctness comes from after a rename: nothing in
-        // MovieSet::setName() moves the members' names with it, so every member would
-        // stop matching.  What keeps them matching is SetsWidget::onSetNameChanged(),
-        // which rewrites every member's MovieSetInfo immediately after renaming the
-        // object, and it is the only setName() caller in `src/`.  A second caller that
-        // did not do the same would leave this set unable to seed from its own members.
+        // A member whose own set name points elsewhere (possible through the public
+        // MovieSet::addMovie()) describes another collection and must not donate.  After a
+        // rename, SetsWidget::onSetNameChanged() keeps the members' names matching.
         if (info.name != movieSet->name()) {
             continue;
         }
@@ -660,15 +462,8 @@ void MovieSetModel::seedFromMembers(MovieSet* movieSet)
         return;
     }
 
-    // Seeding is not an edit.  Both setters mark the set as needing to be saved, and this
-    // is not a change the user made: it is the same value the library already held, just
-    // read into the object that was missing it.  Leaving the flag set would have
-    // warnIfRecordIsLost() report discarding unsaved changes on every ordinary drop, and
-    // it would do so for a set nobody touched -- the same reason KodiXml::loadMovieSet()
-    // clears it after the reader has run.
-    //
-    // The previous value is restored rather than cleared: a set that really does have an
-    // unsaved rename waiting must not have it forgotten because a movie joined it.
+    // Seeding is not an edit: restore the changed flag the setters set, but keep an unsaved
+    // rename dirty.
     const bool wasChanged = movieSet->hasChanged();
     if (seedsOverview) {
         movieSet->setOverview(overview);
@@ -692,8 +487,7 @@ void MovieSetModel::unindexMembership(QObject* movie, MovieSet* movieSet)
     }
     it->removeAll(movieSet);
     if (it->isEmpty()) {
-        // A movie in no set has no entry: most of a library is in no set at all, and
-        // an empty vector per movie would cost more than the index saves.
+        // Most movies are in no set, so no entry rather than an empty one.
         m_setsByMovie.erase(it);
     }
 }
@@ -713,18 +507,11 @@ void MovieSetModel::onMoviesAboutToBeRemoved(const QModelIndex& parent, int firs
     if (m_movieModel == nullptr || parent.isValid()) {
         return;
     }
-    // The movies are still in the movie model and still alive here, which is the whole
-    // reason this is the *aboutTo* signal: MovieModel::clear() only calls deleteLater()
-    // on them, so waiting for QObject::destroyed would leave every set holding pointers
-    // to movies that have already left the library until the event loop next runs.
+    // The movies are still alive and in the movie model here; MovieModel::clear() only calls
+    // deleteLater() on them.
     for (int row = first; row <= last; ++row) {
         detachMovie(m_movieModel->movie(row));
     }
-    // A set whose last member has left the library has nothing left to exist by, unless
-    // it has a `set.nfo` of its own.  Keeping one that does not would put a name in the
-    // set combo box and the set filter that no movie answers to -- neither list could
-    // do that before this model existed, because both were computed from the library
-    // on every read.
     dropEmptySets();
 }
 
@@ -751,17 +538,8 @@ void MovieSetModel::detachMovie(Movie* movie)
     }
     movie->disconnect(this);
     m_setNameByMovie.remove(movie);
-    // Every set the movie is actually in, which is not the same as the one it names:
-    // MovieSet::addMovie() is public, so a set can hold a member whose own set().name
-    // points elsewhere.  reload() cures that -- it rebuilds membership from the movies
-    // -- but a movie can leave the library before one runs, and a pointer left behind
-    // here would outlive the movie.
-    //
-    // The index answers that in one lookup.  Scanning every set instead was O(sets) per
-    // movie, and a library reload detaches every movie, so it was O(movies x sets).
-    // Taken, not read.  Each removeMovie() empties this entry itself, one
-    // sigMovieRemoved at a time, so taking it changes nothing when they do; it is what
-    // keeps a detached movie out of the index even if one of them does not.
+    // Every set the movie is actually in, not only the one it names: MovieSet::addMovie() is
+    // public.  Taken, not read, so that the entry goes even if a set fails to empty it.
     const QVector<MovieSet*> memberships = m_setsByMovie.take(movie);
     for (MovieSet* movieSet : memberships) {
         movieSet->removeMovie(movie);
@@ -771,19 +549,14 @@ void MovieSetModel::detachMovie(Movie* movie)
 MovieSet* MovieSetModel::createSet(const QString& name)
 {
     auto* movieSet = new MovieSet(name, this);
-    // Asked at birth, and before the set is visible to anything else.  Nothing may ever
-    // see a set whose record has not been looked for yet: dropEmptySets() would take a
-    // set that has one for a set that has none and destroy it, records and all.
-    //
-    // It is one file read per set that is new to the model, which over a library scan is
-    // one per distinct set name -- and none at all unless a movie set information folder
-    // is configured, since then loadMovieSet() resolves no path and does no I/O.
+    // Before the set is visible to anything else: dropEmptySets() would destroy a set whose
+    // record has not been looked for yet.
     if (m_mediaCenter != nullptr) {
         movieSet->setHasRecord(m_mediaCenter->loadMovieSet(*movieSet));
     }
     connect(movieSet, &MovieSet::sigChanged, this, &MovieSetModel::onSetChanged);
-    // The membership index is fed from the set, not from this model's own calls, so
-    // that a membership made through the public MovieSet::addMovie() is indexed too.
+    // Fed from the set, so that memberships made through the public MovieSet::addMovie() are
+    // indexed too.
     connect(movieSet, &MovieSet::sigMovieAdded, this, &MovieSetModel::onSetMovieAdded);
     connect(movieSet, &MovieSet::sigMovieRemoved, this, &MovieSetModel::onSetMovieRemoved);
 

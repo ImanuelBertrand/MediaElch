@@ -8,12 +8,9 @@ TEST_CASE("KodiVersion", "[media_center][kodi]")
 {
     SECTION("every spelling of the default agrees with latest()")
     {
-        // Four assertions in one test on purpose.  "The default Kodi version" used to be
-        // written out three times over -- the constructor's default argument, the member
-        // initialiser and fromInt()'s out-of-range fallback -- and the bump to v22 reached
-        // isValid() and all() and none of those three, so latest() answered v20 while the
-        // rest of the class had moved on.  Pinning them together is what makes the next
-        // bump either complete or red.
+        // "The default Kodi version" used to be written out three times over -- the constructor's
+        // default argument, the member initialiser and fromInt()'s out-of-range fallback --
+        // so pinning them together is what makes the next bump either complete or red.
         CHECK(KodiVersion::latest().toInt() == 22);
         CHECK(KodiVersion().toInt() == KodiVersion::latest().toInt());
         CHECK(KodiVersion(KodiVersion::Latest).toInt() == KodiVersion::latest().toInt());

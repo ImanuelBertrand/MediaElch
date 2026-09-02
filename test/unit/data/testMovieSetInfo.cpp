@@ -37,10 +37,9 @@ TEST_CASE("MovieSetInfo data type", "[data][movie][set]")
 
 TEST_CASE("MovieSetInfo compares by value", "[data][movie][set]")
 {
-    // MovieSetModel::assign() leans on this to leave a movie alone when it is asked to
-    // put it where it already is.  All three fields count, because all three are
-    // written to the movie's NFO -- which also means a name-only value never compares
-    // equal to a set that carries an id or an overview.
+    // MovieSetModel::assign() leans on this to leave a movie alone when it is asked to put
+    // it where it already is.  All three fields count, because all three reach the NFO -- so
+    // a name-only value never equals a set that carries an id or an overview.
 
     SECTION("two default-constructed values are equal")
     {
@@ -72,9 +71,8 @@ TEST_CASE("MovieSetInfo compares by value", "[data][movie][set]")
 
     SECTION("a name-only value never equals a set that carries more")
     {
-        // The sharp edge MovieWidget::onSetChange() and SetsWidget::onAddMovie() guard
-        // against with a name comparison of their own: assign() would see a change here
-        // and overwrite the id and the overview.
+        // Why MovieWidget::onSetChange() and SetsWidget::onAddMovie() compare names of their
+        // own: assign() sees a change here and would overwrite the id and the overview.
         MovieSetInfo nameOnly;
         nameOnly.name = alienCollection().name;
 

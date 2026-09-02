@@ -114,13 +114,9 @@ QByteArray MovieXmlWriterGeneric::getMovieXml(bool testMode)
     if (!set.name.isEmpty()) {
         xml.writeStartElement("set");
         xml.writeTextElement("name", set.name);
-        // Never written empty (D2a).  XMLUtils::GetString() returns true for an
-        // existing-but-empty element, so to Kodi an empty <overview> is a value to
-        // store, not an absence: on 21 it reaches m_updateSetOverview and on 22
-        // CSetInfoTag::SetOverview, and either way one member scanned last runs
-        // `UPDATE sets SET strOverview = ''` over the whole set.  Writing the same
-        // text into every member (D2) is therefore not sufficient on its own -- the
-        // write also has to be skipped when there is no text.
+        // Never written empty: XMLUtils::GetString() returns true for an existing-but-empty
+        // element, so to Kodi an empty <overview> is a value to store.  One member with an
+        // empty one, scanned last, then blanks the whole set's overview in the database.
         if (!set.overview.isEmpty()) {
             xml.writeTextElement("overview", set.overview);
         }

@@ -39,10 +39,8 @@ public:
     MovieSetFolderGuard() :
         m_type{Settings::instance()->movieSetArtworkType()}, m_dir{Settings::instance()->movieSetArtworkDirectory()}
     {
-        // A QTemporaryDir rather than the test temp root: this runs in the unit test
-        // binary, which is not given --temp-dir, so the temp root is the working
-        // directory -- and writing a movie set information folder into the source tree
-        // is not something a test should do.  It cleans itself up too.
+        // A QTemporaryDir rather than the test temp root: the unit test binary is not given
+        // --temp-dir, so that root is the working directory, i.e. the source tree.
         REQUIRE(m_msif.isValid());
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(dir()));
@@ -53,9 +51,8 @@ public:
         Settings::instance()->setMovieSetArtworkDirectory(m_dir);
         Manager::instance()->movieModel()->clear();
         qApp->processEvents();
-        // The model is a singleton and keeps whatever this test created, so put it back
-        // in the state the next test expects: no folder, therefore no records, therefore
-        // no sets that survive having no movies.
+        // The set model is a singleton and keeps whatever this test created; reload it so
+        // the next test starts without records and without memberless sets.
         Manager::instance()->movieSetModel()->reload();
     }
     MovieSetFolderGuard(const MovieSetFolderGuard&) = delete;
@@ -82,10 +79,7 @@ void addLibraryMovie(const QString& title, const QString& setName)
 }
 
 /// \brief Writes a `set.nfo` into \p folder that names some other set.
-/// \details Such a record is skipped by the enumeration -- the name in it does not
-///          resolve back to this folder -- so the set it sits on top of is derived from
-///          its movies alone and has no record of its own.  Which is exactly the state
-///          in which a save has to refuse: the file is there and it is somebody else's.
+/// \details The enumeration skips it, so a save must refuse rather than overwrite it.
 void writeMisfiledRecord(const QDir& msif, const QString& folder, const QString& otherSetName)
 {
     REQUIRE(QDir().mkpath(msif.absoluteFilePath(folder)));
@@ -96,16 +90,11 @@ void writeMisfiledRecord(const QDir& msif, const QString& folder, const QString&
 }
 
 /// \brief Hands \p widget a downloaded image for \p setName, as the download manager does.
-/// \details The one production path that puts an image into the sets tab's own maps
-///          without it existing on disk first.  A rename used to do it too, by reading
-///          the set's artwork back off the disk and holding it -- which re-encoded a PNG
-///          to JPEG and left the original behind; the files are moved on disk now, so a
-///          rename no longer produces a pending image and cannot stand in for one here.
+/// \details The only production path that leaves an image in the tab's own maps unwritten.
 void seedDownloadedImage(SetsWidget& widget, const QString& setName, ImageType imageType, const QImage& image)
 {
     DownloadManagerElement elem;
-    // Owned by the slot, which deletes it.  The set's name travels as the movie's title;
-    // that is how the download manager carries it for set artwork.
+    // Owned by the slot; the download manager carries a set's name as the movie's title.
     elem.movie = new Movie(QStringList());
     elem.movie->setTitle(setName);
     elem.imageType = imageType;
@@ -145,26 +134,10 @@ void writeRecord(const QDir& msif, const QString& setName)
 }
 
 /// \brief The notifications raised while this object was alive, and only those.
-/// \details The user-facing half of a refusal, which the log lines beside it do not
-///          stand in for: the three-state move exists so that the *message* is true for
-///          the branch it describes, and a test that only greps the log cannot see the
-///          sentence the user is shown.  NotificationBox keeps its messages as Message
-///          widgets, each with one QLabel holding the text.
-///
-///          Scoped rather than read wholesale, and that is not tidiness.  NotificationBox
-///          is a **singleton**, and its messages are removed only by a timer that never
-///          fires under this harness -- so reading all of them returns everything every
-///          test in the process has ever raised.  Under ctest each case is its own
-///          process and that is invisible; run the binary directly, which is an ordinary
-///          thing to do, and a `ContainsNot` assertion goes red on another test's
-///          message.  A red assertion that is not a defect is worse than no assertion,
-///          because the next person spends the afternoon on a bug that is not there.
-///
-///          The messages are **not** cleared to achieve that: NotificationBox owns those
-///          widgets and deleting them behind its back leaves dangling pointers in its own
-///          list, which the next showMessage() walks.  So the ones already there are
-///          remembered by pointer and skipped.  Nothing deletes them, so no address can
-///          be reused and no stale pointer can match a new message.
+/// \details Scoped rather than read wholesale: NotificationBox is a singleton whose
+///          messages expire on a timer that never fires here, so reading all of them returns
+///          every message the process ever raised.  The old ones are skipped by pointer and
+///          never deleted; NotificationBox owns those widgets and its list of them would dangle.
 class NotificationWatcher
 {
 public:
@@ -198,10 +171,9 @@ private:
 };
 
 /// \brief Answers the next modal question box by clicking \p button.
-/// \details Posted before the call that opens the box: QMessageBox::exec() spins a
-///          nested event loop, and a zero timer queued beforehand runs as soon as it
-///          starts.  Anything modal that is *not* a question box with that button is
-///          closed instead, so a test whose expectation is wrong fails rather than hangs.
+/// \details Posted before the call that opens the box, because exec() spins a nested loop
+///          that runs the timer at once.  Any other modal is closed, so a wrong expectation
+///          fails rather than hangs.
 void answerNextQuestion(QMessageBox::StandardButton button)
 {
     QTimer::singleShot(0, qApp, [button] {
@@ -215,7 +187,7 @@ void answerNextQuestion(QMessageBox::StandardButton button)
     });
 }
 
-/// \brief The one movie of \p setName in the library, or nullptr.
+/// \brief The library movie called \p title, or nullptr.
 Movie* libraryMovie(const QString& title)
 {
     for (Movie* movie : Manager::instance()->movieModel()->movies()) {
@@ -245,11 +217,6 @@ void announceSettingsSaved()
 
 TEST_CASE("The sets tab does not report a save that was refused", "[ui][movie][set]")
 {
-    // saveMovieSet() had one refusal reason when this call site was written and has four
-    // now, and the result was discarded.  The user edits a set, presses Save, is told
-    // "<set> Saved", and nothing was written -- nor did the set gain the record that
-    // would let it survive losing its movies.  They are told the opposite of what
-    // happened, twice.
     MovieSetFolderGuard guard;
 
     // A folder that already holds another set's record, so the write must refuse.
@@ -266,11 +233,8 @@ TEST_CASE("The sets tab does not report a save that was refused", "[ui][movie][s
     CHECK(messages.contains("Alien Collection"));
     CHECK(messages.contains("could not be written"));
 
-    // And the other set's record was not written over.  Read as a *file*, not through
-    // loadMovieSet(): that record is misfiled -- it names "Something Else Entirely" but
-    // sits in "Alien Collection", which is the whole reason the save had to refuse --
-    // so asking the media center for it resolves to a path that never existed and
-    // answers "not found" whatever happened to the file this line is guarding.
+    // Read as a file rather than through loadMovieSet(): the record is misfiled, so the media
+    // center resolves it to a path that never existed and answers "not found" either way.
     QFile record(guard.dir().absoluteFilePath("Alien Collection/set.nfo"));
     REQUIRE(record.open(QIODevice::ReadOnly));
     const QString onDisk = QString::fromUtf8(record.readAll());
@@ -280,8 +244,6 @@ TEST_CASE("The sets tab does not report a save that was refused", "[ui][movie][s
 
 TEST_CASE("The sets tab reports a save that succeeded", "[ui][movie][set]")
 {
-    // The other direction, so that the check above cannot be satisfied by a widget that
-    // complains about every save.
     MovieSetFolderGuard guard;
 
     addLibraryMovie("Alien", "Alien Collection");
@@ -299,20 +261,12 @@ TEST_CASE("The sets tab reports a save that succeeded", "[ui][movie][set]")
 TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][movie][set]")
 {
     // A set's poster exists nowhere but this widget's own map until it is written, so
-    // clearing that entry for a write that did not happen destroys the image -- and this
-    // used to clear it unconditionally, because the save returned void, and then report
-    // "Saved".  The refusal became reachable when the artwork paths stopped resolving
-    // into the process's working directory: what used to be written somewhere useless is
-    // now not written at all, so the caller has to hold on to it.
+    // clearing that entry for a write that did not happen destroys the image.
     MovieSetFolderGuard guard;
     test::DataFileGuard dataFiles;
 
     addLibraryMovie("Alien", "Alien Collection");
 
-    // A pending image is one that exists nowhere but this widget, which is what a
-    // download leaves behind.  It used to be seeded by a rename instead, back when a
-    // rename read the set's artwork off the disk and held it; the artwork moves on disk
-    // now, so a rename produces nothing pending and this has to come from a download.
     QImage poster(4, 4, QImage::Format_RGB32);
     poster.fill(Qt::red);
     const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
@@ -326,10 +280,8 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
     REQUIRE(sets->rowCount() == 1);
     seedDownloadedImage(widget, "Alien Collection", ImageType::MovieSetPoster, poster);
 
-    // Now take the movie set information folder away, so the pending poster has nowhere
-    // to go.  The set's own record is *not* also a failure here: with no folder there
-    // are no records at all, which saveSet() tells apart from a record that could not be
-    // written, so this lands in the artwork-only branch of the three.
+    // With no folder there are no records either, which saveSet() tells apart from a record
+    // it could not write, so this lands in the artwork-only branch of the three.
     Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
     REQUIRE_FALSE(Manager::instance()->mediaCenterInterface()->movieSetArtworkEnabled());
 
@@ -337,14 +289,10 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
         test::MessageCapture messages;
         widget.saveSet();
         CHECK(messages.contains("its artwork could not be written"));
-        // Which branch it is, not merely that something complained: all three failure
-        // branches contain "could not be written", so a bare substring check would go
-        // green for a save that failed in a different way than this test set up.
+        // All three branches say "could not be written", so name which one this is.
         CHECK_FALSE(messages.contains("movie set file"));
     }
 
-    // And the image was kept rather than dropped: with the folder back, the next save
-    // writes it, under the new name.
     Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(guard.dir()));
     {
         test::MessageCapture messages;
@@ -358,13 +306,8 @@ TEST_CASE("The sets tab keeps artwork a refused save could not write", "[ui][mov
 
 TEST_CASE("Add Movie Set is off without a movie set directory", "[ui][movie][set]")
 {
-    // The load-bearing half of the read-only guard.  With no movie set information
-    // folder a set can have no `set.nfo`, and a set with neither members nor a record is
-    // dropped by the next reload -- so *Add Movie Set* would offer the user something
-    // that silently disappears.  It is also the only path that can create such a set, so
-    // disabling it is what keeps read-only mode from accumulating them, which the rest
-    // of the design depends on.  Delete this guard and the third section below starts
-    // describing what users see.
+    // With no folder a set can have no `set.nfo`, and a set with neither members nor a record
+    // is dropped by the next reload (third section), so this would offer a set that vanishes.
     MovieSetFolderGuard guard;
     addLibraryMovie("Alien", "Alien Collection");
 
@@ -383,8 +326,7 @@ TEST_CASE("Add Movie Set is off without a movie set directory", "[ui][movie][set
 
     SECTION("Without one it is not offered, and it does not add a set")
     {
-        // Both halves: the action the user can reach is disabled, and the slot behind it
-        // refuses on its own, so a future rearrangement of the menu cannot reopen this.
+        // Both halves, so a future rearrangement of the menu cannot reopen this.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
         widget.loadSets();
         CHECK_FALSE(addSet->isEnabled());
@@ -394,8 +336,6 @@ TEST_CASE("Add Movie Set is off without a movie set directory", "[ui][movie][set
 
     SECTION("Because such a set does not survive the next reload")
     {
-        // The reason, stated as a fact rather than as a comment.  This is what the user
-        // would be shown if the guard above were removed as over-cautious.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
         widget.loadSets();
         REQUIRE(setModel->addSet("New Movie Set") != nullptr);
@@ -406,14 +346,8 @@ TEST_CASE("Add Movie Set is off without a movie set directory", "[ui][movie][set
 
 TEST_CASE("A set named on a movie is created without a movie set directory", "[ui][movie][set]")
 {
-    // The complement, and it is why the guard above is on *Add Movie Set* rather than on
-    // set creation.  Naming a set on a movie -- the movie widget's set box, or Add Movie
-    // here -- creates a set that has a member from the moment it exists, so nothing
-    // drops it and it comes back from the movie's own NFO on every reload.  Membership
-    // is authoritative in the movie files with or without a folder (D1a).
-    //
-    // Closing this "back door" would break assigning movies to sets in the shipping
-    // default configuration, which is the larger bug by far.
+    // Why the guard above is on *Add Movie Set* and not on set creation: a set named on a
+    // movie has a member from the moment it exists, so nothing drops it.
     MovieSetFolderGuard guard;
     Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
 
@@ -460,29 +394,21 @@ TEST_CASE("The sets tab says what is off and why", "[ui][movie][set]")
         CHECK(frame->frameShape() == QFrame::StyledPanel);
         CHECK_THAT(notice->text(), Contains("No movie set directory is configured"));
 
-        // Exactly what is off, and no more.
         CHECK_THAT(notice->text(), Contains("Set artwork cannot be saved"));
         CHECK_THAT(notice->text(), Contains("no file of their own"));
         CHECK_THAT(notice->text(), Contains("no movies cannot be created"));
 
-        // And what still works, which is the half that keeps this notice honest.  The
-        // tab is *not* read-only: renaming a set, moving movies in and out of it and the
-        // sort title all write, and they write the member movies, which need no
-        // directory.  Saying otherwise would send the user off to rename a set by
-        // retyping the name on each movie, which is the D3 fork the sets tab's own
-        // rename exists to prevent.
+        // The tab is not read-only: renaming, moving movies in and out and the sort title
+        // all write the member movies, which need no directory.
         CHECK_THAT(notice->text(), Contains("Renaming a set"));
         CHECK_THAT(notice->text(), !Contains("read-only"));
-        // Neither the overview nor the TMDB id has an editor anywhere yet, so naming
-        // them here would describe a loss the user cannot feel.
+        // Neither has an editor yet, so naming them describes a loss the user cannot feel.
         CHECK_THAT(notice->text(), !Contains("TMDB"));
     }
 
     SECTION("Artwork next to movies is not a warning, because nothing is wrong")
     {
-        // The default layout exists so that nobody has to configure a directory before
-        // using MediaElch, so this line is seen by every user who has never opened the
-        // settings.  Warning them would be telling them off for using the default.
+        // Every user who never opened the settings sees this line.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
         widget.applyWriteAccess();
         CHECK_FALSE(frame->isHidden());
@@ -494,18 +420,14 @@ TEST_CASE("The sets tab says what is off and why", "[ui][movie][set]")
 
 TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]")
 {
-    // The settings window is a separate window, so the movie set directory can be
-    // changed while this tab is on screen.  There is no signal for that setting in
-    // particular; sigSettingsSaved is the one the application has, and it fires for
-    // unrelated saves too, which is why the handler compares before it acts.
+    // The directory can change while this tab is on screen, and sigSettingsSaved is the only
+    // signal there is -- it fires for unrelated saves too, so the handler compares first.
     MovieSetFolderGuard guard;
     addLibraryMovie("Alien", "Alien Collection");
 
     SetsWidget widget;
-    // Shown, off screen, because half of the rule is conditional on isVisible(): the
-    // reload only happens for a user who is looking at this tab.  A widget that is never
-    // shown reports false there, so a test that skips this cannot tell the reload from
-    // its absence -- and that half was a live survivor until it did.
+    // Shown, off screen: the reload is conditional on isVisible(), and a widget that was
+    // never shown reports false, so without this the reload half is untested.
     widget.show();
     widget.loadSets();
 
@@ -525,7 +447,6 @@ TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]
         CHECK_FALSE(addSet->isEnabled());
         CHECK_FALSE(frame->isHidden());
 
-        // And putting it back re-enables it, without waiting for the tab to be re-entered.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
         announceSettingsSaved();
         CHECK(addSet->isEnabled());
@@ -534,11 +455,8 @@ TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]
 
     SECTION("Choosing a directory finds the sets only a record knows about")
     {
-        // The other half of the rule, and the reason it is a reload and not just a
-        // re-enable: a set with a `set.nfo` and no member movie is invisible until the
-        // folder has been listed, and nothing but reload() lists it.  Without that call
-        // the user chooses a directory, is told everything is writable again, and their
-        // curated empty sets are still missing until they leave the tab and come back.
+        // Why a reload and not just a re-enable: a set with a `set.nfo` and no member movie is
+        // invisible until the folder has been listed, and only reload() lists it.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
         announceSettingsSaved();
         REQUIRE(Manager::instance()->movieSetModel()->set("Curated Collection") == nullptr);
@@ -554,12 +472,8 @@ TEST_CASE("The sets tab follows the setting while it is open", "[ui][movie][set]
 
 TEST_CASE("Turning the directory off does not destroy sets that have a record", "[ui][movie][set]")
 {
-    // A set with a `set.nfo` and no member movie is held up by its record alone.  While
-    // records are off, MovieSetModel::isBacked() answers false for every set, so a
-    // reload() at that moment would run dropEmptySets() over all of them and destroy it
-    // -- which is why the settings handler re-applies the controls and does *not*
-    // reload.  Reaching for a reload there is the obvious-looking change that this test
-    // exists to stop.
+    // While records are off, isBacked() answers false for every set, so a reload() at that
+    // moment would drop every memberless one.  Adding one there is what this test stops.
     MovieSetFolderGuard guard;
     writeRecord(guard.dir(), "Alien Collection");
 
@@ -575,9 +489,7 @@ TEST_CASE("Turning the directory off does not destroy sets that have a record", 
     Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
     announceSettingsSaved();
 
-    // Still here, and still knowing it has a record: the flag is what makes turning the
-    // directory back on restore every set's answer at once instead of at the next
-    // reload.  Re-deriving it from an empty answer would clear every one of them.
+    // The flag survives, so turning the directory back on restores every set at once.
     movieSet = setModel->set("Alien Collection");
     REQUIRE(movieSet != nullptr);
     CHECK(movieSet->hasRecord());
@@ -591,12 +503,8 @@ TEST_CASE("Turning the directory off does not destroy sets that have a record", 
 
 TEST_CASE("Saving without a movie set directory is not a failure", "[ui][movie][set]")
 {
-    // "There are no records in this configuration" is not "the record could not be
-    // written", but saveMovieSet() answers false for both -- correctly, because the
-    // model's callers need to know a record was not written.  Asked without checking
-    // first, every Save in the artwork-next-to-movies layout, which is the default,
-    // reported a failure to write a file that the sets tab's own notice has just
-    // finished explaining does not exist in that layout.
+    // saveMovieSet() answers false both for "no records in this configuration" and for "the
+    // record could not be written", so the caller has to tell them apart.
     MovieSetFolderGuard guard;
     Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
     addLibraryMovie("Alien", "Alien Collection");
@@ -609,17 +517,13 @@ TEST_CASE("Saving without a movie set directory is not a failure", "[ui][movie][
     widget.saveSet();
 
     CHECK_FALSE(messages.contains("could not be written"));
-    // And the write was not even attempted, so there is nothing for the media center to
-    // have complained about either.
     CHECK_FALSE(messages.contains("Not saving the record"));
 }
 
 TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set]")
 {
-    // The artwork guard asks the *other* question: whether the layout resolves to a real
-    // path.  It is not the record question, and the middle section is why -- gating
-    // artwork on records would turn it off in the shipping default, where it has always
-    // worked.
+    // The artwork guard asks whether the layout resolves to a real path, not whether records
+    // are configured: gating on records would turn artwork off in the shipping default.
     MovieSetFolderGuard guard;
     addLibraryMovie("Alien", "Alien Collection");
 
@@ -651,31 +555,12 @@ TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set
         CHECK_FALSE(poster->isEnabled());
         CHECK_FALSE(backdrop->isEnabled());
 
-        // And the slots behind those labels refuse as well, each one on its own: the two
-        // log different lines, so removing one guard and leaving the other cannot pass.
-        //
-        // Removing a guard has to make this *fail*, not hang, because a hang reads like
-        // a broken test rather than a broken guard.  Without the guard the slot reaches
-        // ImageDialog, which enters a nested event loop and waits for a user who is not
-        // there.  Two things stop that being a hang, and only one of them was designed:
-        //
-        //  - measured, and it is what actually happens in this binary: ImageDialog is
-        //    constructed with MainWindow::instance(), which is null here, and the run
-        //    dies with SIGSEGV.  Catch reports that as a failed assertion and the binary
-        //    exits 139, so ctest fails.  Ugly, but not a hang, and not something this
-        //    test can prevent -- the crash happens before any dialog exists.
-        //  - the queued lambda below, which would run inside that nested loop and close
-        //    whatever modal it finds.  It is the one that would keep this honest if the
-        //    crash ever went away -- which it does the day any unit test constructs a
-        //    MainWindow.  **It has never executed, so nothing here establishes that it
-        //    works: it is unverified insurance, not the mechanism.**  With the guards in
-        //    place no modal is created and it finds nothing to close.
-        //
-        // It closes whatever modal is active, not one belonging to this widget, so each
-        // one is drained immediately after the call it was posted for.  Left in the
-        // queue it would be consumed by some later processEvents() and could close an
-        // unrelated test's dialog -- which happens to be harmless today only because a
-        // guard's destructor drains it, and that is luck rather than design.
+        // The slots refuse on their own too, and log different lines, so removing one guard
+        // and leaving the other cannot pass.  Removing a guard crashes rather than hangs: the
+        // slot reaches ImageDialog, whose constructor dereferences the unit binary's null
+        // MainWindow::instance().  The closer below is unverified insurance for the day a
+        // unit test does build a MainWindow, and is drained after each call rather than left
+        // in the queue for an unrelated test.
         const auto closeAnyModal = [] {
             QTimer::singleShot(0, qApp, [] {
                 if (QWidget* modal = QApplication::activeModalWidget()) {
@@ -698,17 +583,12 @@ TEST_CASE("Set artwork is off only where it has nowhere to go", "[ui][movie][set
 
 TEST_CASE("A save that fails on both halves says which", "[ui][movie][set]")
 {
-    // The third of saveSet()'s three failure branches, and the one with no test of its
-    // own: records *are* configured, and both the artwork and the set's own file fail to
-    // be written.  A read-only or broken mount does this.  The "no directory configured"
-    // case used to cover it, and stopped once saveSet() learned to tell "there are no
-    // records here" apart from "the record could not be written".
+    // saveSet()'s third failure branch: records configured, and both writes fail.
     MovieSetFolderGuard guard;
     test::DataFileGuard dataFiles;
 
     addLibraryMovie("Alien", "Alien Collection");
 
-    // A pending poster, exactly as in the test above.
     QImage poster(4, 4, QImage::Format_RGB32);
     poster.fill(Qt::red);
 
@@ -719,11 +599,8 @@ TEST_CASE("A save that fails on both halves says which", "[ui][movie][set]")
     REQUIRE(sets->rowCount() == 1);
     seedDownloadedImage(widget, "Alien Collection", ImageType::MovieSetPoster, poster);
 
-    // A plain file standing where the movie set information directory should be.  It is
-    // a valid DirectoryPath, so records stay enabled and this is not the "no directory"
-    // case -- but nothing can be created underneath it, so mkpath() fails for the
-    // artwork and QFile::open() fails for the record.  A regular file rather than a
-    // chmod, because a chmod proves nothing when the tests happen to run as root.
+    // A plain file where the directory should be: still a valid DirectoryPath, so records stay
+    // enabled, but nothing can be created under it.  Not a chmod, which proves nothing as root.
     const QString blockerPath = guard.dir().absoluteFilePath("blocker");
     QFile blocker(blockerPath);
     REQUIRE(blocker.open(QIODevice::WriteOnly));
@@ -734,19 +611,15 @@ TEST_CASE("A save that fails on both halves says which", "[ui][movie][set]")
     test::MessageCapture messages;
     widget.saveSet();
 
-    // Named separately, because "something could not be written" is what all three
-    // branches say and only this one says both.
+    // Named separately: all three branches say "could not be written", only this says both.
     CHECK(messages.contains("its artwork could not be written"));
     CHECK(messages.contains("neither could its movie set file"));
-    // The phrase an operator greps for is in this line too; it was the one branch of the
-    // three that did not have it.
     CHECK(messages.contains("could not be written"));
 }
 
 TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 {
-    // The whole point of the mode: `set.nfo`'s <title> moves and the join key does not,
-    // so Kodi 22 renames the set's row in place and keeps its artwork and its id.
+    // <title> moves and the match key does not; see docs/concepts/movie-sets.md.
     MovieSetFolderGuard guard;
     RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
 
@@ -760,9 +633,6 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 
     SECTION("the key stays where the member movies put it")
     {
-        // Looked up under the old name, because that is still the set's key -- and *not*
-        // findable under the new one, which is a display title and not a name any file
-        // carries.
         MovieSet* set = setModel->set("Alien Collection");
         REQUIRE(set != nullptr);
         CHECK(set->displayName() == "The Alien Saga");
@@ -774,8 +644,8 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
         Movie* alien = libraryMovie("Alien");
         REQUIRE(alien != nullptr);
         CHECK(alien->set().name == "Alien Collection");
-        // Not marked for saving: a set-file-only rename has nothing to write into a
-        // movie's NFO, so dirtying one would offer to rewrite a file for no reason.
+        // This rename writes nothing into a movie's NFO, so dirtying one would offer to
+        // rewrite a file for no reason.
         CHECK_FALSE(alien->hasChanged());
     }
 
@@ -789,10 +659,8 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 
     SECTION("the heading shows the display title, not the key")
     {
-        // loadSet() is always called with the match key, because that is what every
-        // caller can look the set up by -- but the heading is read by a person.  Left as
-        // the key it said "Alien Collection" in the big label above a row that said
-        // "The Alien Saga".
+        // loadSet() takes the match key, which is what callers can look a set up by, but the
+        // heading is read by a person.
         auto* heading = widget.findChild<QLabel*>("setName");
         REQUIRE(heading != nullptr);
         CHECK(heading->text() == "The Alien Saga");
@@ -800,14 +668,12 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 
     SECTION("the divergence is explained at once, not at the next reload")
     {
-        // loadSets() was the only place that set this, so the tooltip was missing for
-        // exactly the rename that creates the divergence -- the moment a user would ask
-        // what just happened.  D-B promises it is never hidden.
+        // The rename has to set the tooltip, or it is missing for exactly the rename that
+        // creates the divergence.
         auto* sets = widget.findChild<QTableWidget*>("sets");
         REQUIRE(sets->rowCount() == 1);
         CHECK_THAT(sets->item(0, 0)->toolTip(), Contains("Alien Collection"));
 
-        // And it goes away again when the two names are re-unified.
         Settings::instance()->setMovieSetRenameMode(MovieSetRenameMode::AllMovieFiles);
         sets->item(0, 0)->setText("Alien Anthology");
         CHECK(sets->item(0, 0)->toolTip().isEmpty());
@@ -815,9 +681,8 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 
     SECTION("the record is written under the key's folder, not the title's")
     {
-        // Kodi derives the movie set information folder from the match key, before it
-        // ever loads the record (VideoInfoScanner.cpp:839), so a record filed under the
-        // display title is a record Kodi never looks at.
+        // Kodi derives the folder from the match key before it loads the record, so a record
+        // filed under the display title is one it never looks at.
         widget.saveSet();
         CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
         CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("The Alien Saga/set.nfo")));
@@ -825,20 +690,9 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 
     SECTION("it is rebuilt from its file, which is the failure the second string exists for")
     {
-        // The members still name the old set and a rebuild derives from them, so without
-        // the record being read back the rename evaporates here.
-        //
-        // A plain loadSets() does **not** test that, and this test used to do exactly
-        // that and pass for the wrong reason.  reload() keeps the MovieSet objects it
-        // already has and re-reads a record only on a false->true hasRecord transition
-        // (MovieSetModel::reload(), MovieSetModel.cpp:407), and saveSet() has just set that
-        // flag -- so the set is never rebuilt from disk and deleting the reader's setTitle()
-        // leaves this green.  Measured: with the old body, mutating MovieSetXmlReader reddened
-        // two record tests and not this one.
-        //
-        // So throw the objects away first, which is what a restart does.  The set that
-        // comes back is built from the member NFO, gains its record from the listing,
-        // and takes that false->true branch -- the one that reads `<title>` back.
+        // clear() rather than a plain loadSets(): reload() keeps the MovieSet objects it has
+        // and re-reads a record only on a false->true hasRecord transition, which saveSet()
+        // has just used up, so loadSets() alone would pass without the reader ever running.
         widget.saveSet();
 
         MovieSetModel* setModel = Manager::instance()->movieSetModel();
@@ -851,8 +705,6 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
         REQUIRE(sets->rowCount() == 1);
         CHECK(sets->item(0, 0)->text() == "The Alien Saga");
         CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Alien Collection");
-        // And through the model, not only the table, so a widget that happened to cache
-        // the string cannot carry this.
         MovieSet* rebuilt = setModel->set("Alien Collection");
         REQUIRE(rebuilt != nullptr);
         CHECK(rebuilt->title() == "The Alien Saga");
@@ -861,10 +713,8 @@ TEST_CASE("A set-file-only rename never touches a movie", "[ui][movie][set]")
 
 TEST_CASE("A set-file-only rename with nowhere to write it is refused", "[ui][movie][set]")
 {
-    // The shipping default has no `set.nfo` at all, so there is no file for the display
-    // title to live in.  Refused rather than quietly turned into the all-movie-files
-    // rename, which rewrites every member's NFO -- the heavier and irreversible
-    // operation this user chose this setting to avoid.
+    // No `set.nfo` for the display title to live in, and downgrading to the all-movie-files
+    // rename would be the heavier operation this setting exists to avoid.
     RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
     REQUIRE(Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies);
 
@@ -879,7 +729,6 @@ TEST_CASE("A set-file-only rename with nowhere to write it is refused", "[ui][mo
     CHECK(messages.contains("was not renamed"));
     CHECK(messages.contains("movie set information folder"));
 
-    // Nothing moved, in either direction.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     MovieSet* set = setModel->set("Alien Collection");
     REQUIRE(set != nullptr);
@@ -891,8 +740,7 @@ TEST_CASE("A set-file-only rename with nowhere to write it is refused", "[ui][mo
     CHECK(alien->set().name == "Alien Collection");
     CHECK_FALSE(alien->hasChanged());
 
-    // And the cell says what the set is called, rather than leaving the user looking at
-    // a name nothing answers to.
+    // And the cell is put back, rather than showing a name nothing answers to.
     auto* sets = widget.findChild<QTableWidget*>("sets");
     CHECK(sets->item(0, 0)->text() == "Alien Collection");
 
@@ -903,10 +751,8 @@ TEST_CASE("A set-file-only rename with nowhere to write it is refused", "[ui][mo
 
 TEST_CASE("A rename onto a display title already in use is refused in both modes", "[ui][movie][set]")
 {
-    // Typing an existing set's *key* is a merge and is offered as one, whatever the mode.
-    // Typing another set's *display title* is not: no set answers to that name, so the
-    // merge check finds nothing -- correctly, since two sets with one display title are
-    // still two sets to Kodi.  They may not be two rows the user cannot tell apart here.
+    // Typing another set's key is a merge; typing its display title is not, because no set
+    // answers to that name, but it would leave two rows the user cannot tell apart.
     MovieSetFolderGuard guard;
     RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
 
@@ -918,7 +764,6 @@ TEST_CASE("A rename onto a display title already in use is refused in both modes
     SetsWidget widget;
     widget.loadSets();
 
-    // Give the second set a display title of its own, then try to take it.
     MovieSet* predator = setModel->set("Predator Collection");
     REQUIRE(predator != nullptr);
     predator->setTitle("The Hunt");
@@ -927,8 +772,7 @@ TEST_CASE("A rename onto a display title already in use is refused in both modes
     auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(sets != nullptr);
     REQUIRE(sets->rowCount() == 2);
-    // The rows are sorted by what the user reads, so find "Alien Collection" by its key
-    // rather than assuming which row it landed in.
+    // Rows are sorted by what the user reads, so find this one by its key.
     int alienRow = -1;
     for (int i = 0; i < sets->rowCount(); ++i) {
         if (sets->item(i, 0)->data(Qt::UserRole).toString() == "Alien Collection") {
@@ -937,9 +781,8 @@ TEST_CASE("A rename onto a display title already in use is refused in both modes
     }
     REQUIRE(alienRow >= 0);
 
-    // Both modes, because both produce the same two indistinguishable rows.  Under all
-    // movie files the typed name becomes this set's *key*, so the collision is permanent:
-    // it is what the next reload rebuilds from.
+    // Both modes: under all movie files the typed name becomes the key, so the collision is
+    // what the next reload rebuilds from.
     const MovieSetRenameMode mode =
         GENERATE(MovieSetRenameMode::SetFileOnly, MovieSetRenameMode::AllMovieFiles);
     Settings::instance()->setMovieSetRenameMode(mode);
@@ -954,7 +797,6 @@ TEST_CASE("A rename onto a display title already in use is refused in both modes
     REQUIRE(set != nullptr);
     CHECK(set->displayName() == "Alien Collection");
     CHECK(sets->item(alienRow, 0)->text() == "Alien Collection");
-    // The other set kept its own name either way.
     CHECK(setModel->set("The Hunt") == nullptr);
 }
 
@@ -969,9 +811,7 @@ TEST_CASE("An all-movie-files rename moves what the set keeps on disk", "[ui][mo
 
     SECTION("the record follows, so the old name does not come back as a ghost")
     {
-        // Left behind, movieSetsWithRecord() lists the old folder at the next reload and
-        // reports a set nothing answers to, which reload() then resurrects with no
-        // members -- a ghost in the sets tab, the set combo box and the set filter.
+        // Left behind, the old folder is listed at the next reload and resurrected as a ghost.
         SetsWidget widget;
         widget.loadSets();
         renameFirstSet(widget, "Alien Anthology");
@@ -987,9 +827,7 @@ TEST_CASE("An all-movie-files rename moves what the set keeps on disk", "[ui][mo
 
     SECTION("every file in the folder moves, not the two types this tab knows about")
     {
-        // MovieSetImages::supportedImageTypes() is poster and backdrop, and the rename
-        // used to carry exactly those two through memory.  Kodi reads six more, and a
-        // user may have put anything in this folder.
+        // MovieSetImages knows two types; Kodi reads six more, and a user may have added any.
         QFile extra(guard.dir().absoluteFilePath("Alien Collection/clearlogo.png"));
         REQUIRE(extra.open(QIODevice::WriteOnly));
         extra.write("not really a png");
@@ -1004,9 +842,6 @@ TEST_CASE("An all-movie-files rename moves what the set keeps on disk", "[ui][mo
 
     SECTION("artwork moves byte for byte, without a decode and re-encode")
     {
-        // The carry-over this replaced read the poster as a QImage and wrote it back as
-        // JPEG at quality 100, so a PNG came out a JPEG and a lossless original did not
-        // survive its own rename.
         QImage poster(4, 4, QImage::Format_RGB32);
         poster.fill(Qt::red);
         QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
@@ -1052,11 +887,8 @@ TEST_CASE("An all-movie-files rename that cannot move its files says so", "[ui][
 
     addLibraryMovie("Alien", "Alien Collection");
     writeRecord(guard.dir(), "Alien Collection");
-    // Something is already standing where the set's folder would go.  QDir::rename()
-    // refuses, and merging the two folders would let one set's artwork shadow another's.
-    //
-    // Artwork rather than a record: a folder holding a record is a *set*, so renaming
-    // onto its name would be a merge and would never reach the move at all.
+    // Something already stands where the set's folder would go, so QDir::rename() refuses.
+    // Artwork rather than a record, because a folder holding a record would make this a merge.
     REQUIRE(QDir().mkpath(guard.dir().absoluteFilePath("Alien Anthology")));
     QFile occupant(guard.dir().absoluteFilePath("Alien Anthology/folder.jpg"));
     REQUIRE(occupant.open(QIODevice::WriteOnly));
@@ -1071,30 +903,24 @@ TEST_CASE("An all-movie-files rename that cannot move its files says so", "[ui][
     renameFirstSet(widget, "Alien Anthology");
 
     CHECK(messages.contains("could not be moved"));
-    // And the user is told they are still under the old name, which for this branch --
-    // nothing moved at all -- is true.
+    // Nothing moved at all, so "still under the old name" is true for this branch.
     const QString shown = notifications.text();
     CHECK_THAT(shown, Contains("could not be moved"));
     CHECK_THAT(shown, Contains("Alien Collection"));
 
-    // The rename still happened: the movie NFOs are the set's identity, so undoing it
-    // would mean rewriting every member again -- larger and riskier than a leftover the
-    // message names.
+    // The rename still happened: undoing it would rewrite every member NFO again.
     Movie* alien = libraryMovie("Alien");
     REQUIRE(alien != nullptr);
     CHECK(alien->set().name == "Alien Anthology");
 
-    // And both folders are exactly as they were.
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/folder.jpg")));
 }
 
 TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[ui][movie][set]")
 {
-    // The separate-folder layout renames the directory and *then* renames the
-    // set-name-derived files inside it, so the folder can move while a file in it does
-    // not.  Telling that user their files are "still stored under the old name" sends
-    // them to a folder that no longer exists -- the record really is at the new name.
+    // The directory is renamed first and the files inside it after, so the folder can move
+    // while a file in it does not -- and "still under the old name" would then be a lie.
     MovieSetFolderGuard guard;
     test::DataFileGuard dataFiles;
     RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
@@ -1112,8 +938,8 @@ TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[
     poster.fill(Qt::red);
     REQUIRE(poster.save(
         guard.dir().absoluteFilePath("Alien Collection/" + posterFile.saveFileName("Alien Collection")), "jpg", 100));
-    // A file already sitting under the name the poster wants after the move, so the
-    // in-folder rename refuses while the directory rename has already succeeded.
+    // Already under the name the poster wants, so the in-folder rename refuses after the
+    // directory rename has succeeded.
     QFile blocker(guard.dir().absoluteFilePath("Alien Collection/" + posterFile.saveFileName("Alien Anthology")));
     REQUIRE(blocker.open(QIODevice::WriteOnly));
     blocker.write("in the way");
@@ -1130,25 +956,21 @@ TEST_CASE("A rename whose folder moved but whose artwork did not says which", "[
     // And *not* the message that would send the user to the old folder.
     CHECK_FALSE(messages.contains("could not be moved at all"));
 
-    // The sentence the user is actually shown, which is the whole point of the three
-    // states: the log line is not what tells them where their artwork went.
+    // The sentence the user is shown, not just the log line.
     const QString shown = notifications.text();
     CHECK_THAT(shown, Contains("only some of its files could be moved"));
     CHECK_THAT(shown, Contains("still"));
     // It must not claim the set is stored under the old name -- the folder moved.
     CHECK_THAT(shown, ContainsNot("Alien Collection"));
 
-    // The folder and the record did move, which is what makes the other message a lie.
     CHECK(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Anthology/set.nfo")));
     CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
 }
 
 TEST_CASE("An all-movie-files rename moves artwork next to the movies too", "[ui][movie][set]")
 {
-    // The other layout, where there is no per-set folder: the artwork sits beside a
-    // member movie under a file name built from the set's name, and the anchor movie is
-    // found through the *old* name -- so this only works because the files are moved
-    // before the members are reassigned.
+    // With no per-set folder the anchor movie is found through the old name, so this works
+    // only because the files move before the members are reassigned.
     test::DataFileGuard dataFiles;
     RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
     REQUIRE(Settings::instance()->movieSetArtworkType() == MovieSetArtworkType::ArtworkNextToMovies);
@@ -1191,8 +1013,7 @@ TEST_CASE("An all-movie-files rename moves artwork next to the movies too", "[ui
 
 TEST_CASE("Renaming a set onto another set's name asks before merging", "[ui][movie][set]")
 {
-    // A merge moves movies between sets, is not undoable, and is one typo in a table
-    // cell away.  It used to happen silently.
+    // A merge moves movies between sets, cannot be undone, and is one typo away.
     MovieSetFolderGuard guard;
 
     addLibraryMovie("Alien", "Alien Collection");
@@ -1219,10 +1040,8 @@ TEST_CASE("Renaming a set onto another set's name asks before merging", "[ui][mo
 
     SECTION("accepting merges, whatever the rename setting says")
     {
-        // The setting does not govern a merge, because there is no other way to perform
-        // one: membership lives in the member movies' NFOs, so moving a movie into
-        // another set *is* rewriting its <set><name>.  A "set file only" merge would
-        // write a display title and quietly not merge.
+        // Membership lives in the members' NFOs, so a "set file only" merge would write a
+        // display title and quietly not merge.
         RenameModeGuard renameMode(MovieSetRenameMode::SetFileOnly);
 
         SetsWidget widget;
@@ -1246,14 +1065,8 @@ TEST_CASE("Renaming a set onto another set's name asks before merging", "[ui][mo
 
 TEST_CASE("Clearing a set name is refused and takes no movie with it", "[ui][movie][set]")
 {
-    // The worst defect in this feature and it was silent.  The all-movie-files rename
-    // skipped its collision check and its setName() for an empty name -- and then
-    // reassigned every member to "" anyway, detaching the whole set and marking each
-    // movie changed, so the next save wrote an empty <set> into every member NFO while
-    // the MovieSet kept its name and its row became unfindable.
-    //
-    // Both modes, because the guard is one precondition in onSetNameChanged() now rather
-    // than a check inside each path -- which is how it came to exist on one of them only.
+    // An empty name used to detach every member and dirty it, so the next save wrote an empty
+    // <set> into every member NFO.  Both modes, because the guard is one shared precondition.
     MovieSetFolderGuard guard;
     const MovieSetRenameMode mode =
         GENERATE(MovieSetRenameMode::SetFileOnly, MovieSetRenameMode::AllMovieFiles);
@@ -1273,14 +1086,13 @@ TEST_CASE("Clearing a set name is refused and takes no movie with it", "[ui][mov
     CHECK(messages.contains("empty name"));
     CHECK_THAT(notifications.text(), Contains("cannot have an empty name"));
 
-    // The set is intact and still findable by its key.
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
     MovieSet* set = setModel->set("Alien Collection");
     REQUIRE(set != nullptr);
     CHECK(set->movies().size() == 2);
     CHECK(set->displayName() == "Alien Collection");
 
-    // And no movie was detached or marked for rewriting -- the data loss itself.
+    // No movie detached or marked for rewriting -- the data loss itself.
     for (const QString& title : {QString("Alien"), QString("Aliens")}) {
         Movie* movie = libraryMovie(title);
         REQUIRE(movie != nullptr);
@@ -1288,7 +1100,6 @@ TEST_CASE("Clearing a set name is refused and takes no movie with it", "[ui][mov
         CHECK_FALSE(movie->hasChanged());
     }
 
-    // The row says what the set is called, and can still be looked up.
     auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(sets->rowCount() == 1);
     CHECK(sets->item(0, 0)->text() == "Alien Collection");
@@ -1297,10 +1108,7 @@ TEST_CASE("Clearing a set name is refused and takes no movie with it", "[ui][mov
 
 TEST_CASE("A merge leaves the row explaining the set it actually shows", "[ui][movie][set]")
 {
-    // performMerge() is the third place a row's identity changes, and the tooltip helper
-    // was added to loadSets() and the two renames only.  A diverged source merged onto an
-    // undiverged target left the target's row carrying the source's tooltip: a sentence
-    // about a set that no longer exists.
+    // performMerge() is the third place a row's identity changes, so it too redoes the tooltip.
     MovieSetFolderGuard guard;
 
     addLibraryMovie("Alien", "Alien Collection");
@@ -1311,7 +1119,6 @@ TEST_CASE("A merge leaves the row explaining the set it actually shows", "[ui][m
     SetsWidget widget;
     widget.loadSets();
 
-    // Give the source set a display title of its own, so it has a tooltip to leave behind.
     MovieSet* alien = setModel->set("Alien Collection");
     REQUIRE(alien != nullptr);
     alien->setTitle("The Alien Saga");
@@ -1331,7 +1138,6 @@ TEST_CASE("A merge leaves the row explaining the set it actually shows", "[ui][m
     answerNextQuestion(QMessageBox::Yes);
     sets->item(alienRow, 0)->setText("Predator Collection");
 
-    // The row is the target now, which has no divergence, so it explains none.
     REQUIRE(sets->rowCount() == 1);
     CHECK(sets->item(0, 0)->data(Qt::UserRole).toString() == "Predator Collection");
     CHECK(sets->item(0, 0)->toolTip().isEmpty());
@@ -1339,10 +1145,8 @@ TEST_CASE("A merge leaves the row explaining the set it actually shows", "[ui][m
 
 TEST_CASE("Add Movie Set does not reuse a name a display title already holds", "[ui][movie][set]")
 {
-    // The uniquifier asked MovieSetModel::set(), which matches keys only, so a set whose
-    // *display title* was already "New Movie Set" let this create a second row the user
-    // cannot tell apart from it -- the state the rename guard exists to prevent, one path
-    // over.  Both now go through the same predicate.
+    // The uniquifier has to see display titles too, or it creates the indistinguishable row
+    // the rename guard exists to prevent.
     MovieSetFolderGuard guard;
 
     addLibraryMovie("Alien", "Alien Collection");
@@ -1355,11 +1159,9 @@ TEST_CASE("Add Movie Set does not reuse a name a display title already holds", "
     widget.loadSets();
     REQUIRE(QMetaObject::invokeMethod(&widget, "onAddMovieSet"));
 
-    // The new set took the next free name rather than the taken one.
     CHECK(setModel->set("New Movie Set") == nullptr);
     CHECK(setModel->set("New Movie Set 1") != nullptr);
 
-    // And no two rows read the same.
     auto* sets = widget.findChild<QTableWidget*>("sets");
     REQUIRE(sets != nullptr);
     QStringList shown;

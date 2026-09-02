@@ -10,7 +10,7 @@ MovieSetImages::MovieSetImages(MovieSet& set) : m_set{set}
 
 const QVector<ImageType>& MovieSetImages::supportedImageTypes()
 {
-    // Adding one of the six further Kodi set art types (D-D) is an entry here.
+    // Adding one of the further Kodi set art types is an entry here.
     static const QVector<ImageType> types{ImageType::MovieSetPoster, ImageType::MovieSetBackdrop};
     return types;
 }

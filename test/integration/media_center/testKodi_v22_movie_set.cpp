@@ -70,10 +70,7 @@ TEST_CASE("Movie set record round trip", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("<originaltitle> is the join key and equals <title> until a rename")
     {
-        // The member NFOs carry <set><name>; this file carries <title> and
-        // <originaltitle>, and Kodi 22 matches on <originaltitle>.  For a set that has
-        // had no set-file-only rename the two are one string, so writing them apart here
-        // would key Kodi's row off a name no movie NFO mentions.
+        // Kodi 22 matches on <originaltitle>, which is the member NFOs' <set><name>.
         MovieSet set("Alien Collection");
         const kodi::MovieSetXmlWriter writer(set);
         const QString xml = QString::fromUtf8(writer.getMovieSetXml());
@@ -86,9 +83,7 @@ TEST_CASE("Movie set record round trip", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A set-file-only rename writes the two apart, key first")
     {
-        // The other half of the same rule: after such a rename <title> is what Kodi 22
-        // displays and <originaltitle> is still what it matches on, so the key must not
-        // follow the title.  This is the only file in the design that can hold both.
+        // <title> is what Kodi 22 displays; <originaltitle> is still what it matches on.
         MovieSet set("Alien Collection");
         set.setTitle("The Alien Saga");
         const kodi::MovieSetXmlWriter writer(set);
@@ -100,8 +95,8 @@ TEST_CASE("Movie set record round trip", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("An empty overview is never written")
     {
-        // D2a: XMLUtils::GetString() returns true for an existing-but-empty element, so
-        // an empty <overview> is a value to Kodi and blanks the set's stored overview.
+        // XMLUtils::GetString() returns true for an existing-but-empty element, so an empty
+        // <overview> is a value to Kodi and blanks the set's stored overview.
         MovieSet set("Alien Collection");
         const kodi::MovieSetXmlWriter writer(set);
         CHECK_THAT(QString::fromUtf8(writer.getMovieSetXml()), ContainsNot("<overview>"));
@@ -140,10 +135,8 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("Never moves the set's key, and keeps the display title beside it")
     {
-        // A <title> that has moved away from <originaltitle> is a set-file-only rename.
-        // The key stays exactly where the member movies' NFOs put it; the title is what
-        // moved, and it is kept -- dropping it, which this reader used to do, makes every
-        // reload undo the last set-file-only rename.
+        // A <title> that has moved away from <originaltitle> is a set-file-only rename, and
+        // dropping the title would make every reload undo it.
         const auto set = parseSet(R"(<set>
             <title>The Alien Saga</title>
             <originaltitle>Alien Collection</originaltitle>
@@ -165,8 +158,7 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A record with only <title> is a name, not a rename")
     {
-        // setNameOf() falls back to <title> for a file MediaElch did not write, so the
-        // set's key is already that string; a display title would duplicate it.
+        // setNameOf() falls back to <title> here, so the key is already that string.
         const auto set = parseSet("<set><title>Alien Collection</title></set>");
         CHECK(set->name() == "Alien Collection");
         CHECK(set->title().isEmpty());
@@ -175,12 +167,9 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("The reader alone leaves the set marked as changed")
     {
-        // Every setter the reader calls marks the set as needing to be saved, and the
-        // reader does not undo that -- KodiXml::loadMovieSet() is what clears the flag,
-        // because it is the one that knows the values came off the disk.  The fixture
-        // has to carry a value for this to mean anything: MovieSet's setters return
-        // early when the value does not change, so a record with neither an overview nor
-        // an id raises the flag under no implementation at all.
+        // The reader does not clear the flag its setters raise; KodiXml::loadMovieSet() does,
+        // knowing the values came off the disk.  The fixture must carry a value, since
+        // MovieSet's setters return early when nothing changes.
         MovieSet set("Alien Collection");
         REQUIRE_FALSE(set.hasChanged());
         QDomDocument doc;
@@ -204,16 +193,10 @@ TEST_CASE("Movie set record reader", "[data][movie][movie_set][kodi][nfo]")
 
 TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][nfo]")
 {
-    // This used to assert on a log line, because dropping the display title left nothing
-    // else to observe.  The title is kept now, so the observable is the set itself --
-    // which is a stronger assertion about the same question and does not go quiet if
-    // somebody changes the wording of a message.
     SECTION("MediaElch's own record is never read as a rename")
     {
-        // The writer emits <title> and <originaltitle> from one name unless there really
-        // is a divergence, so they can only differ here if something else wrote the file.
-        // Reading one trimmed and the other not made every set whose name carries
-        // whitespace look renamed -- and would now give it a display title it never had.
+        // The writer emits both from one name unless there is a real divergence, so reading one
+        // trimmed and the other not would make every whitespace-carrying name look renamed.
         MovieSet set(" Alien Collection");
         QDomDocument doc;
         doc.setContent(QString::fromUtf8(kodi::MovieSetXmlWriter(set).getMovieSetXml()));
@@ -226,7 +209,6 @@ TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][n
 
     SECTION("A record that really was renamed in the set file still says so")
     {
-        // And the fix must not have bought that silence by blunting the signal.
         MovieSet set("Alien Collection");
         QDomDocument doc;
         doc.setContent(
@@ -240,8 +222,7 @@ TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][n
 
     SECTION("Whitespace alone is a real divergence and survives untrimmed")
     {
-        // The reader compares both elements untrimmed, so this is a rename rather than
-        // noise, and the display title keeps the space that makes it one.
+        // Compared untrimmed, so this is a rename and the title keeps the space that makes it one.
         MovieSet set("Alien Collection");
         QDomDocument doc;
         doc.setContent(
@@ -255,7 +236,7 @@ TEST_CASE("Movie set record rename detection", "[data][movie][movie_set][kodi][n
 
     SECTION("A set-file-only rename round-trips through the writer and back")
     {
-        // The whole point of holding both strings: a reload must not undo the rename.
+        // The point of holding both strings: a reload must not undo the rename.
         MovieSet set("Alien Collection");
         set.setTitle("The Alien Saga");
 
@@ -339,8 +320,7 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("Records are off in the artwork-next-to-movies layout")
     {
-        // There is no per-set folder in that layout, so there is nowhere a `set.nfo`
-        // could go that Kodi would read.  Sets are read-only; that is the design.
+        // No per-set folder means nowhere a `set.nfo` could go that Kodi would read.
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
         CHECK_FALSE(mediaCenter->movieSetRecordsEnabled());
         CHECK(mediaCenter->movieSetsWithRecord().isEmpty());
@@ -352,16 +332,11 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("Records are off when the folder was never chosen")
     {
-        // The hazard this guards.  DirectoryPath's default constructor leaves isValid()
-        // false around a default QDir, whose absolutePath() is the process's current
-        // working directory.  Selecting the separate folder without choosing one must not
-        // scatter files into whatever directory MediaElch was started from.
-        //
-        // movieSetFileName() asks too, and covers the three record paths that build a
-        // path through it.  What this predicate covers on its own is movieSetsWithRecord(),
-        // which lists the folder itself and never goes through movieSetFileName() -- it
-        // does build a path to each record, but derives it from the listing.  Its check is
-        // below.
+        // A default DirectoryPath wraps a default QDir, whose absolutePath() is the process's
+        // working directory, so selecting the separate folder without choosing one would
+        // scatter files wherever MediaElch was started.  This predicate covers
+        // movieSetsWithRecord(), which lists the folder rather than going through
+        // movieSetFileName().
         Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::SeparateArtworkFolder);
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
@@ -386,8 +361,7 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         written.setTmdbId(TmdbId("8091"));
         REQUIRE(mediaCenter->saveMovieSet(written));
         CHECK(written.hasRecord());
-        // Saving is the one moment at which a set and its file agree, so it is the
-        // clearing edge for the flag nothing used to clear.
+        // Saving is the one moment at which a set and its file agree, so it clears hasChanged().
         CHECK_FALSE(written.hasChanged());
         CHECK(QFileInfo::exists(msif.absoluteFilePath("Alien Collection/set.nfo")));
 
@@ -408,8 +382,7 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A folder with artwork but no record is not a set")
     {
-        // The record is what makes a set exist in its own right.  Treating a pile of
-        // images as one would resurrect every set a user ever deliberately removed.
+        // Treating images as a record would resurrect every set a user deliberately removed.
         const QDir msif = emptyMsif("artonly");
         MovieSetFolderGuard::useFolder(msif);
         REQUIRE(QDir().mkpath(msif.absoluteFilePath("Predator Collection")));
@@ -422,11 +395,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A record belongs to the set it names, not to the folder it sits in")
     {
-        // The path is derived from the set name through Kodi's legalisation, which is
-        // lossy: "Mission: Impossible" and "Mission_ Impossible" resolve to one folder.
-        // Only one of them owns the record in it, and every path has to agree about
-        // which -- otherwise a set flips between having a record and not having one from
-        // one reload to the next, and Delete Movie Set removes another set's file.
+        // Legalisation is lossy -- "Mission: Impossible" and "Mission_ Impossible" resolve to
+        // one folder -- so every path has to agree on which of them owns the record.
         const QDir msif = emptyMsif("collision");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -434,7 +404,6 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         owner.setOverview("Ethan Hunt runs.");
         REQUIRE(mediaCenter->saveMovieSet(owner));
 
-        // The listing reports the set the file names, and only that one.
         CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Mission: Impossible Collection"});
 
         // The other name resolves to the same file and must not be given it.
@@ -442,22 +411,17 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         CHECK_FALSE(mediaCenter->loadMovieSet(lodger));
         CHECK(lodger.overview().isEmpty());
 
-        // And must not be able to delete it.
         CHECK_FALSE(mediaCenter->removeMovieSetRecord("Mission_ Impossible Collection"));
         CHECK(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
 
-        // The set that does own it still can.
         CHECK(mediaCenter->removeMovieSetRecord("Mission: Impossible Collection"));
         CHECK_FALSE(QFileInfo::exists(msif.absoluteFilePath("Mission_ Impossible Collection/set.nfo")));
     }
 
     SECTION("Saving a set never overwrites another set's record")
     {
-        // The writer is a path to this file too, and for two rounds it was the one that
-        // was not asking the question.  "Alien Collection" and "Alien Collection " share
-        // a folder, because legalisation chops the trailing space -- and the padded name
-        // is not exotic: the movie NFO reader does not trim `<set><name>` either, so a
-        // sloppy member NFO produces it as a set of its own.
+        // "Alien Collection" and "Alien Collection " share a folder, and the padded name is not
+        // exotic: the movie NFO reader does not trim `<set><name>` either.
         const QDir msif = emptyMsif("overwrite");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -471,7 +435,6 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         CHECK_FALSE(mediaCenter->saveMovieSet(lodger));
         CHECK_FALSE(lodger.hasRecord());
 
-        // The owner's record is untouched -- overview, id and all.
         MovieSet reread("Alien Collection");
         REQUIRE(mediaCenter->loadMovieSet(reread));
         CHECK(reread.overview() == "Ripley versus the Alien.");
@@ -481,9 +444,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("Saving still creates a record where there is no file")
     {
-        // The writer's guard is "a file is there and it names another set", not "the file
-        // names this set".  Demanding a match would make the first record for any set
-        // impossible to write, which would disable the feature rather than protect it.
+        // The guard is "a file is there and it names another set"; demanding a positive match
+        // would make the first record for any set impossible to write.
         const QDir msif = emptyMsif("firstwrite");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -500,10 +462,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A record that cannot be read is not removed")
     {
-        // Unlinking needs write permission on the *directory* and nothing on the file, so
-        // an unreadable `set.nfo` is perfectly deletable.  Skipping the ownership check
-        // when the open fails therefore deletes a file whose owner was never established
-        // -- and reports success for it.
+        // An unreadable `set.nfo` is still deletable -- unlinking needs the directory, not the
+        // file -- so skipping the ownership check on a failed open deletes an unowned file.
         const QDir msif = emptyMsif("unreadable");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -517,9 +477,7 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
         QFile probe(fileName);
         if (probe.open(QIODevice::ReadOnly)) {
-            // The platform does not enforce the permissions -- Windows, or running as
-            // root.  There is no unreadable file to test with, so there is nothing here
-            // to assert; the guard is about the case where the open genuinely fails.
+            // The platform does not enforce the permissions (Windows, or as root).
             probe.close();
             WARN("Skipped: this file system does not enforce the permission change");
         } else {
@@ -533,11 +491,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A record in a hidden folder is seen by the listing as well as the probe")
     {
-        // QDir::NoDotAndDotDot drops only "." and ".."; without QDir::Hidden a set whose
-        // legalised folder starts with a dot is invisible to the listing while
-        // loadMovieSet() opens its path directly and finds it.  The set then alternates
-        // between surviving its last member and not, which is the very flip-flop the one
-        // question was supposed to close.
+        // Without QDir::Hidden a dot-folder is invisible to the listing while loadMovieSet()
+        // opens its path directly and finds it, so the two answers disagree.
         const QDir msif = emptyMsif("hidden");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -554,11 +509,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A set whose name legalises away to nothing gets no record at all")
     {
-        // "." and "..." and a run of spaces are all accepted by the sets tab's rename
-        // field and all legalise to the empty string, which would build "<msif>//set.nfo"
-        // and drop the record into the folder's root -- where the listing, which descends
-        // into subfolders, would never see it, while the direct probe would.  Same split
-        // answer as the hidden folder, so the same refusal.
+        // ".", "..." and a run of spaces are all accepted by the rename field and all legalise
+        // to nothing, dropping the record where the listing never looks and the probe does.
         const QDir msif = emptyMsif("nameless");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -571,19 +523,10 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A record that names nobody: the write takes it, the removal will not")
     {
-        // The two paths disagree here **on purpose**, and nothing else says so.
-        //
-        // A readable `set.nfo` that names no set is nobody's record by this design's own
-        // definition: the enumeration skips it and loadMovieSet() refuses it, so no set
-        // can ever carry hasRecord() because of it.  The write may therefore claim it --
-        // and has to, or that folder is permanently unwritable with nothing in the UI
-        // able to clear it.  The removal must still refuse it, because deleting a file
-        // it cannot show to belong to the set being deleted is exactly the fail-open it
-        // was fixed for.
-        //
-        // Both directions of the writer's `!recordName.isEmpty() &&` conjunct are pinned
-        // here: tighten the writer and the save below fails, loosen the remover and the
-        // refusal above does.
+        // The write and the removal disagree on purpose.  A `set.nfo` that names no set is
+        // nobody's record, so the write has to claim it or that folder is permanently
+        // unwritable; the removal must still refuse it, because deleting a file it cannot show
+        // to belong to this set is the fail-open.
         const QDir msif = emptyMsif("nameless");
         MovieSetFolderGuard::useFolder(msif);
         REQUIRE(QDir().mkpath(msif.absoluteFilePath("Alien Collection")));
@@ -602,15 +545,12 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
         set.setOverview("Ripley versus the Alien.");
         CHECK(mediaCenter->saveMovieSet(set));
         CHECK(mediaCenter->movieSetsWithRecord() == QStringList{"Alien Collection"});
-        // And now that it names someone, the removal will take it.
         CHECK(mediaCenter->removeMovieSetRecord("Alien Collection"));
     }
 
     SECTION("A record in a folder its own name does not resolve to is ignored")
     {
-        // Reporting it would name a set whose every write path looks somewhere else:
-        // loadMovieSet() would not find it, saveMovieSet() would write a second file in
-        // the right folder and removeMovieSetRecord() would remove neither.
+        // Reporting it would name a set whose every write path looks in a different folder.
         const QDir msif = emptyMsif("misfiled");
         MovieSetFolderGuard::useFolder(msif);
         REQUIRE(QDir().mkpath(msif.absoluteFilePath("Alien")));
@@ -624,10 +564,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("A name whose whitespace matters round-trips")
     {
-        // The name is a join key that has to be byte-identical to the member NFOs'
-        // <set><name>, so the reader does not trim it.  Trimming would report this set
-        // under one spelling and look it up under another, because Kodi's legalisation
-        // chops only *trailing* whitespace.
+        // The name is a join key that must be byte-identical to the member NFOs' <set><name>,
+        // so trimming it would report the set under one spelling and look it up under another.
         const QDir msif = emptyMsif("whitespace");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -641,9 +579,7 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 
     SECTION("The folder name is legalised; the set's name is not")
     {
-        // Kodi derives the folder from the set name with MakeLegalFileName, which is
-        // lossy, so the name has to come back out of the file and not out of the folder
-        // -- it must match the member NFOs' <set><name> byte for byte.
+        // MakeLegalFileName is lossy, so the name comes out of the file, not the folder.
         const QDir msif = emptyMsif("legalise");
         MovieSetFolderGuard::useFolder(msif);
 
@@ -657,9 +593,8 @@ TEST_CASE("Movie set records on disk", "[data][movie][movie_set][kodi][nfo]")
 namespace {
 
 /// \brief Puts one movie with a real file into the library, and takes it out again.
-/// \details "Artwork next to movies" resolves a set's artwork path through a member
-///          movie's folder (KodiXml::movieSetFileName()), so that layout cannot be
-///          exercised at all without a movie in the library that has files.
+/// \details "Artwork next to movies" resolves through a member movie's folder, so that
+///          layout needs a library movie with real files.
 class LibraryMovieGuard
 {
 public:
@@ -683,8 +618,7 @@ public:
     {
         Manager::instance()->movieModel()->clear();
         qApp->processEvents();
-        // The set model is a singleton and has just been told about a set; put it back
-        // the way the next test in this binary expects to find it.
+        // The set model is a singleton; put it back the way the next test expects it.
         Manager::instance()->movieSetModel()->reload();
     }
     LibraryMovieGuard(const LibraryMovieGuard&) = delete;
@@ -704,11 +638,8 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
 
     SECTION("Artwork and records are different questions")
     {
-        // The truth table, in one place, because the difference between these two is
-        // what this whole guard turns on.  Artwork resolves in *both* layouts; a record
-        // resolves only in the movie set information folder.  So gating the artwork
-        // paths on the record predicate would take set artwork away from every user who
-        // has never opened the settings, "artwork next to movies" being the default.
+        // Artwork resolves in both layouts; a record only in the movie set information folder.
+        // Gating artwork on the record predicate would take it away from the shipping default.
         SECTION("Artwork next to movies: artwork yes, records no")
         {
             Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
@@ -735,12 +666,9 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
 
     SECTION("Artwork is not written into the working directory")
     {
-        // The hazard the record paths closed, arriving through the other door.
-        // movieSetFileName() called .dir().absolutePath() without asking isValid(), and
-        // QDir("").absolutePath() is the *process's current working directory* -- so the
-        // savers created a folder and wrote a poster into whatever directory MediaElch
-        // happened to be started from.  The folder matters as much as the file:
-        // saveMovieSetPoster() calls mkpath() before it writes.
+        // QDir("").absolutePath() is the process's working directory, so a movieSetFileName()
+        // that does not ask isValid() writes into wherever MediaElch was started -- and the
+        // folder matters as much as the file, since saveMovieSetPoster() calls mkpath() first.
         const QDir cwd = QDir::current();
         QDir(cwd.absoluteFilePath("Alien Collection")).removeRecursively();
 
@@ -756,17 +684,12 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
 
     SECTION("Artwork is not read out of the working directory")
     {
-        // The read half, and it is not decoration: a poster sitting next to wherever
-        // MediaElch was launched from would be displayed as this set's artwork.  That is
-        // the same split between "what the path resolves to" and "what the user
-        // configured" that the record paths had to close, and a read is what decides
-        // what the user is shown.
+        // The read half: such a poster would be displayed as this set's artwork.
         const QDir cwd = QDir::current();
         QDir(cwd.absoluteFilePath("Alien Collection")).removeRecursively();
         REQUIRE(QDir().mkpath(cwd.absoluteFilePath("Alien Collection")));
 
-        // Written under every name the reader probes, so the check below cannot pass
-        // merely by having guessed the wrong file name.
+        // Under every name the reader probes, so the check cannot pass by guessing wrong.
         const QVector<DataFile> posterFiles = Settings::instance()->dataFiles(DataFileType::MovieSetPoster);
         REQUIRE_FALSE(posterFiles.isEmpty());
         for (DataFile dataFile : posterFiles) {
@@ -775,11 +698,10 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
             REQUIRE(poster.save(fileName, "jpg", 100));
         }
 
-        // With the folder configured, those files are exactly what the reader finds ...
         MovieSetFolderGuard::useFolder(cwd);
         REQUIRE_FALSE(mediaCenter->movieSetPoster("Alien Collection").isNull());
 
-        // ... and with no folder configured, the very same files must not be found.
+        // The same files must not be found with no folder configured.
         Settings::instance()->setMovieSetArtworkDirectory(mediaelch::DirectoryPath());
         REQUIRE_FALSE(Settings::instance()->movieSetArtworkDirectory().isValid());
         CHECK(mediaCenter->movieSetPoster("Alien Collection").isNull());
@@ -789,11 +711,8 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
 
     SECTION("Artwork next to movies still works")
     {
-        // The regression guard for this step's own guard, and the reason
-        // movieSetArtworkEnabled() exists as a question of its own.  "Artwork next to
-        // movies" is the shipping default; it resolves through a member movie's folder
-        // and has nothing to do with the movie set information folder.  Refusing it
-        // would have been a larger bug than the one being fixed.
+        // Why movieSetArtworkEnabled() is a question of its own: the shipping default resolves
+        // through a member movie's folder, so refusing it would be the larger bug.
         QDir movieDir = test::makeTempDir("movie_set/next_to_movies");
         movieDir.removeRecursively();
         const LibraryMovieGuard movie(movieDir, "Alien Collection");
@@ -808,10 +727,8 @@ TEST_CASE("Movie set artwork paths", "[data][movie][movie_set][kodi][image]")
 
     SECTION("A write that reached the disk says so, and one that did not says so")
     {
-        // ELCH_NODISCARD is silent on a virtual under GCC (reproduced, 14.2), so nothing
-        // but a test can hold this refusal -- and the caller that has to listen is
-        // SetsWidget::saveSet(), which loses the image if it does not.  Its side of this
-        // is in test/unit/ui/testSetsWidget.cpp.
+        // ELCH_NODISCARD is silent on a virtual under GCC 14.2, so nothing but a test holds
+        // this return value; the caller that must listen is SetsWidget::saveSet().
         SECTION("Written")
         {
             MovieSetFolderGuard::useFolder(emptyMsif("artwork_reported"));

@@ -10,12 +10,9 @@ namespace mediaelch {
 namespace kodi {
 
 /// \brief Writes a movie set's own record, `set.nfo`.
-/// \details The counterpart of MovieSetXmlReader; see there for why `<originaltitle>`
-///          and not `<name>`.  The file is version-independent: `set.nfo` first shipped
-///          in Kodi 22, and on 19-21 it is simply an unread file next to the artwork, so
-///          there is nothing to vary by target version and no generator tag naming one.
-///
-/// \see docs/concepts/movie-sets.md, D-A.
+/// \details The counterpart of MovieSetXmlReader; see there for why `<originaltitle>` and
+///          not `<name>`.  The file does not vary by Kodi version: `set.nfo` first shipped
+///          in Kodi 22, and on 19-21 it is simply an unread file next to the artwork.
 class MovieSetXmlWriter
 {
 public:

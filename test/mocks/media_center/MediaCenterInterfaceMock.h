@@ -9,14 +9,9 @@
 #include <QStringList>
 
 /// \brief A MediaCenterInterface that stores movie set records in memory.
-/// \details MovieSetModel asks a media center which sets have a `set.nfo` and reads
-///          those records through it; it uses four of the interface's forty methods.
-///          The fifth implemented here, saveMovieSet(), is SetsWidget's -- the model
-///          never writes a record, only reads and removes.  Everything else is a no-op.
-///
-///          The records are a QHash, not files, so a test can say "this set has a record
-///          on disk" without a movie set information folder, a Settings singleton or a
-///          temporary directory.
+/// \details The records are a QHash rather than files, so a test can say "this set has a
+///          record on disk" without a folder, a Settings singleton or a temporary directory.
+///          Only the five record methods do anything.
 class MediaCenterInterfaceMock : public MediaCenterInterface
 {
 public:
@@ -40,12 +35,11 @@ public:
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
-    /// \brief How often records-are-configured was asked -- the question every other
-    ///        one here goes through, so zero means the media center was not touched.
+    /// \brief How often records-are-configured was asked; every other call goes through it,
+    ///        so zero means the media center was not touched.
     ELCH_NODISCARD int recordsEnabledQueryCount() const { return m_recordsEnabledQueries; }
 
-    // The movie set record calls: the four MovieSetModel uses, plus saveMovieSet(),
-    // which is SetsWidget's.
+    // The four record calls MovieSetModel uses, plus saveMovieSet(), which is SetsWidget's.
     ELCH_NODISCARD bool movieSetRecordsEnabled() const override
     {
         ++m_recordsEnabledQueries;
@@ -87,14 +81,8 @@ public:
         return true;
     }
     /// \brief Always succeeds, and moves the record to match.
-    /// \details There is no failure knob, deliberately.  One existed and had no caller in
-    ///          any test, and it returned the failure *before* moving the record -- so a
-    ///          PartlyMoved through this mock left the record under the old name, which is
-    ///          the opposite of what PartlyMoved means (MediaCenterInterface.h).  The
-    ///          failure branches are exercised against the real KodiXml in
-    ///          testSetsWidget.cpp, where folders and files actually exist and the two
-    ///          layouts differ; a mock that can only assert its own return value adds
-    ///          nothing and can contradict the contract it stands in for.
+    /// \details No failure knob, deliberately: the failure branches are exercised against the
+    ///          real KodiXml in testSetsWidget.cpp, where folders and files exist.
     MovieSetFileMove renameMovieSetFiles(const QString& oldName, const QString& newName) override
     {
         if (!m_recordsEnabled) {
@@ -110,8 +98,8 @@ public:
     // Everything below is unused by MovieSetModel and does nothing.
     bool saveMovie(Movie* /*movie*/) override { return false; }
     bool loadMovie(Movie* /*movie*/, QString /*nfoContent*/ = "") override { return false; }
-    // Set artwork is exercised against the real KodiXml, where the two layouts and the
-    // file names actually exist; this mock has no notion of either.
+    // Set artwork is exercised against the real KodiXml; this mock has no notion of the two
+    // layouts or the file names.
     ELCH_NODISCARD bool movieSetArtworkEnabled() const override { return true; }
     QImage movieSetPoster(QString /*setName*/) override { return {}; }
     QImage movieSetBackdrop(QString /*setName*/) override { return {}; }
