@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <utility>
 
-MovieSet::MovieSet(QString name, QObject* parent) : QObject(parent), m_name{std::move(name)}, m_images{*this}
+MovieSet::MovieSet(QString name, QObject* parent) : QObject(parent), m_name{std::move(name)}
 {
 }
 
@@ -38,16 +38,6 @@ QString MovieSet::overview() const
 const QVector<Movie*>& MovieSet::movies() const
 {
     return m_movies;
-}
-
-MovieSetImages& MovieSet::images()
-{
-    return m_images;
-}
-
-const MovieSetImages& MovieSet::constImages() const
-{
-    return m_images;
 }
 
 // A setter updates this object, marks it as needing to be saved and announces it.  The

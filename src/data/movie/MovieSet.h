@@ -1,7 +1,6 @@
 #pragma once
 
 #include "data/TmdbId.h"
-#include "data/movie/MovieSetImages.h"
 #include "utils/Meta.h"
 
 #include <QObject>
@@ -37,8 +36,6 @@ public:
     ELCH_NODISCARD QString overview() const;
     /// \brief The set's member movies.  Not owned.
     ELCH_NODISCARD const QVector<Movie*>& movies() const;
-    ELCH_NODISCARD MovieSetImages& images();
-    ELCH_NODISCARD const MovieSetImages& constImages() const;
 
     /// \brief Sets the match key.  Clears title(), since an all-movie-files rename re-unifies the two.
     /// \details Like the other scalar setters, assigning the current value does nothing at all.
@@ -101,7 +98,6 @@ private:
     QString m_overview;
     /// \brief Member movies.  Not owned; owned by MovieModel.
     QVector<Movie*> m_movies;
-    MovieSetImages m_images;
     bool m_hasChanged = false;
     /// \brief Whether a `set.nfo` for this set exists on disk; see hasRecord().
     bool m_hasRecord = false;

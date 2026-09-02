@@ -214,9 +214,9 @@ art types (banner, clearart, clearlogo, discart, landscape, keyart) can be
 added without changing the class.  Only poster and backdrop exist today, which
 is why #1303, #1001, #421 and #822 are still open.
 
-I shaped `MovieSetImages` to hold the raw downloaded bytes, so that an image
-can be written out verbatim instead of re-encoded.  Nothing uses it yet: the
-live save path carries decoded images and writes JPEG.
+Whatever the user picks is decoded on the way in and re-encoded to JPEG on the
+way out.  Writing the downloaded bytes verbatim instead is worth doing when the
+artwork work happens; nothing holds them today.
 
 Kodi has never read the `<setName>-poster.jpg` files the next-to-movies layout
 writes; it reads `<movie base name>-set.poster.jpg` there, which we never write.
@@ -235,8 +235,8 @@ writes; it reads `<movie base name>-set.poster.jpg` there, which we never write.
 - An editor for the overview and the id in the sets tab, and a scrape and
   save-all workflow there.
 - One type-keyed pair of artwork methods on the media center interface instead
-  of the per-type virtuals, which is also what would put `MovieSetImages` on
-  the save path.
+  of the per-type virtuals, and with them somewhere to keep the downloaded
+  bytes so that artwork is written verbatim rather than re-encoded.
 
 
 ## Out of Scope
