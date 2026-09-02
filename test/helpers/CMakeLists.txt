@@ -3,6 +3,7 @@ target_sources(
   libmediaelch_testhelpers
   PRIVATE
     matchers.cpp
+    message_capture.cpp
     diff.cpp
     resource_dir.cpp
     reference_file.cpp

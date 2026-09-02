@@ -18,6 +18,7 @@
 #include <QXmlStreamWriter>
 
 class Movie;
+class MovieSet;
 class TvShow;
 class TvShowEpisode;
 class Subtitle;
@@ -45,6 +46,12 @@ public:
     QImage movieSetBackdrop(QString setName) override;
     void saveMovieSetPoster(QString setName, QImage poster) override;
     void saveMovieSetBackdrop(QString setName, QImage backdrop) override;
+    // movie sets: the set's own record, `set.nfo`
+    ELCH_NODISCARD bool movieSetRecordsEnabled() const override;
+    ELCH_NODISCARD QStringList movieSetsWithRecord() override;
+    bool loadMovieSet(MovieSet& set) override;
+    bool saveMovieSet(MovieSet& set) override;
+    bool removeMovieSetRecord(const QString& setName) override;
 
     // concerts
     bool saveConcert(Concert* concert) override;
@@ -139,6 +146,11 @@ private:
     };
     QString movieSetFileName(QString setName, DataFile* dataFile, LegalisePath legalise = LegalisePath::Yes);
     QImage movieSetImage(const QString& setName, DataFileType type);
+    /// \brief Where the record of the set called \p setName belongs, or an empty string.
+    /// \details Empty whenever there is nowhere to put one: no folder configured, or no
+    ///          set name.  Callers must treat an empty return as "records are off" and
+    ///          not construct a path of their own -- see movieSetRecordsEnabled().
+    ELCH_NODISCARD QString movieSetNfoFileName(const QString& setName);
 
 private:
     mediaelch::KodiSettings& m_settings;

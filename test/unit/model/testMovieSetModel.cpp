@@ -7,6 +7,8 @@
 #include "model/MovieModel.h"
 #include "model/MovieSetModel.h"
 #include "scrapers/movie/MovieMerger.h"
+#include "test/helpers/message_capture.h"
+#include "test/mocks/media_center/MediaCenterInterfaceMock.h"
 #include "test/unit/scrapers/custom_movie_scraper/StubMovieScraper.h"
 
 #include <QAbstractItemModelTester>
@@ -38,39 +40,6 @@ void moveToSet(Movie* movie, const QString& setName)
     movie->setSetInfo(info);
 }
 
-/// \brief Captures qWarning() output for as long as it is in scope.
-/// \details MovieSetModel's only signal that it is throwing a set's own record away is
-///          a log line, so a test that does not read the log cannot tell the warning
-///          from its absence.
-class WarningCapture
-{
-public:
-    WarningCapture() : m_previous{qInstallMessageHandler(&WarningCapture::handle)} { s_messages = &m_messages; }
-    ~WarningCapture()
-    {
-        qInstallMessageHandler(m_previous);
-        s_messages = nullptr;
-    }
-    WarningCapture(const WarningCapture&) = delete;
-    WarningCapture& operator=(const WarningCapture&) = delete;
-
-    const QStringList& messages() const { return m_messages; }
-
-private:
-    static void handle(QtMsgType type, const QMessageLogContext& context, const QString& message)
-    {
-        Q_UNUSED(context)
-        if (type == QtWarningMsg && s_messages != nullptr) {
-            s_messages->append(message);
-        }
-    }
-
-    QStringList m_messages;
-    QtMessageHandler m_previous = nullptr;
-    static QStringList* s_messages;
-};
-
-QStringList* WarningCapture::s_messages = nullptr;
 
 } // namespace
 
@@ -186,7 +155,7 @@ TEST_CASE("MovieSetModel is the only thing that changes membership", "[model][mo
     {
         // removeSet() clears its members' set names as it detaches them, so there is
         // nothing left for a later reconcile to read the set back out of.
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
         REQUIRE(sets.sets().isEmpty());
 
         sets.syncMovie(alien);
@@ -506,7 +475,7 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
         alienCollection->addMovie(predator);
         REQUIRE(alienCollection->movies().contains(predator));
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
         REQUIRE(sets.set("Alien Collection") == nullptr);
 
         // The deleted set must not be reached for again on predator's way out.
@@ -680,7 +649,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         movies.addMovie(aliens);
         REQUIRE_FALSE(alien->hasChanged());
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(sets.set("Alien Collection") == nullptr);
         CHECK(sets.sets().isEmpty());
@@ -696,7 +665,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         // Nothing else drops it: an emptied set is not dropped for being empty.
         REQUIRE(sets.addSet("Alien Collection") != nullptr);
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(sets.set("Alien Collection") == nullptr);
         CHECK(sets.sets().isEmpty());
@@ -709,7 +678,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         alienCollection->setOverview("A science fiction horror film franchise.");
         REQUIRE(alienCollection->hasChanged());
 
-        sets.removeSet("Alien Collection");
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(sets.sets().isEmpty());
     }
@@ -720,8 +689,8 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         // deleting it would otherwise cost nothing that any test can see.
         sets.addSet("Alien Collection")->setOverview("A science fiction horror film franchise.");
 
-        WarningCapture warnings;
-        sets.removeSet("Alien Collection");
+        test::MessageCapture warnings;
+        CHECK(sets.removeSet("Alien Collection"));
 
         REQUIRE(warnings.messages().size() == 1);
         CHECK(warnings.messages().first().contains("Alien Collection"));
@@ -731,8 +700,8 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
     {
         REQUIRE(sets.addSet("Alien Collection") != nullptr);
 
-        WarningCapture warnings;
-        sets.removeSet("Alien Collection");
+        test::MessageCapture warnings;
+        CHECK(sets.removeSet("Alien Collection"));
 
         CHECK(warnings.messages().isEmpty());
     }
@@ -743,7 +712,7 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
         sets.addSet("Predator Collection")->setTmdbId(TmdbId(399));
         sets.addSet("Rocky Collection");
 
-        WarningCapture warnings;
+        test::MessageCapture warnings;
         sets.clear();
 
         REQUIRE(warnings.messages().size() == 2);
@@ -755,8 +724,8 @@ TEST_CASE("MovieSetModel adds and removes sets", "[model][movie][set]")
     {
         sets.addSet("Alien Collection");
 
-        sets.removeSet("Predator Collection");
-        sets.removeSet("");
+        CHECK(sets.removeSet("Predator Collection")); // nothing to remove is not a failure
+        CHECK(sets.removeSet(""));
 
         CHECK(sets.sets().size() == 1);
     }
@@ -790,7 +759,7 @@ TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
         REQUIRE(sets->rowCount() == 2);
 
         sets->addSet("Alien vs Predator Collection");
-        sets->removeSet("Alien Collection");
+        CHECK(sets->removeSet("Alien Collection"));
         sets->reload();
 
         CHECK(sets->rowCount() == 1);
@@ -909,5 +878,231 @@ TEST_CASE("A scrape of a library movie reaches the set model", "[model][movie][s
         REQUIRE(setModel->set("Alien Anthology") != nullptr);
         CHECK(setModel->set("Alien Anthology")->movies() == QVector<Movie*>{movie});
         CHECK(setModel->set("Alien Collection")->movies().isEmpty());
+    }
+}
+
+TEST_CASE("A set with a record outlives its last movie", "[model][movie][set]")
+{
+    // D-A's other half, and the reason MovieSet::hasRecord() exists.  Until `set.nfo`
+    // was written, a set was nothing but the movies that named it, so re-deriving the
+    // library and finding none left meant the set was gone.  A set with a record of its
+    // own is not derived from anything: it has an overview, a collection id and artwork
+    // that belong to the set, and it stays.
+    QObject owner;
+    MovieModel movies;
+    MediaCenterInterfaceMock mediaCenter;
+    MovieSetModel sets;
+
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+    mediaCenter.putRecord("Alien Collection", {"Ripley versus the Alien.", TmdbId(8091)});
+    sets.setMovieModel(&movies);
+    sets.setRecordSource(&mediaCenter);
+
+    REQUIRE(sets.set("Alien Collection") != nullptr);
+
+    SECTION("The record is read when the set is created")
+    {
+        CHECK(sets.set("Alien Collection")->overview() == "Ripley versus the Alien.");
+        CHECK(sets.set("Alien Collection")->tmdbId() == TmdbId(8091));
+        // Reading what is on disk is not an edit.  Leaving the flag set would have the
+        // model warn about discarding unsaved changes to a set nobody touched.
+        CHECK_FALSE(sets.set("Alien Collection")->hasChanged());
+    }
+
+    SECTION("It survives a reload that leaves it with no members")
+    {
+        sets.assign(alien, MovieSetInfo{});
+        sets.reload();
+        CHECK(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies().isEmpty());
+    }
+
+    SECTION("It survives its movies leaving the library")
+    {
+        movies.clear();
+        qApp->processEvents();
+        CHECK(sets.set("Alien Collection") != nullptr);
+    }
+
+    SECTION("A set without a record is still dropped")
+    {
+        // The relaxation is of one predicate, not of the rule.  A set nothing derives
+        // and nothing records would otherwise sit in the set combo box and the set
+        // filter with no movie answering to it.
+        sets.addSet("Predator Collection");
+        REQUIRE(sets.set("Predator Collection") != nullptr);
+        sets.reload();
+        CHECK(sets.set("Predator Collection") == nullptr);
+    }
+
+    SECTION("With no folder configured, a record counts for nothing")
+    {
+        // Read-only mode: with no movie set information folder there is nowhere to keep
+        // a record, so no set has one and every set is its movies again.  Asked live, so
+        // it takes effect at once rather than at the next reload.
+        sets.assign(alien, MovieSetInfo{});
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload();
+        CHECK(sets.set("Alien Collection") == nullptr);
+    }
+
+    SECTION("Without a media center there are no records at all")
+    {
+        sets.setRecordSource(nullptr);
+        sets.assign(alien, MovieSetInfo{});
+        sets.reload();
+        CHECK(sets.set("Alien Collection") == nullptr);
+    }
+
+    SECTION("A record deleted behind MediaElch's back stops keeping the set alive")
+    {
+        // Whether a set has a record is re-asked on every reload -- one directory
+        // listing, not a probe per set -- so a `set.nfo` removed by something else does
+        // not keep a set standing for the rest of the session.
+        sets.assign(alien, MovieSetInfo{});
+        mediaCenter.putRecord("Predator Collection");
+        sets.reload();
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+
+        mediaCenter.removeMovieSetRecord("Alien Collection");
+        sets.reload();
+        CHECK(sets.set("Alien Collection") == nullptr);
+    }
+
+    SECTION("Deliberate removal takes the record with it")
+    {
+        // Otherwise the record outlives the set, the next reload finds it again and the
+        // set comes back: "Delete Movie Set" would delete nothing that lasted.
+        CHECK(sets.removeSet("Alien Collection"));
+        CHECK(sets.set("Alien Collection") == nullptr);
+        CHECK_FALSE(mediaCenter.hasRecordOnDisk("Alien Collection"));
+        sets.reload();
+        CHECK(sets.set("Alien Collection") == nullptr);
+    }
+
+    SECTION("A removal the media center refuses changes nothing at all")
+    {
+        // The media center can refuse: an unreadable record, one that turns out to belong
+        // to another set, a read-only mount, a file something else has locked.  Ignoring
+        // that produced the exact outcome the record deletion was added to prevent -- the
+        // row vanishes, the file survives, and reload() brings the set back with its
+        // overview intact.
+        //
+        // The refusal has to leave *everything* untouched, which is why the record is
+        // attempted before the members are detached.  Detaching first and bailing out
+        // afterwards would leave the members detached and dirtied with the set still
+        // standing: half-done, and worse than either clean outcome.
+        REQUIRE(alien->set().name == "Alien Collection");
+        alien->setChanged(false);
+        mediaCenter.setRemovalRefused(true);
+
+        CHECK_FALSE(sets.removeSet("Alien Collection"));
+
+        REQUIRE(sets.set("Alien Collection") != nullptr);
+        CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+        CHECK(alien->set().name == "Alien Collection");
+        CHECK_FALSE(alien->hasChanged());
+        CHECK(mediaCenter.hasRecordOnDisk("Alien Collection"));
+
+        // And the set is still there after a reload, because it never went anywhere.
+        sets.reload();
+        CHECK(sets.set("Alien Collection") != nullptr);
+    }
+
+    SECTION("An automatic drop never removes a record")
+    {
+        // The only path in the model that deletes a file is removeSet(), the deliberate
+        // one.  dropEmptySets() destroys objects; a library re-derivation must never cost
+        // the user a file.
+        //
+        // The state is the reachable one that lets the fence bite: records are *enabled*,
+        // and a record exists for a set whose flag is still false because no reload has
+        // run since it appeared.  So the set is dropped -- correctly, on what the model
+        // knows -- while a file for it is on disk and removable.  Turning records off
+        // instead would prove nothing: the media center refuses every removal while they
+        // are off, so the file would survive however wrong the model was.
+        sets.addSet("Predator Collection");
+        REQUIRE(sets.set("Predator Collection") != nullptr);
+        REQUIRE_FALSE(sets.set("Predator Collection")->hasRecord());
+        mediaCenter.putRecord("Predator Collection");
+
+        movies.clear();
+        qApp->processEvents();
+
+        REQUIRE(sets.set("Predator Collection") == nullptr);
+        CHECK(mediaCenter.hasRecordOnDisk("Predator Collection"));
+    }
+
+    SECTION("Turning the folder off and on again does not cost a set its record")
+    {
+        // reload() must leave the flags alone while records are off.  There is nothing to
+        // re-derive them from -- the media center answers with an empty list -- so
+        // re-deriving would clear every one of them, and the set would then be destroyed
+        // for losing its last member although its `set.nfo` is on disk.  It heals at the
+        // next reload, but a set vanishing from the sets tab in the meantime is not
+        // something a user can be asked to understand.
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload(); // a visit to the sets tab while the folder is switched off
+        mediaCenter.setRecordsEnabled(true);
+
+        movies.clear();
+        qApp->processEvents();
+
+        CHECK(sets.set("Alien Collection") != nullptr);
+    }
+}
+
+TEST_CASE("A set with a record but no movie is found at all", "[model][movie][set]")
+{
+    // Membership is only ever the movies, so every other set in this model arrives
+    // because a movie named it.  A set the user curated and has not filled yet, or one
+    // whose last member left in an earlier session, is named by no movie at all and
+    // would simply not exist.  The records are listed so that it does.
+    QObject owner;
+    MovieModel movies;
+    MediaCenterInterfaceMock mediaCenter;
+    MovieSetModel sets;
+
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+    mediaCenter.putRecord("Curated Collection", {"Nothing in it yet.", TmdbId::NoId});
+    sets.setMovieModel(&movies);
+    sets.setRecordSource(&mediaCenter);
+
+    SECTION("The set exists, with its record read")
+    {
+        REQUIRE(sets.set("Curated Collection") != nullptr);
+        CHECK(sets.set("Curated Collection")->movies().isEmpty());
+        CHECK(sets.set("Curated Collection")->overview() == "Nothing in it yet.");
+        CHECK_FALSE(sets.set("Curated Collection")->hasChanged());
+    }
+
+    SECTION("A movie can join it afterwards")
+    {
+        MovieSetInfo curated;
+        curated.name = "Curated Collection";
+        sets.assign(alien, curated);
+        CHECK(sets.set("Curated Collection")->movies() == QVector<Movie*>{alien});
+        // The set object is the one the record was read into, so its overview is still
+        // there: joining a set does not rebuild it.
+        CHECK(sets.set("Curated Collection")->overview() == "Nothing in it yet.");
+    }
+
+    SECTION("Removing it deliberately does not bring it back")
+    {
+        // The sharp edge of listing records: a set whose `set.nfo` outlived it would be
+        // found again on the very next reload.
+        CHECK(sets.removeSet("Curated Collection"));
+        sets.reload();
+        CHECK(sets.set("Curated Collection") == nullptr);
+    }
+
+    SECTION("Nothing is listed when no folder is configured")
+    {
+        mediaCenter.setRecordsEnabled(false);
+        sets.reload();
+        CHECK(sets.set("Curated Collection") == nullptr);
+        CHECK(sets.set("Alien Collection") != nullptr);
     }
 }
