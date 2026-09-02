@@ -362,10 +362,14 @@ TEST_CASE("MovieSetModel groups the library", "[model][movie][set]")
         sets.setMovieModel(&movies);
         REQUIRE(sets.sets().isEmpty());
 
-        movies.addMovie(movieInSet(owner, "Alien", "Alien Collection"));
+        Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+        movies.addMovie(alien);
 
         REQUIRE(sets.sets().size() == 1);
         CHECK(sets.set("Alien Collection")->movies().size() == 1);
+        // Attaching a movie is the model following the library, not editing it.  A setSetInfo()
+        // added here would offer every NFO in the library for rewriting on every reload.
+        CHECK_FALSE(alien->hasChanged());
     }
 
     SECTION("movies that enter the library in bulk join their sets")
@@ -461,6 +465,10 @@ TEST_CASE("MovieSetModel follows the movies", "[model][movie][set]")
 
         CHECK(sets.sets().isEmpty());
         CHECK(sets.set("Alien Collection") == nullptr);
+        // Read before the deleteLater() runs.  Detaching is the model following the library
+        // too: a movie that left it must not come back offering to rewrite its NFO.
+        CHECK_FALSE(alien->hasChanged());
+        CHECK_FALSE(aliens->hasChanged());
     }
 
     SECTION("a set lets go of a movie that leaves the library")
@@ -1411,7 +1419,8 @@ TEST_CASE("A record beats the members", "[model][movie][set]")
 
 TEST_CASE("A set with members survives a reload in every configuration", "[model][movie][set]")
 {
-    // Nothing here needs a record or writes a file, in any configuration.
+    // Nothing here needs a record or writes a file, in any configuration -- and nothing marks
+    // the member changed, which is the invariant that makes a reload safe to run at any time.
     QObject owner;
     MovieModel movies;
     Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
@@ -1422,11 +1431,13 @@ TEST_CASE("A set with members survives a reload in every configuration", "[model
         MovieSetModel sets;
         sets.setMovieModel(&movies);
         REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE_FALSE(alien->hasChanged());
 
         sets.reload();
 
         REQUIRE(sets.set("Alien Collection") != nullptr);
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+        CHECK_FALSE(alien->hasChanged());
     }
 
     SECTION("With no movie set information folder configured")
@@ -1438,11 +1449,13 @@ TEST_CASE("A set with members survives a reload in every configuration", "[model
         sets.setMovieModel(&movies);
         sets.setRecordSource(&mediaCenter);
         REQUIRE(sets.set("Alien Collection") != nullptr);
+        REQUIRE_FALSE(alien->hasChanged());
 
         sets.reload();
 
         REQUIRE(sets.set("Alien Collection") != nullptr);
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
+        CHECK_FALSE(alien->hasChanged());
     }
 
     SECTION("With a folder freshly configured and no records in it yet")
@@ -1455,6 +1468,7 @@ TEST_CASE("A set with members survives a reload in every configuration", "[model
         sets.setRecordSource(&mediaCenter);
         REQUIRE(sets.set("Alien Collection") != nullptr);
         REQUIRE_FALSE(sets.set("Alien Collection")->hasRecord());
+        REQUIRE_FALSE(alien->hasChanged());
 
         sets.reload();
 
@@ -1462,6 +1476,7 @@ TEST_CASE("A set with members survives a reload in every configuration", "[model
         CHECK(sets.set("Alien Collection")->movies() == QVector<Movie*>{alien});
         CHECK_FALSE(mediaCenter.hasRecordOnDisk("Alien Collection"));
         CHECK(mediaCenter.savedRecordCount() == 0);
+        CHECK_FALSE(alien->hasChanged());
     }
 }
 
