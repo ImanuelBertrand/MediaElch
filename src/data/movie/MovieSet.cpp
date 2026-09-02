@@ -15,6 +15,16 @@ QString MovieSet::name() const
     return m_name;
 }
 
+QString MovieSet::title() const
+{
+    return m_title;
+}
+
+QString MovieSet::displayName() const
+{
+    return m_title.isEmpty() ? m_name : m_title;
+}
+
 TmdbId MovieSet::tmdbId() const
 {
     return m_tmdbId;
@@ -40,15 +50,20 @@ const MovieSetImages& MovieSet::constImages() const
     return m_images;
 }
 
-// The three setters below are the fan-out point of D-A: an edit to the set's own
+// The four setters below are the fan-out point of D-A: an edit to the set's own
 // record means one `set.nfo` write plus a mirrored copy into every member movie's
-// NFO (and, for setName(), the rename mode of D-B decides whether the members'
-// `<set><name>` join key moves at all).  A setter does none of that itself: it
-// updates this object, marks it as needing to be saved and announces it.  The
-// `set.nfo` write happens when the set is saved -- KodiXml::saveMovieSet(), which
-// is also what clears the flag again -- and the mirror into the members' NFOs when
-// those movies are saved.  What keeps a set standing while it has no members is
-// hasRecord(), not this flag; see MovieSetModel::dropEmptySets().
+// NFO (and, for setName(), the rename mode of D-B decides which of the two names
+// moves at all).  A setter does none of that itself: it updates this object, marks
+// it as needing to be saved and announces it.  The `set.nfo` write happens when the
+// set is saved -- KodiXml::saveMovieSet(), which is also what clears the flag again
+// -- and the mirror into the members' NFOs when those movies are saved.  What keeps
+// a set standing while it has no members is hasRecord(), not this flag; see
+// MovieSetModel::dropEmptySets().
+//
+// setName() and setTitle() are the two halves of D-B's rename setting, and only one
+// of them runs for any given rename: the all-movie-files rename moves the key
+// through setName(), the set-file-only rename moves the display title through
+// setTitle() and never touches the key.
 
 void MovieSet::setName(QString name)
 {
@@ -56,6 +71,34 @@ void MovieSet::setName(QString name)
         return;
     }
     m_name = std::move(name);
+    // Moving the key re-unifies the two names; see setName()'s documentation.
+    //
+    // Before setChanged(true), because that emits sigChanged **synchronously** and every
+    // observer reads the set from inside its own slot.  Clear the title afterwards and
+    // each of them sees the new key carrying the old display title -- the very name this
+    // rename just abolished -- so displayName() answers with it and a repaint puts it
+    // back on screen.  There is no dirty-flag reason for the order: setChanged() assigns
+    // unconditionally, and this function never calls setTitle(), so setTitle()'s no-op
+    // guard is not on this path at all.  An earlier version of this comment said it was,
+    // which was checkable and wrong.
+    m_title.clear();
+    setChanged(true);
+}
+
+void MovieSet::setTitle(QString title)
+{
+    // Normalised, so that "the display title equals the key" has one representation
+    // and not two.  Without this, setTitle(name()) would leave displayName() correct
+    // but the writer emitting a redundant `<title>`, and the reader -- which clears
+    // the title when the two elements agree -- would disagree with the writer about
+    // what a set with no divergence looks like.
+    if (title == m_name) {
+        title.clear();
+    }
+    if (m_title == title) {
+        return;
+    }
+    m_title = std::move(title);
     setChanged(true);
 }
 

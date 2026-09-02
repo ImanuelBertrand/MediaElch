@@ -24,6 +24,7 @@ public:
 
 private slots:
     void onComboMovieSetArtworkChanged(int comboIndex);
+    void onComboMovieSetRenameChanged(int comboIndex);
     void onChooseMovieSetArtworkDir();
 
 private:

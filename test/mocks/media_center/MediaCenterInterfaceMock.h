@@ -40,10 +40,17 @@ public:
     void setWriteRefused(bool refused) { m_writeRefused = refused; }
     ELCH_NODISCARD int savedRecordCount() const { return m_savedRecordCount; }
     ELCH_NODISCARD int listingCount() const { return m_listingCount; }
+    /// \brief How often records-are-configured was asked -- the question every other
+    ///        one here goes through, so zero means the media center was not touched.
+    ELCH_NODISCARD int recordsEnabledQueryCount() const { return m_recordsEnabledQueries; }
 
     // The movie set record calls: the four MovieSetModel uses, plus saveMovieSet(),
     // which is SetsWidget's.
-    ELCH_NODISCARD bool movieSetRecordsEnabled() const override { return m_recordsEnabled; }
+    ELCH_NODISCARD bool movieSetRecordsEnabled() const override
+    {
+        ++m_recordsEnabledQueries;
+        return m_recordsEnabled;
+    }
     ELCH_NODISCARD QStringList movieSetsWithRecord() override
     {
         ++m_listingCount;
@@ -78,6 +85,26 @@ public:
         }
         m_records.remove(setName);
         return true;
+    }
+    /// \brief Always succeeds, and moves the record to match.
+    /// \details There is no failure knob, deliberately.  One existed and had no caller in
+    ///          any test, and it returned the failure *before* moving the record -- so a
+    ///          PartlyMoved through this mock left the record under the old name, which is
+    ///          the opposite of what PartlyMoved means (MediaCenterInterface.h).  The
+    ///          failure branches are exercised against the real KodiXml in
+    ///          testSetsWidget.cpp, where folders and files actually exist and the two
+    ///          layouts differ; a mock that can only assert its own return value adds
+    ///          nothing and can contradict the contract it stands in for.
+    MovieSetFileMove renameMovieSetFiles(const QString& oldName, const QString& newName) override
+    {
+        if (!m_recordsEnabled) {
+            // Nothing on disk, so nothing to move and nothing to complain about.
+            return MovieSetFileMove::Moved;
+        }
+        if (m_records.contains(oldName)) {
+            m_records.insert(newName, m_records.take(oldName));
+        }
+        return MovieSetFileMove::Moved;
     }
 
     // Everything below is unused by MovieSetModel and does nothing.
@@ -130,4 +157,5 @@ private:
     bool m_writeRefused = false;
     int m_savedRecordCount = 0;
     int m_listingCount = 0;
+    mutable int m_recordsEnabledQueries = 0;
 };

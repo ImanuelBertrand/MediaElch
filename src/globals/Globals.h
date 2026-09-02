@@ -82,6 +82,26 @@ enum class MovieSetArtworkType : int
     SeparateArtworkFolder = 1
 };
 
+/// \brief How renaming a movie set is written to disk.
+/// \details A `set.nfo` decouples the name Kodi 22 displays from the name it matches
+///          on, so there are two genuinely different renames and which one is correct
+///          depends on the target Kodi version.  See docs/concepts/movie-sets.md, D-B.
+enum class MovieSetRenameMode : int
+{
+    /// Follow the configured Kodi version, and what the artwork layout can actually
+    /// do: set-file-only from Kodi 22 where movie set records exist, all movie files
+    /// otherwise.  The default, and right for almost everyone.
+    Automatic = 0,
+    /// Rewrite `set.nfo`'s `<title>` alone.  The join key does not move, so Kodi 22
+    /// renames the set's row in place and keeps its artwork and its id -- and Kodi 21
+    /// and earlier, which never read `set.nfo`, do not see the rename at all.
+    SetFileOnly = 1,
+    /// Rewrite every member's `<set><name>` plus `set.nfo`'s `<title>` and
+    /// `<originaltitle>`.  Correct on every Kodi; on Kodi 22 the match key moves, so
+    /// the old set row is left behind empty until the user runs Clean Library.
+    AllMovieFiles = 2
+};
+
 enum class ComboDelegateType : int
 {
     Genres,

@@ -65,6 +65,73 @@ void moveToSet(Movie* movie, const QString& setName)
 
 } // namespace
 
+TEST_CASE("MovieSetModel resolves the rename mode", "[model][movie][set]")
+{
+    using RenameMode = MovieSetModel::RenameMode;
+    const mediaelch::KodiVersion v22{mediaelch::KodiVersion::v22};
+    const mediaelch::KodiVersion v21{mediaelch::KodiVersion::v21};
+    const mediaelch::KodiVersion v19{mediaelch::KodiVersion::v19};
+    const mediaelch::KodiVersion v17{mediaelch::KodiVersion::v17};
+
+    SECTION("Automatic follows the Kodi version where there are records to rename")
+    {
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v22, true)
+              == RenameMode::SetFileOnly);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v21, true)
+              == RenameMode::AllMovieFiles);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v19, true)
+              == RenameMode::AllMovieFiles);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v17, true)
+              == RenameMode::AllMovieFiles);
+    }
+
+    SECTION("Automatic asks about the records too, not only the version")
+    {
+        // The shipping default is artwork next to movies, where there is no `set.nfo`
+        // at all -- and the default Kodi version is now 22.  An Automatic that read the
+        // version alone would pick a rename that cannot run for every user who has never
+        // opened the settings, which is the regression this second question prevents.
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, v22, false)
+              == RenameMode::AllMovieFiles);
+    }
+
+    SECTION("Automatic never refuses")
+    {
+        for (const mediaelch::KodiVersion& version : mediaelch::KodiVersion::all()) {
+            for (const bool records : {true, false}) {
+                CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::Automatic, version, records)
+                      != RenameMode::Unavailable);
+            }
+        }
+    }
+
+    SECTION("An explicit choice overrides the version in both directions")
+    {
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::SetFileOnly, v19, true)
+              == RenameMode::SetFileOnly);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::AllMovieFiles, v22, true)
+              == RenameMode::AllMovieFiles);
+    }
+
+    SECTION("An explicit set-file-only rename with no record is refused, not downgraded")
+    {
+        // Refused rather than quietly turned into the all-movie-files rename: that one
+        // rewrites every member's NFO, which is the heavier and irreversible operation
+        // this user chose this setting to avoid.  Substituting it is not a graceful
+        // fallback, it is doing the opposite of what was asked.
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::SetFileOnly, v22, false)
+              == RenameMode::Unavailable);
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::SetFileOnly, v19, false)
+              == RenameMode::Unavailable);
+    }
+
+    SECTION("All movie files never needs a record")
+    {
+        CHECK(MovieSetModel::resolveRenameMode(MovieSetRenameMode::AllMovieFiles, v22, false)
+              == RenameMode::AllMovieFiles);
+    }
+}
+
 TEST_CASE("MovieSetModel is the only thing that changes membership", "[model][movie][set]")
 {
     QObject owner;
@@ -798,6 +865,22 @@ TEST_CASE("MovieSetModel as an item model", "[model][movie][set]")
             sets->data(index, MovieSetModel::MovieSetPointerRole).value<MovieSet*>() == sets->set("Alien Collection"));
     }
 
+    SECTION("DisplayRole is what a person reads and NameRole is the key")
+    {
+        // The two agree until a set-file-only rename and must part company after one:
+        // DisplayRole means "what to show", NameRole means "which set is this".  Nothing
+        // reads DisplayRole from this model yet, which is exactly why the split is made
+        // now rather than after a view has enshrined the wrong one.
+        MovieSet* set = sets->set("Alien Collection");
+        REQUIRE(set != nullptr);
+        set->setTitle("The Alien Saga");
+
+        const QModelIndex index = sets->index(0, 0);
+        REQUIRE(index.isValid());
+        CHECK(sets->data(index, Qt::DisplayRole).toString() == "The Alien Saga");
+        CHECK(sets->data(index, MovieSetModel::NameRole).toString() == "Alien Collection");
+    }
+
     SECTION("an invalid index carries nothing")
     {
         CHECK_FALSE(sets->index(2, 0).isValid());
@@ -1506,4 +1589,100 @@ TEST_CASE("A set with members survives a reload in every configuration", "[model
         CHECK_FALSE(mediaCenter.hasRecordOnDisk("Alien Collection"));
         CHECK(mediaCenter.savedRecordCount() == 0);
     }
+}
+
+TEST_CASE("MovieSetModel lets go of the library before it is torn down", "[model][movie][set]")
+{
+    // The application's shutdown in miniature: the model outlives the movies and the
+    // media center, but not Settings behind it, so a movie destroyed during teardown
+    // must not reach the media center from here.  Manager::~Manager() detaches first.
+    QObject owner;
+    MovieModel movies;
+    MovieSetModel sets;
+    MediaCenterInterfaceMock mediaCenter;
+    mediaCenter.setRecordsEnabled(true);
+    Movie* alien = movieInSet(owner, "Alien", "Alien Collection");
+    movies.addMovie(alien);
+    sets.setMovieModel(&movies);
+    sets.setRecordSource(&mediaCenter);
+    REQUIRE(sets.sets().size() == 1);
+
+    SECTION("detaching drops the sets and the record source")
+    {
+        sets.detachFromLibrary();
+
+        CHECK(sets.sets().isEmpty());
+        CHECK_FALSE(sets.recordsAreConfigured());
+    }
+
+    SECTION("a movie destroyed after detaching does not reach the media center")
+    {
+        sets.detachFromLibrary();
+        const int queriesBefore = mediaCenter.recordsEnabledQueryCount();
+
+        delete alien;
+
+        CHECK(mediaCenter.recordsEnabledQueryCount() == queriesBefore);
+        CHECK(sets.sets().isEmpty());
+    }
+
+    SECTION("a movie destroyed while still attached does reach it")
+    {
+        // The path that aborted MediaElch on exit.  Without this the section above would
+        // still pass if detachFromLibrary() were never called from anywhere.
+        const int queriesBefore = mediaCenter.recordsEnabledQueryCount();
+
+        delete alien;
+
+        CHECK(mediaCenter.recordsEnabledQueryCount() > queriesBefore);
+    }
+
+    SECTION("detaching twice is a no-op")
+    {
+        sets.detachFromLibrary();
+        sets.detachFromLibrary();
+
+        CHECK(sets.sets().isEmpty());
+    }
+}
+
+TEST_CASE("Manager detaches its set model from the library before it dies", "[model][movie][set]")
+{
+    // The production wiring, which the four sections above do **not** pin: every one of
+    // them calls detachFromLibrary() itself, so removing the call from ~Manager
+    // (`Manager::~Manager`, `Manager.cpp:75`) leaves all four green.  Measured, not assumed -- an earlier
+    // commit message claimed one of them would catch it and none did.
+    //
+    // Pinned here through a Manager of this test's own, because the singleton cannot be
+    // destroyed.  The mock outlives it, so it can still be asked afterwards what it was
+    // asked during teardown.  Without the call in ~Manager, the movie file searcher --
+    // the parent of every Movie, and an older child than the set model -- is deleted
+    // first, and each movie's destroyed() reaches a set model that still holds a record
+    // source, which is the read that aborted MediaElch on exit.
+    MediaCenterInterfaceMock mediaCenter;
+    mediaCenter.setRecordsEnabled(true);
+
+    int queriesDuringTeardown = 0;
+    {
+        Manager manager;
+        MovieSetModel* sets = manager.movieSetModel();
+        REQUIRE(sets != nullptr);
+        sets->setRecordSource(&mediaCenter);
+        sets->setMovieModel(manager.movieModel());
+
+        auto* alien = new Movie({}, manager.movieFileSearcher());
+        alien->setTitle("Alien");
+        MovieSetInfo info;
+        info.name = "Alien Collection";
+        alien->setSetInfo(info);
+        manager.movieModel()->addMovie(alien);
+        REQUIRE(sets->sets().size() == 1);
+
+        const int before = mediaCenter.recordsEnabledQueryCount();
+        // Leaving this scope destroys the Manager, then its children in creation order.
+        queriesDuringTeardown = -before;
+    }
+    queriesDuringTeardown += mediaCenter.recordsEnabledQueryCount();
+
+    CHECK(queriesDuringTeardown == 0);
 }

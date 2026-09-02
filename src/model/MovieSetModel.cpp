@@ -1,9 +1,12 @@
 #include "model/MovieSetModel.h"
 
 #include "data/movie/Movie.h"
+#include "globals/Manager.h"
 #include "log/Log.h"
 #include "media_center/MediaCenterInterface.h"
 #include "model/MovieModel.h"
+#include "settings/KodiSettings.h"
+#include "settings/Settings.h"
 #include "utils/Meta.h"
 
 #include <QSet>
@@ -38,7 +41,13 @@ QVariant MovieSetModel::data(const QModelIndex& index, int role) const
     MovieSet* movieSet = m_sets.at(index.row());
 
     switch (role) {
-    case Qt::DisplayRole:
+    // Split deliberately.  DisplayRole means "what to show a person", which after a
+    // set-file-only rename is not the set's key (D-B); NameRole is the key, which is what
+    // a caller looks a set up by and must never quietly become a display string.  Nothing
+    // reads DisplayRole from this model today -- the sets tab is a QTableWidget -- so this
+    // is the moment to get the two apart, before a view arrives and enshrines the wrong
+    // one.
+    case Qt::DisplayRole: return movieSet->displayName();
     case Roles::NameRole: return movieSet->name();
     case Roles::MovieCountRole: return qsizetype_to_int(movieSet->movies().size());
     case Roles::MovieSetPointerRole: return QVariant::fromValue(movieSet);
@@ -258,9 +267,61 @@ void MovieSetModel::dropEmptySets()
     }
 }
 
+void MovieSetModel::detachFromLibrary()
+{
+    // The record source first: every path below could still run once more, and each of
+    // them ends in recordsAreConfigured(), which is what reaches Settings.
+    m_mediaCenter = nullptr;
+
+    if (m_movieModel != nullptr) {
+        m_movieModel->disconnect(this);
+        m_movieModel = nullptr;
+    }
+    // The index names exactly the movies this model attached, and still does now that
+    // the movie model has been dropped.
+    for (auto it = m_setNameByMovie.cbegin(), end = m_setNameByMovie.cend(); it != end; ++it) {
+        it.key()->disconnect(this);
+    }
+    // Destroyed, not merely emptied: that takes the sets' own destroyed() connections
+    // to the movies with them.
+    clear();
+}
+
 bool MovieSetModel::recordsAreConfigured() const
 {
     return m_mediaCenter != nullptr && m_mediaCenter->movieSetRecordsEnabled();
+}
+
+MovieSetModel::RenameMode MovieSetModel::resolveRenameMode(
+    MovieSetRenameMode setting, mediaelch::KodiVersion kodiVersion, bool recordsAreConfigured)
+{
+    switch (setting) {
+    case MovieSetRenameMode::SetFileOnly:
+        // Explicit, so it is refused rather than downgraded where it cannot run.  The
+        // only fallback available is the all-movie-files rename, which rewrites every
+        // member's NFO -- a heavier and irreversible operation that this user chose this
+        // setting precisely to avoid.  Silently substituting it is not a graceful
+        // degradation; it is doing the opposite of what was asked.
+        return recordsAreConfigured ? RenameMode::SetFileOnly : RenameMode::Unavailable;
+
+    case MovieSetRenameMode::AllMovieFiles: return RenameMode::AllMovieFiles;
+
+    case MovieSetRenameMode::Automatic: break;
+    }
+
+    // Kodi 22 is the first release that reads `set.nfo` at all: 19-21 match a set with
+    // `SELECT idSet FROM sets WHERE strSet LIKE ...` and have no set NFO loader in the
+    // tree, so a set-file-only rename there is simply invisible.  And where there are no
+    // records, there is no file for the display title to live in -- see the header.
+    const bool kodiReadsSetFiles = kodiVersion.toInt() >= mediaelch::KodiVersion::v22;
+    return kodiReadsSetFiles && recordsAreConfigured ? RenameMode::SetFileOnly : RenameMode::AllMovieFiles;
+}
+
+MovieSetModel::RenameMode MovieSetModel::renameMode() const
+{
+    return resolveRenameMode(Settings::instance()->movieSetRenameMode(),
+        Manager::instance()->kodiSettings()->kodiVersion(),
+        recordsAreConfigured());
 }
 
 bool MovieSetModel::isBacked(const MovieSet* movieSet) const

@@ -2,7 +2,6 @@
 
 #include "data/TmdbId.h"
 #include "data/movie/MovieSet.h"
-#include "log/Log.h"
 
 #include <QDomElement>
 
@@ -69,17 +68,21 @@ bool MovieSetXmlReader::parseNfoDom(const QDomDocument& domDoc)
     // Both read the same way.  Comparing an untrimmed <originaltitle> against a trimmed
     // <title> makes every set whose name carries leading or trailing whitespace look like
     // a set-file-only rename -- in MediaElch's *own* files, where the writer emits both
-    // from the same name -- and log that Kodi displays something else, which is false.
+    // from the same name -- so a set would be shown under a spelling its own files do
+    // not carry.
     const QString originalTitle = untrimmedChildText(setElement, "originaltitle");
     const QString title = untrimmedChildText(setElement, "title");
-    if (!originalTitle.isEmpty() && !title.isEmpty() && originalTitle != title) {
-        // A set-file-only rename: Kodi 22 displays <title> and matches on
-        // <originaltitle>.  MediaElch has one name per set and no way to hold both
-        // (D-B), so the join key wins and the display name is dropped.  D3a is the
-        // step that makes this a user-facing choice.
-        qCInfo(generic) << "[MovieSetXmlReader] Movie set" << originalTitle << "is displayed as" << title
-                        << "by Kodi; MediaElch keeps the name the member movies use.";
-    }
+    // A set-file-only rename: Kodi 22 displays <title> and matches on <originaltitle>,
+    // and this reader keeps both -- the key in the set's name and the display title
+    // beside it (D-B).  Dropping the title, which is what this used to do, would make
+    // every reload undo the last set-file-only rename.
+    //
+    // Only where there is something to diverge *from*: the set's name comes from
+    // setNameOf(), which falls back to <title> for a file that has no <originaltitle>,
+    // so for such a file the two are already one string and a display title would be a
+    // duplicate of the name.  setTitle() normalises that away in any case; not reaching
+    // for it here is what keeps the intent readable.
+    m_set.setTitle(originalTitle.isEmpty() ? QString() : title);
 
     m_set.setOverview(childText(setElement, "overview"));
     m_set.setTmdbId(tmdbIdOf(setElement));

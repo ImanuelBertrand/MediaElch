@@ -115,6 +115,7 @@ public:
 
     MovieSetArtworkType movieSetArtworkType() const;
     mediaelch::DirectoryPath movieSetArtworkDirectory() const;
+    MovieSetRenameMode movieSetRenameMode() const;
 
     QVector<MediaStatusColumn> mediaStatusColumns() const;
     bool dontShowDeleteImageConfirm() const;
@@ -176,6 +177,7 @@ public:
     void setIgnoreArticlesWhenSorting(bool ignore);
     void setMovieSetArtworkType(MovieSetArtworkType type);
     void setMovieSetArtworkDirectory(mediaelch::DirectoryPath dir);
+    void setMovieSetRenameMode(MovieSetRenameMode mode);
     void setMediaStatusColumn(QVector<MediaStatusColumn> columns);
     void setSeasonOrder(SeasonOrder order);
     void setDontShowDeleteImageConfirm(bool show);
@@ -232,6 +234,12 @@ private:
     bool m_ignoreArticlesWhenSorting = false;
     MovieSetArtworkType m_movieSetArtworkType = MovieSetArtworkType::ArtworkNextToMovies;
     mediaelch::DirectoryPath m_movieSetArtworkDirectory;
+    /// \brief How a movie set rename is written; see MovieSetRenameMode and D-B.
+    /// \details Lives here rather than in KodiSettings, next to the artwork layout it
+    ///          depends on: SetFileOnly needs a movie set information folder, because
+    ///          that is where `set.nfo` lives, and KodiSettings is about talking to a
+    ///          Kodi instance rather than about how MediaElch writes files.
+    MovieSetRenameMode m_movieSetRenameMode = MovieSetRenameMode::Automatic;
     QVector<MediaStatusColumn> m_mediaStatusColumns;
     SeasonOrder m_seasonOrder = SeasonOrder::Aired;
     bool m_dontShowDeleteImageConfirm = false;

@@ -105,6 +105,45 @@ public:
     ///          whose record outlived it would be found again by movieSetsWithRecord()
     ///          and come back, so a deliberate removal has to take the record with it.
     virtual bool removeMovieSetRecord(const QString& setName) = 0;
+    /// \brief How much of a set's on-disk state a rename managed to move.
+    /// \details Three answers because the caller has to *say* which happened, and two of
+    ///          them are true in different places.  The separate-folder layout renames a
+    ///          directory and then renames the set-name-derived files inside it, so the
+    ///          directory can move while a file in it does not: the record is at the new
+    ///          name and some artwork beside it still spells the old one.  Telling that
+    ///          user their files are "still stored under the old name" would send them to
+    ///          a folder that no longer exists.
+    enum class MovieSetFileMove
+    {
+        /// Everything moved, or there was nothing to move.
+        Moved,
+        /// Nothing moved.  Everything is still where it was, under the old name.
+        NotMoved,
+        /// Some moved and some did not; neither name has the whole set.
+        PartlyMoved
+    };
+
+    /// \brief Moves everything a set keeps on disk from \p oldName's place to \p newName's.
+    /// \details The set's `set.nfo` **and** its artwork, together, because an
+    ///          all-movie-files rename moves the match key and Kodi derives the movie set
+    ///          information folder from that key
+    ///          (`VideoInfoScanner.cpp:839`, before the record is even loaded).  Leave the
+    ///          record behind and `movieSetsWithRecord()` reports the old name at the next
+    ///          reload, resurrecting the set as a memberless ghost; leave the artwork
+    ///          behind and Kodi finds an empty folder for the renamed set.
+    ///
+    ///          Answers `Moved` when the move succeeded **or there was nothing to move**
+    ///          -- no folder configured, no files under the old name, or a name that
+    ///          legalises to the same path.  The other two mean files exist and are not
+    ///          all where the new name says, which the caller must report: the rename
+    ///          itself is not undone, because the movie NFOs are the set's identity and a
+    ///          rename whose artwork move failed is still a rename that happened.
+    ///
+    /// \warning Must be called **before** the members are reassigned.  In the
+    ///          artwork-next-to-movies layout the paths are found through a movie whose
+    ///          `set().name` is still the old one, so afterwards there is nothing left to
+    ///          resolve them from and the artwork is orphaned silently.
+    virtual MovieSetFileMove renameMovieSetFiles(const QString& oldName, const QString& newName) = 0;
 
     // concerts
     virtual bool saveConcert(Concert* concert) = 0;

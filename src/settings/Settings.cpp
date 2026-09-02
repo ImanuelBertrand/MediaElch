@@ -37,6 +37,7 @@ static constexpr char KEY_MOVIE_DUPLICATES_SPLITTER_STATE[] = "MovieDuplicatesSp
 static constexpr char KEY_MOVIE_IGNORE_DUPLICATE_ORIGINAL_TITLE[] = "Movies/IgnoreDuplicateOriginalTitle";
 static constexpr char KEY_MOVIE_SET_ARTWORK_DIRECTORY[] = "MovieSetArtwork/Directory";
 static constexpr char KEY_MOVIE_SET_ARTWORK_STORING_TYPE[] = "MovieSetArtwork/StoringType";
+static constexpr char KEY_MOVIE_SET_RENAME_MODE[] = "MovieSetArtwork/RenameMode";
 static constexpr char KEY_MOVIES_MULTI_SCRAPE_ONLY_WITH_ID[] = "Movies/MultiScrapeOnlyWithId";
 static constexpr char KEY_MOVIES_MULTI_SCRAPE_SAVE_EACH[] = "Movies/MultiScrapeSaveEach";
 static constexpr char KEY_MUSIC_ARTISTS_EXTRA_FANARTS[] = "Music/Artists/ExtraFanarts";
@@ -304,6 +305,15 @@ void Settings::loadSettings()
     m_movieSetArtworkType = MovieSetArtworkType(settings()->value(KEY_MOVIE_SET_ARTWORK_STORING_TYPE, 0).toInt());
     m_movieSetArtworkDirectory =
         mediaelch::DirectoryPath(settings()->value(KEY_MOVIE_SET_ARTWORK_DIRECTORY).toString());
+    // Anything that is not one of the three known modes is Automatic.  A settings file
+    // written by a newer MediaElch, or edited by hand, must not leave the rename mode
+    // holding an integer no branch answers to -- Automatic is the mode that is correct
+    // without being told anything.
+    const int renameMode = settings()->value(KEY_MOVIE_SET_RENAME_MODE, 0).toInt();
+    m_movieSetRenameMode = (renameMode == static_cast<int>(MovieSetRenameMode::SetFileOnly)
+                               || renameMode == static_cast<int>(MovieSetRenameMode::AllMovieFiles))
+                               ? MovieSetRenameMode(renameMode)
+                               : MovieSetRenameMode::Automatic;
 
     // Media Status Columns
     m_mediaStatusColumns.clear();
@@ -412,6 +422,7 @@ void Settings::saveSettings()
 
     settings()->setValue(KEY_MOVIE_SET_ARTWORK_STORING_TYPE, static_cast<int>(m_movieSetArtworkType));
     settings()->setValue(KEY_MOVIE_SET_ARTWORK_DIRECTORY, m_movieSetArtworkDirectory.toString());
+    settings()->setValue(KEY_MOVIE_SET_RENAME_MODE, static_cast<int>(m_movieSetRenameMode));
 
     QList<QVariant> columns;
     for (const MediaStatusColumn& column : asConst(m_mediaStatusColumns)) {
@@ -906,6 +917,16 @@ void Settings::setMovieSetArtworkDirectory(mediaelch::DirectoryPath dir)
 mediaelch::DirectoryPath Settings::movieSetArtworkDirectory() const
 {
     return m_movieSetArtworkDirectory;
+}
+
+void Settings::setMovieSetRenameMode(MovieSetRenameMode mode)
+{
+    m_movieSetRenameMode = mode;
+}
+
+MovieSetRenameMode Settings::movieSetRenameMode() const
+{
+    return m_movieSetRenameMode;
 }
 
 void Settings::setMediaStatusColumn(QVector<MediaStatusColumn> columns)

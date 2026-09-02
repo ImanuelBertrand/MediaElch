@@ -15,6 +15,7 @@ MovieSettingsWidget::MovieSettingsWidget(QWidget* parent) : QWidget(parent), ui(
     smallFont.setPointSize(smallFont.pointSize() - 1);
     ui->lblFilenameDescription->setFont(smallFont);
     ui->lblPlaceholders->setFont(smallFont);
+    ui->lblMovieSetRenameHint->setFont(smallFont);
 #endif
 
     ui->comboMovieSetArtwork->addItem(
@@ -26,6 +27,18 @@ MovieSettingsWidget::MovieSettingsWidget(QWidget* parent) : QWidget(parent), ui(
            "set name (Movie Set Artwork Automator naming). Kodi does not read this layout; add-ons such "
            "as Artwork Beef do, if their movie set artwork directory points at your movies directory."));
 
+    ui->comboMovieSetRename->addItem(
+        tr("Automatic (recommended)"), static_cast<int>(MovieSetRenameMode::Automatic));
+    ui->comboMovieSetRename->addItem(
+        tr("Rename in the movie set file only"), static_cast<int>(MovieSetRenameMode::SetFileOnly));
+    ui->comboMovieSetRename->addItem(
+        tr("Rename in all movie files"), static_cast<int>(MovieSetRenameMode::AllMovieFiles));
+
+    connect(ui->comboMovieSetRename,
+        elchOverload<int>(&QComboBox::currentIndexChanged),
+        this,
+        &MovieSettingsWidget::onComboMovieSetRenameChanged);
+
     connect(ui->comboMovieSetArtwork,
         elchOverload<int>(&QComboBox::currentIndexChanged),
         this,
@@ -35,6 +48,15 @@ MovieSettingsWidget::MovieSettingsWidget(QWidget* parent) : QWidget(parent), ui(
         &QAbstractButton::clicked, //
         this,
         &MovieSettingsWidget::onChooseMovieSetArtworkDir);
+
+    // The rename hint's warning turns on whether this field is empty, so it has to be
+    // recomputed when the field changes -- by the Choose button, which only calls
+    // setText(), and by the user typing a path in directly.  Without this the warning
+    // said "renaming a set will be refused" for the rest of the session after the user
+    // had just fixed exactly that.
+    connect(ui->movieSetArtworkDir, &QLineEdit::textChanged, this, [this] {
+        onComboMovieSetRenameChanged(ui->comboMovieSetRename->currentIndex());
+    });
 
     ui->movieNfo->setProperty("dataFileType", static_cast<int>(DataFileType::MovieNfo));
     ui->moviePoster->setProperty("dataFileType", static_cast<int>(DataFileType::MoviePoster));
@@ -93,6 +115,12 @@ void MovieSettingsWidget::loadSettings()
     // where it can no longer refuse it.
     const mediaelch::DirectoryPath movieSetDir = m_settings->movieSetArtworkDirectory();
     ui->movieSetArtworkDir->setText(movieSetDir.isValid() ? movieSetDir.toNativePathString() : QString());
+    for (int i = 0, n = ui->comboMovieSetRename->count(); i < n; ++i) {
+        if (MovieSetRenameMode(ui->comboMovieSetRename->itemData(i).toInt()) == m_settings->movieSetRenameMode()) {
+            ui->comboMovieSetRename->setCurrentIndex(i);
+            break;
+        }
+    }
     onComboMovieSetArtworkChanged(ui->comboMovieSetArtwork->currentIndex());
 
     const auto loadLineEdit = [this](auto* lineEdit) {
@@ -153,6 +181,8 @@ void MovieSettingsWidget::saveSettings()
     // away and back finds their directory still there.  An empty field is an invalid
     // DirectoryPath, which is what "no directory chosen" has to stay -- see loadSettings().
     m_settings->setMovieSetArtworkDirectory(mediaelch::DirectoryPath(ui->movieSetArtworkDir->text()));
+    m_settings->setMovieSetRenameMode(static_cast<MovieSetRenameMode>(
+        ui->comboMovieSetRename->itemData(ui->comboMovieSetRename->currentIndex()).toInt()));
 }
 
 void MovieSettingsWidget::onComboMovieSetArtworkChanged(int comboIndex)
@@ -173,6 +203,52 @@ void MovieSettingsWidget::onComboMovieSetArtworkChanged(int comboIndex)
         break;
     }
     }
+
+    // The rename hint depends on this combo as well as on its own: a set-file-only
+    // rename needs a `set.nfo`, which exists only in the separate-folder layout.
+    onComboMovieSetRenameChanged(ui->comboMovieSetRename->currentIndex());
+}
+
+void MovieSettingsWidget::onComboMovieSetRenameChanged(int comboIndex)
+{
+    const auto mode = MovieSetRenameMode(ui->comboMovieSetRename->itemData(comboIndex).toInt());
+    // Asked of the two widgets rather than of Settings, because the user may have
+    // changed the layout in this dialog and not pressed Save yet -- the hint has to
+    // describe what they are about to get, not what is still on disk.
+    const bool recordsWouldExist =
+        MovieSetArtworkType(ui->comboMovieSetArtwork->itemData(ui->comboMovieSetArtwork->currentIndex()).toInt())
+            == MovieSetArtworkType::SeparateArtworkFolder
+        && !ui->movieSetArtworkDir->text().isEmpty();
+
+    QString hint;
+    switch (mode) {
+    case MovieSetRenameMode::Automatic:
+        hint = tr("MediaElch picks the rename your Kodi version understands. Kodi 22 and later rename only the "
+                  "movie set file; earlier versions rewrite every movie file. Change the Kodi version under "
+                  "Kodi settings.");
+        break;
+
+    case MovieSetRenameMode::SetFileOnly:
+        hint = tr("Only set.nfo is rewritten. Kodi 22 keeps the set's artwork and its place in your library. "
+                  "Your movie files keep the old name inside them, so Kodi 21 and earlier -- and other tools "
+                  "that read movie NFOs -- will keep showing the old name.");
+        if (!recordsWouldExist) {
+            // Said before the rename rather than after it.  A refusal the user only
+            // meets once they have typed a new name is a worse refusal than one they
+            // were warned about while choosing the setting that causes it.
+            hint += "\n"
+                    + tr("There is no movie set information folder, and set.nfo lives nowhere else, so renaming a "
+                         "set will be refused. Choose \"Separate artwork directory\" above and pick a folder.");
+        }
+        break;
+
+    case MovieSetRenameMode::AllMovieFiles:
+        hint = tr("Every movie's NFO is rewritten, so every version of Kodi shows the new name. On Kodi 22 the "
+                  "renamed set is treated as a new set: its artwork moves with it, but the old, now-empty set "
+                  "stays in Kodi's database until you run Clean Library.");
+        break;
+    }
+    ui->lblMovieSetRenameHint->setText(hint);
 }
 
 void MovieSettingsWidget::onChooseMovieSetArtworkDir()

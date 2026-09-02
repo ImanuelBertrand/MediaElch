@@ -53,6 +53,7 @@ public:
     bool loadMovieSet(MovieSet& set) override;
     bool saveMovieSet(MovieSet& set) override;
     bool removeMovieSetRecord(const QString& setName) override;
+    MovieSetFileMove renameMovieSetFiles(const QString& oldName, const QString& newName) override;
 
     // concerts
     bool saveConcert(Concert* concert) override;
