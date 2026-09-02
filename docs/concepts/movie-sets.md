@@ -106,6 +106,8 @@ Saving a set writes the changed members, the pending artwork and the record.
 Only the latter two writes are checked, which is why a failure message opens by
 saying the movies were saved.  Removing a set removes the record before the
 members: one that outlived its set would bring it back at the next reload.
+A rename rewrites the record from the four elements above, so anything else the
+file carried is discarded — as an explicit save already discarded it.
 
 ### Two Names: Match Key and Display Title
 
