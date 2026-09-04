@@ -24,11 +24,14 @@
 #include <QFrame>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSet>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTest>
 #include <QTimer>
 
 namespace {
@@ -280,6 +283,31 @@ QString fileContents(const QString& path)
 void announceSettingsSaved()
 {
     REQUIRE(QMetaObject::invokeMethod(Settings::instance(), "sigSettingsSaved"));
+}
+
+/// \brief The sets tab's overview editor.
+QPlainTextEdit* overviewEditor(SetsWidget& widget)
+{
+    auto* overview = widget.findChild<QPlainTextEdit*>("overview");
+    REQUIRE(overview != nullptr);
+    return overview;
+}
+
+/// \brief The sets tab's collection id field.
+QLineEdit* tmdbIdEditor(SetsWidget& widget)
+{
+    auto* tmdbId = widget.findChild<QLineEdit*>("tmdbId");
+    REQUIRE(tmdbId != nullptr);
+    return tmdbId;
+}
+
+/// \brief Types \p text into \p lineEdit as a user does, one key at a time.
+/// \details setText() would not do: QLineEdit::textEdited is a user-input signal and is
+///          deliberately not emitted for a programmatic change, which is exactly what lets
+///          loadSet() fill the field without writing it straight back.
+void typeInto(QLineEdit* lineEdit, const QString& text)
+{
+    QTest::keyClicks(lineEdit, text);
 }
 
 } // namespace
@@ -1507,4 +1535,375 @@ TEST_CASE("The sets tab is granted the Save All action", "[ui][movie][set]")
     // whose Save All flag the same call withholds.
     CHECK(MainWindow::hasSaveAllAction(MainWidgets::Movies));
     CHECK_FALSE(MainWindow::hasSaveAllAction(MainWidgets::Certifications));
+}
+
+TEST_CASE("An edited set overview reaches every movie of the set", "[ui][movie][set]")
+{
+    // Kodi 19 to 21 never read `set.nfo`, so the overview has to reach every member NFO with
+    // identical text -- and for a set that has no record they are the only place it is kept.
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Aliens", "Alien Collection");
+    // A movie the set holds although its own NFO names another collection.  Possible through
+    // the public MovieSet::addMovie(), and the member MovieSetModel::seedFromMembers() refuses
+    // to read; the mirror has to refuse it by the same condition or it would write this set's
+    // overview into a movie that belongs to another one.
+    addLibraryMovie("Predator", "Predator Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    // After loadSets(), which reloads the model and regroups every movie by the name its own
+    // NFO carries -- an odd membership made before it would simply be undone.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* alienSet = setModel->set("Alien Collection");
+    REQUIRE(alienSet != nullptr);
+    Movie* predator = libraryMovie("Predator");
+    REQUIRE(predator != nullptr);
+    alienSet->addMovie(predator);
+    REQUIRE(alienSet->movies().contains(predator));
+
+    // Rows are sorted by display name, so "Alien Collection" comes before "Predator Collection".
+    REQUIRE(selectFirstSet(widget) != nullptr);
+
+    overviewEditor(widget)->setPlainText("Ellen Ripley versus the xenomorphs.");
+
+    SECTION("the set itself carries it")
+    {
+        CHECK(alienSet->overview() == "Ellen Ripley versus the xenomorphs.");
+        // Which is what makes Save All write a `set.nfo` for a set that has none yet.
+        CHECK(alienSet->hasChanged());
+    }
+
+    SECTION("every member carries the same text and is offered for saving")
+    {
+        for (const QString& title : {QString("Alien"), QString("Aliens")}) {
+            Movie* movie = libraryMovie(title);
+            REQUIRE(movie != nullptr);
+            INFO("movie: " << title.toStdString());
+            CHECK(movie->set().overview == "Ellen Ripley versus the xenomorphs.");
+            // assign() marking the movie changed is what makes the edit survive a Save issued
+            // from the movies tab or the navbar rather than from this one.
+            CHECK(movie->hasChanged());
+        }
+    }
+
+    SECTION("a member that names another collection is left alone")
+    {
+        CHECK(predator->set().overview.isEmpty());
+        CHECK(predator->set().name == "Predator Collection");
+        CHECK_FALSE(predator->hasChanged());
+    }
+
+    SECTION("the divergence between members is overwritten, not preserved")
+    {
+        // The field is the *set's* overview.  seedFromMembers() is first-wins over disagreeing
+        // members, so leaving the others alone would keep the set showing one text and its
+        // movies holding another.
+        Movie* aliens = libraryMovie("Aliens");
+        REQUIRE(aliens != nullptr);
+        MovieSetInfo diverging = aliens->set();
+        diverging.overview = "Something else entirely.";
+        setModel->assign(aliens, diverging);
+        REQUIRE(aliens->set().overview == "Something else entirely.");
+
+        overviewEditor(widget)->setPlainText("Ellen Ripley versus the xenomorphs, again.");
+        CHECK(aliens->set().overview == "Ellen Ripley versus the xenomorphs, again.");
+    }
+}
+
+TEST_CASE("An edited collection id reaches every movie of the set", "[ui][movie][set]")
+{
+    // #2012: the scraped collection id had nowhere to be edited and nothing pushed it into the
+    // movies.  Same rule as the overview -- identical text in every member.
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Aliens", "Alien Collection");
+
+    MovieSet* alienSet = Manager::instance()->movieSetModel()->set("Alien Collection");
+    REQUIRE(alienSet != nullptr);
+
+    SetsWidget widget;
+    widget.loadSets();
+    REQUIRE(selectFirstSet(widget) != nullptr);
+
+    SECTION("a typed id reaches the set and every movie")
+    {
+        typeInto(tmdbIdEditor(widget), "8091");
+
+        CHECK(alienSet->tmdbId() == TmdbId(8091));
+        CHECK(alienSet->hasChanged());
+        for (const QString& title : {QString("Alien"), QString("Aliens")}) {
+            Movie* movie = libraryMovie(title);
+            REQUIRE(movie != nullptr);
+            INFO("movie: " << title.toStdString());
+            CHECK(movie->set().tmdbId == TmdbId(8091));
+            CHECK(movie->hasChanged());
+        }
+    }
+
+    SECTION("an id that is not a number is held but never becomes valid")
+    {
+        // Defined rather than refused, as MovieWidget does with the movie's own id: TmdbId keeps
+        // whatever string it was given, and neither NFO writer writes one that is not valid, so
+        // a half-typed id is shown back to the user and reaches no file.
+        typeInto(tmdbIdEditor(widget), "not a number");
+
+        CHECK(alienSet->tmdbId().toString() == "not a number");
+        CHECK_FALSE(alienSet->tmdbId().isValid());
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK(alien->set().tmdbId.toString() == "not a number");
+        CHECK_FALSE(alien->set().tmdbId.isValid());
+    }
+
+    SECTION("emptying the field takes the id off the set and its movies")
+    {
+        typeInto(tmdbIdEditor(widget), "8");
+        REQUIRE(alienSet->tmdbId() == TmdbId(8));
+        QTest::keyClick(tmdbIdEditor(widget), Qt::Key_Backspace);
+
+        CHECK(alienSet->tmdbId() == TmdbId::NoId);
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK(alien->set().tmdbId == TmdbId::NoId);
+    }
+}
+
+TEST_CASE("A set edited in the panel is written into its movies' NFO files", "[ui][movie][set]")
+{
+    // The whole point of mirroring at edit time: a set with no `set.nfo` keeps its overview and
+    // its id nowhere but in the movies, so an edit that never reaches them is an edit lost.
+    MovieSetFolderGuard guard;
+    test::DataFileGuard dataFiles;
+    QTemporaryDir movieFiles;
+    REQUIRE(movieFiles.isValid());
+    const QDir movieDir(movieFiles.path());
+
+    addLibraryMovieWithFile(movieDir, "Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSet* alienSet = Manager::instance()->movieSetModel()->set("Alien Collection");
+    REQUIRE(alienSet != nullptr);
+    REQUIRE_FALSE(alienSet->hasRecord());
+
+    REQUIRE(selectFirstSet(widget) != nullptr);
+    overviewEditor(widget)->setPlainText("Ellen Ripley versus the xenomorphs.");
+    typeInto(tmdbIdEditor(widget), "8091");
+
+    widget.saveSet();
+
+    // The movie's NFO, which is the half Kodi 19 to 21 read.  Queued as well as assigned: an
+    // edit that only marked the movie changed would not be written by this tab's own Save.
+    REQUIRE(QFileInfo::exists(movieDir.absoluteFilePath("Alien.nfo")));
+    const QString movieNfo = fileContents(movieDir.absoluteFilePath("Alien.nfo"));
+    CHECK_THAT(movieNfo, Contains("<overview>Ellen Ripley versus the xenomorphs.</overview>"));
+    CHECK_THAT(movieNfo, Contains("<tmdbcolid>8091</tmdbcolid>"));
+
+    // And the set's own record, which is where Kodi 22 reads them.
+    REQUIRE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+    const QString record = fileContents(guard.dir().absoluteFilePath("Alien Collection/set.nfo"));
+    CHECK_THAT(record, Contains("<overview>Ellen Ripley versus the xenomorphs.</overview>"));
+    CHECK_THAT(record, Contains("8091"));
+}
+
+TEST_CASE("The sets panel shows the selected set's overview and id", "[ui][movie][set]")
+{
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Predator", "Predator Collection");
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* alienSet = setModel->set("Alien Collection");
+    MovieSet* predatorSet = setModel->set("Predator Collection");
+    REQUIRE(alienSet != nullptr);
+    REQUIRE(predatorSet != nullptr);
+    alienSet->setOverview("Ellen Ripley versus the xenomorphs.");
+    alienSet->setTmdbId(TmdbId(8091));
+    predatorSet->setOverview("The Yautja hunt.");
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 2);
+    sets->setCurrentCell(0, 0);
+
+    SECTION("selecting a set fills both fields")
+    {
+        CHECK(overviewEditor(widget)->toPlainText() == "Ellen Ripley versus the xenomorphs.");
+        CHECK(tmdbIdEditor(widget)->text() == "8091");
+    }
+
+    SECTION("selecting another set shows its values and writes into neither")
+    {
+        sets->setCurrentCell(1, 0);
+
+        CHECK(overviewEditor(widget)->toPlainText() == "The Yautja hunt.");
+        CHECK(tmdbIdEditor(widget)->text().isEmpty());
+        // The dangerous half: loadSet() empties the fields before it fills them, and by then the
+        // table already points at the incoming row -- so an unblocked clear would blank that
+        // set's overview and mirror the blank into all of its movies.
+        CHECK(predatorSet->overview() == "The Yautja hunt.");
+        CHECK(alienSet->overview() == "Ellen Ripley versus the xenomorphs.");
+        CHECK(alienSet->tmdbId() == TmdbId(8091));
+        Movie* predator = libraryMovie("Predator");
+        REQUIRE(predator != nullptr);
+        CHECK(predator->set().overview.isEmpty());
+        CHECK_FALSE(predator->hasChanged());
+    }
+
+    SECTION("deselecting clears both fields and edits nothing")
+    {
+        sets->setCurrentCell(-1, -1);
+
+        CHECK(overviewEditor(widget)->toPlainText().isEmpty());
+        CHECK(tmdbIdEditor(widget)->text().isEmpty());
+        CHECK(alienSet->overview() == "Ellen Ripley versus the xenomorphs.");
+        Movie* alien = libraryMovie("Alien");
+        REQUIRE(alien != nullptr);
+        CHECK_FALSE(alien->hasChanged());
+    }
+}
+
+TEST_CASE("The set overview and id stay editable without a movie set directory", "[ui][movie][set]")
+{
+    // Read-only without a directory is narrow: the set's own record and its artwork, not the
+    // tab.  This edit is written into movie NFO files, which are writable in every layout.
+    MovieSetFolderGuard guard;
+    Settings::instance()->setMovieSetArtworkType(MovieSetArtworkType::ArtworkNextToMovies);
+
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    REQUIRE_FALSE(Manager::instance()->movieSetModel()->recordsAreConfigured());
+
+    CHECK(overviewEditor(widget)->isEnabled());
+    CHECK_FALSE(overviewEditor(widget)->isReadOnly());
+    CHECK(tmdbIdEditor(widget)->isEnabled());
+    CHECK_FALSE(tmdbIdEditor(widget)->isReadOnly());
+    // The neighbour this very layout really does switch off, so that "everything is enabled"
+    // would not pass this.
+    auto* addSet = widget.findChild<QAction*>("actionAddMovieSet");
+    REQUIRE(addSet != nullptr);
+    CHECK_FALSE(addSet->isEnabled());
+
+    // And the edit still arrives where it is kept in this layout: in the movie.
+    REQUIRE(selectFirstSet(widget) != nullptr);
+    overviewEditor(widget)->setPlainText("Ellen Ripley versus the xenomorphs.");
+    Movie* alien = libraryMovie("Alien");
+    REQUIRE(alien != nullptr);
+    CHECK(alien->set().overview == "Ellen Ripley versus the xenomorphs.");
+    CHECK(alien->hasChanged());
+}
+
+TEST_CASE("An overview edited before a rename survives it", "[ui][movie][set]")
+{
+    // The edit is mirrored onto the members and queued under the set's name; an all-movie-files
+    // rename moves both, so the write is neither lost nor left under a name nothing saves.
+    MovieSetFolderGuard guard;
+    RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+    test::DataFileGuard dataFiles;
+    QTemporaryDir movieFiles;
+    REQUIRE(movieFiles.isValid());
+    const QDir movieDir(movieFiles.path());
+
+    addLibraryMovieWithFile(movieDir, "Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    REQUIRE(selectFirstSet(widget) != nullptr);
+    overviewEditor(widget)->setPlainText("Ellen Ripley versus the xenomorphs.");
+
+    renameFirstSet(widget, "Alien Anthology");
+
+    MovieSet* renamed = Manager::instance()->movieSetModel()->set("Alien Anthology");
+    REQUIRE(renamed != nullptr);
+    CHECK(renamed->overview() == "Ellen Ripley versus the xenomorphs.");
+
+    Movie* alien = libraryMovie("Alien");
+    REQUIRE(alien != nullptr);
+    CHECK(alien->set().name == "Alien Anthology");
+    CHECK(alien->set().overview == "Ellen Ripley versus the xenomorphs.");
+
+    // Queued under the new name, so the tab's own Save still writes it.
+    widget.saveSet();
+    REQUIRE(QFileInfo::exists(movieDir.absoluteFilePath("Alien.nfo")));
+    const QString movieNfo = fileContents(movieDir.absoluteFilePath("Alien.nfo"));
+    CHECK_THAT(movieNfo, Contains("<name>Alien Anthology</name>"));
+    CHECK_THAT(movieNfo, Contains("<overview>Ellen Ripley versus the xenomorphs.</overview>"));
+}
+
+TEST_CASE("A merged movie carries the overview of the set it joined", "[ui][movie][set]")
+{
+    // The sibling path: a merge moves movies into another collection, so they must arrive with
+    // that collection's text and not with the one they brought from the set that was merged away.
+    MovieSetFolderGuard guard;
+    RenameModeGuard renameMode(MovieSetRenameMode::AllMovieFiles);
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Predator", "Predator Collection");
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* alienSet = setModel->set("Alien Collection");
+    REQUIRE(alienSet != nullptr);
+    alienSet->setOverview("Ellen Ripley versus the xenomorphs.");
+    alienSet->setTmdbId(TmdbId(8091));
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 2);
+
+    // Row 1 is "Predator Collection"; renaming it onto the other set's name is the merge.
+    answerNextQuestion(QMessageBox::Yes);
+    sets->item(1, 0)->setText("Alien Collection");
+
+    Movie* predator = libraryMovie("Predator");
+    REQUIRE(predator != nullptr);
+    CHECK(predator->set().name == "Alien Collection");
+    CHECK(predator->set().overview == "Ellen Ripley versus the xenomorphs.");
+    CHECK(predator->set().tmdbId == TmdbId(8091));
+}
+
+TEST_CASE("A movie added to a set carries the overview of the set it joined", "[ui][movie][set]")
+{
+    // The sibling of the merge below.  onAddMovie() opens a modal first and does everything
+    // else in addMoviesToSet(), which is what this drives; the dialog only decides *which*
+    // movies, and it is the value they arrive with that is at stake here.
+    MovieSetFolderGuard guard;
+
+    addLibraryMovie("Alien", "Alien Collection");
+    addLibraryMovie("Predator", "");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSet* alienSet = Manager::instance()->movieSetModel()->set("Alien Collection");
+    REQUIRE(alienSet != nullptr);
+    alienSet->setOverview("Ellen Ripley versus the xenomorphs.");
+    alienSet->setTmdbId(TmdbId(8091));
+
+    REQUIRE(selectFirstSet(widget) != nullptr);
+    Movie* predator = libraryMovie("Predator");
+    REQUIRE(predator != nullptr);
+    REQUIRE(predator->set().name.isEmpty());
+
+    REQUIRE(QMetaObject::invokeMethod(
+        &widget, "addMoviesToSet", Qt::DirectConnection, Q_ARG(QVector<Movie*>, QVector<Movie*>{predator})));
+
+    CHECK(predator->set().name == "Alien Collection");
+    CHECK(predator->set().overview == "Ellen Ripley versus the xenomorphs.");
+    CHECK(predator->set().tmdbId == TmdbId(8091));
+    CHECK(predator->hasChanged());
+
+    // And it is queued, so this tab's own Save reaches it.
+    CHECK(alienSet->movies().contains(predator));
 }

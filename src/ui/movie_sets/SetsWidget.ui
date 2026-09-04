@@ -136,7 +136,7 @@
          </property>
          <layout class="QHBoxLayout" name="horizontalLayout_2">
           <item>
-           <layout class="QVBoxLayout" name="verticalLayout_3" stretch="1,0">
+           <layout class="QVBoxLayout" name="verticalLayout_3" stretch="2,0,0,0,1">
             <item>
              <widget class="QTableWidget" name="movies">
               <property name="alternatingRowColors">
@@ -199,6 +199,38 @@
                </widget>
               </item>
              </layout>
+            </item>
+            <item>
+             <layout class="QHBoxLayout" name="horizontalLayout_tmdbId">
+              <item>
+               <widget class="QLabel" name="labelTmdbId">
+                <property name="text">
+                 <string>TMDB Collection ID</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLineEdit" name="tmdbId">
+                <property name="toolTip">
+                 <string>The collection's id on TheMovieDB. Stored in every movie of the set, and in the movie set file where there is one.</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
+             <widget class="QLabel" name="labelOverview">
+              <property name="text">
+               <string>Overview</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPlainTextEdit" name="overview">
+              <property name="toolTip">
+               <string>The collection's overview. Stored in every movie of the set, and in the movie set file where there is one.</string>
+              </property>
+             </widget>
             </item>
            </layout>
           </item>

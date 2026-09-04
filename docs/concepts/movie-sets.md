@@ -1,7 +1,7 @@
 # Movie Sets
 
 __Status__: Partially implemented; see "What Is Not Built Yet"  
-__Last Updated on__: 2026-09-02
+__Last Updated on__: 2026-09-04
 
 Movie sets (Kodi calls them sets, TMDB calls them collections) were supported
 only poorly in MediaElch: a set was a string on each movie and nothing else.
@@ -25,14 +25,27 @@ movie belongs to at most one set.
 The `<set>` element may also carry an `<overview>`.  Several members can each
 carry one, so Kodi has to choose — and an *empty* `<overview>` is a value, not
 an absence, so a single empty one blanks the whole set's overview.
+`XMLUtils::GetString()` answers true for an existing-but-empty element and
+false for a missing one, which is the whole difference: a member with **no**
+`<overview>` element donates nothing and cannot blank anything.  That is what
+makes "never write an empty overview" enough on its own.
+
+The `<set>` element carries no id in any Kodi.  `tmdbcolid` — the movie-level
+tag MediaElch writes the collection's id under — appears nowhere in 19, 20, 21
+or 22, and neither does a `<uniqueid>` read from inside `<set>`.
 
 Kodi can also be given a "movie set information folder":
 
 | Kodi   | Set artwork in it | `set.nfo` in it | Overview when members disagree |
 |--------|-------------------|-----------------|--------------------------------|
-| 19, 20 | read              | ignored         | the member scanned *first* wins |
-| 21     | read              | ignored         | the member scanned *last* wins  |
-| 22     | read              | read            | the member scanned *last* wins  |
+| 19, 20 | read              | ignored         | the member scanned *first* wins: the row is inserted once and never updated |
+| 21     | read              | ignored         | the last member that *carried* an `<overview>` wins |
+| 22     | read              | read            | the last member that *carried* an `<overview>` wins |
+
+19 and 20 insert the set row and never touch its overview again.  21 and 22
+update it for every member, but only where that member's NFO really had the
+element — `CVideoDatabase::AddSet()` takes an `updateOverview` flag that the
+parser sets only then.
 
 A `set.nfo` overrides what the movies said, and the set is then *matched* on
 its `<originaltitle>` — which every member's `<set><name>` has to equal.
@@ -89,11 +102,22 @@ the characters Kodi cannot use in a path replaced:
 </set>
 ```
 
-The record is authoritative for the overview and the collection id (#2012), but
-Kodi 19 to 21 never read it, so both have to reach every member NFO too — with
+The record is authoritative for the overview and the collection id (#2012), and
+both reach every member NFO too, for two different reasons.  Kodi 19 to 21
+never read the record, so the overview has to be in the movies — with
 *identical* text in each, since the versions disagree about which member wins
-and identical text is the only deterministic answer.  An empty one is never
-written.
+and identical text is the only deterministic answer.  No Kodi reads the id from
+a movie at all; it is mirrored because a set with no record keeps it nowhere
+else, and it is the members that seed it back (below).  An empty overview is
+never written, and neither is an id that is not a number.
+
+The sets tab is where a person edits either, and the mirror happens as they
+type rather than when they save: marking each member changed is what makes the
+edit survive a *Save* issued from another tab.  A member whose own
+`<set><name>` names a different set is skipped, exactly as seeding skips it —
+it describes another collection in both directions.  A *rename* is the one
+membership write that does not mirror: it keeps each member's own text, because
+the user asked to change a name and not to flatten a disagreement.
 
 `<art>` is neither written nor read — the artwork is the image files in the
 same folder, which every Kodi reads first, so a record entry would duplicate it.
@@ -207,7 +231,10 @@ into the existing set.  The sets tab asks first, because that cannot be undone.
 
 A merge is always the all-movie-files operation whatever the setting says,
 since a display title cannot merge anything.  The source's record is removed
-and its artwork is not carried over, because the target has its own.  Two sets
+and its artwork is not carried over, because the target has its own — and for
+the same reason the moved movies arrive carrying the *target's* overview and
+id, not the ones they brought from a collection they are no longer in.  The
+same holds for a movie added to a set by hand.  Two sets
 may not share a display title either, or the tab would show indistinguishable
 rows — checked where MediaElch picks the name, not where it mirrors the files.
 
@@ -234,12 +261,9 @@ writes; it reads `<movie base name>-set.poster.jpg` there, which we never write.
 
 - The further artwork types above, and the short-form file names Kodi's
   information-folder reader needs for them.
-- The mirror into the member NFOs.  Nothing pushes a set's overview or id onto
-  its members — only the NFO reader and the scrapers write those values there.
 - Set scraping.  Nothing fetches a collection's overview, id or artwork into a
-  `MovieSet`; the TMDB scraper only fills the *movie's* set value.
-- An editor for the overview and the id in the sets tab, and a scrape workflow
-  there.
+  `MovieSet`; the TMDB scraper only fills the *movie's* set value, and the sets
+  tab has no scrape workflow of its own.
 - One type-keyed pair of artwork methods on the media center interface instead
   of the per-type virtuals, and with them somewhere to keep the downloaded
   bytes so that artwork is written verbatim rather than re-encoded.
@@ -256,8 +280,13 @@ reads.  Pushing artwork to a running Kodi over JSON-RPC, a different feature.
 ## Open Questions
 
 - **When does a set earn a record?**  Writing one for every set would fill the
-  combo box and the filter with sets no movie answers to.  Today only saving a
-  set writes one; whether a rename or an edited overview should, I don't know.
+  combo box and the filter with sets no movie answers to.  What the code does
+  today: the per-set *Save* always writes one, and *Save All* writes one for a
+  set that has a record already or that `hasChanged()` — so editing the overview
+  or the id in the sets tab does earn a record at the next *Save All*, because
+  the scalar setters mark the set changed.  That much is deliberate: the edit
+  has to be kept somewhere.  Whether a *rename* should, and whether automatic
+  `set.nfo` saving is the right rule at all, is still open.
 - **Where the sets live.**  `Manager` holds the model; a `MovieSetModule` in the
   sense of `module-system.md` would fit where I want MediaElch to go, not where
   it is.

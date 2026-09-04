@@ -21,7 +21,37 @@
 #include <QFileDialog>
 #include <QFrame>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
+
+namespace {
+
+/// \brief The set value a member of \p movieSet is to carry in its own NFO.
+/// \details The set's key, overview and id -- never the movie's own, which describe the
+///          collection it is leaving.  The two values are mirrored for two different reasons.
+///          The overview has to be identical in every member because Kodi 19 and 20 keep the
+///          first member scanned and 21 and 22 the last one that carried an `<overview>`, so
+///          identical text is the only deterministic answer.  The id is not read from a movie
+///          NFO by any Kodi -- `tmdbcolid` appears nowhere in 19, 20, 21 or 22 -- and is
+///          mirrored because for a set with no `set.nfo` the members are the only place it is
+///          kept at all; MovieSetModel::seedFromMembers() is what reads it back.
+///
+///          Three callers: the two edit slots below, addMoviesToSet() and performMerge().
+///          Deliberately *not* performAllMovieFilesRename(), which uses
+///          MovieSetInfo::renamedTo() to keep each member's own text: a rename must not flatten
+///          a record-less set's per-member divergence into the seeded first-wins value, on an
+///          operation the user only asked to change a name by.  See docs/concepts/movie-sets.md.
+ELCH_NODISCARD MovieSetInfo memberSetInfo(const MovieSet& movieSet)
+{
+    MovieSetInfo info;
+    info.name = movieSet.name();
+    info.overview = movieSet.overview();
+    info.tmdbId = movieSet.tmdbId();
+    return info;
+}
+
+} // namespace
 
 SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget)
 {
@@ -54,6 +84,8 @@ SetsWidget::SetsWidget(QWidget* parent) : QWidget(parent), ui(new Ui::SetsWidget
     connect(ui->backdrop,              &MyLabel::clicked,                     this, &SetsWidget::chooseSetBackdrop);
     connect(ui->buttonPreviewPoster,   &QAbstractButton::clicked,             this, &SetsWidget::onPreviewPoster);
     connect(ui->buttonPreviewBackdrop, &QAbstractButton::clicked,             this, &SetsWidget::onPreviewBackdrop);
+    connect(ui->overview,              &QPlainTextEdit::textChanged,          this, &SetsWidget::onSetOverviewChanged);
+    connect(ui->tmdbId,                &QLineEdit::textEdited,                this, &SetsWidget::onSetTmdbIdChanged);
     connect(m_downloadManager,         &DownloadManager::sigDownloadFinished, this, &SetsWidget::onDownloadFinished, static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
     // clang-format on
 
@@ -259,6 +291,17 @@ void SetsWidget::clear()
     ui->setName->clear();
     ui->movies->clearContents();
     ui->movies->setRowCount(0);
+    // Blocked, or emptying the field would be read as the user emptying it: clear() runs from
+    // loadSet(), by which time ui->sets already points at the row being selected, so the edit
+    // slot would blank the incoming set's overview and mirror that into all of its movies.
+    // Both fields together although only QPlainTextEdit::textChanged fires for a programmatic
+    // change, so that the pair cannot come apart; MovieWidget::updateMovieInfo() blocks both too.
+    ui->overview->blockSignals(true);
+    ui->tmdbId->blockSignals(true);
+    ui->overview->clear();
+    ui->tmdbId->clear();
+    ui->overview->blockSignals(false);
+    ui->tmdbId->blockSignals(false);
     ui->backdropResolution->clear();
     ui->posterResolution->clear();
     m_currentBackdrop = QImage();
@@ -276,6 +319,17 @@ void SetsWidget::loadSet(QString set)
     const MovieSet* movieSet = Manager::instance()->movieSetModel()->set(set);
     // \p set is the match key; the heading is read by a person, so it shows the display title.
     ui->setName->setText(movieSet != nullptr ? movieSet->displayName() : set);
+
+    // Blocked for the reason given in clear(): filling a field is not an edit, and writing it
+    // back would mark every movie of the set changed just for selecting the row.  An id that
+    // is not a valid number was kept by TmdbId and comes back out unchanged.
+    ui->overview->blockSignals(true);
+    ui->tmdbId->blockSignals(true);
+    ui->overview->setPlainText(movieSet != nullptr ? movieSet->overview() : QString());
+    ui->tmdbId->setText(movieSet != nullptr ? movieSet->tmdbId().toString() : QString());
+    ui->overview->blockSignals(false);
+    ui->tmdbId->blockSignals(false);
+
     ui->buttonPreviewBackdrop->setEnabled(false);
     ui->buttonPreviewPoster->setEnabled(false);
     ui->movies->blockSignals(true);
@@ -346,6 +400,77 @@ void SetsWidget::loadSet(QString set)
     ui->movies->blockSignals(false);
 }
 
+MovieSet* SetsWidget::selectedSet() const
+{
+    const int row = ui->sets->currentRow();
+    if (row < 0 || row >= ui->sets->rowCount()) {
+        return nullptr;
+    }
+    const QTableWidgetItem* item = ui->sets->item(row, 0);
+    if (item == nullptr) {
+        return nullptr;
+    }
+    return Manager::instance()->movieSetModel()->set(item->data(Qt::UserRole).toString());
+}
+
+void SetsWidget::mirrorSetValuesToMembers(MovieSet* movieSet)
+{
+    if (movieSet == nullptr) {
+        return;
+    }
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    const QString setName = movieSet->name();
+    const MovieSetInfo info = memberSetInfo(*movieSet);
+
+    // Copied although the guard below makes it safe not to: every movie that reaches assign()
+    // here keeps the set name it has, so MovieSetModel::onMovieChanged() takes its
+    // newName == oldName early return and no membership moves.  The copy costs one allocation
+    // and survives that reasoning being invalidated.  Not the same as the identically shaped
+    // copy in MovieSetModel::removeSet(), which assigns an empty name and really does need one.
+    const QVector<Movie*> members = movieSet->movies();
+    for (Movie* movie : members) {
+        // The condition MovieSetModel::seedFromMembers() skips a member by, for the same
+        // reason: one whose own `<set><name>` points elsewhere describes another collection,
+        // so it neither donates to this set nor receives from it.  Writing to it would put
+        // this set's overview into a movie that is not in this set at all.
+        if (movie->set().name != setName) {
+            continue;
+        }
+        // assign() and not the queue alone: it is what marks the movie changed, and that is
+        // what makes this edit survive a Save issued from the movies tab or the navbar.
+        setModel->assign(movie, info);
+        if (!m_moviesToSave[setName].contains(movie)) {
+            m_moviesToSave[setName].append(movie);
+        }
+    }
+}
+
+void SetsWidget::onSetOverviewChanged()
+{
+    MovieSet* movieSet = selectedSet();
+    if (movieSet == nullptr) {
+        return;
+    }
+    // Marks the set changed, which is what makes Save All write a `set.nfo` for a set that has
+    // none yet; assigning the value it already has does nothing at all.
+    movieSet->setOverview(ui->overview->toPlainText());
+    mirrorSetValuesToMembers(movieSet);
+}
+
+void SetsWidget::onSetTmdbIdChanged(const QString& text)
+{
+    MovieSet* movieSet = selectedSet();
+    if (movieSet == nullptr) {
+        return;
+    }
+    // Whatever was typed, as MovieWidget::onTmdbIdChange() does with the movie's own id: TmdbId
+    // keeps the string and answers isValid() for it, and neither MovieSetXmlWriter nor
+    // MovieXmlWriter writes an id that is not valid.  So a half-typed or nonsense id is held and
+    // shown back, but never reaches a file.
+    movieSet->setTmdbId(TmdbId(text));
+    mirrorSetValuesToMembers(movieSet);
+}
+
 /**
  * \brief Called when an item in the movies table was changed
  *        Updates movies sorttitle and reorders the table
@@ -388,23 +513,34 @@ void SetsWidget::onAddMovie()
         return;
     }
 
+    addMoviesToSet(movies);
+}
+
+void SetsWidget::addMoviesToSet(const QVector<Movie*>& movies)
+{
     const int row = ui->sets->currentRow();
     if (row < 0 || row >= ui->sets->rowCount()) {
         return;
     }
 
     // The match key: this value is written onto the movie's own NFO as `<set><name>`.
-    QString setName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
+    QString setName = ui->sets->item(row, 0)->data(Qt::UserRole).toString();
     MovieSetModel* setModel = Manager::instance()->movieSetModel();
-    for (Movie* movie : asConst(movies)) {
+    const MovieSet* movieSet = setModel->set(setName);
+    // The set's own overview and id, never the ones the movie brought: it is leaving one
+    // collection for another, and the values describe the collection rather than the movie.  A
+    // row whose set the model no longer holds can say nothing but the name.  That is why the
+    // name check below, and not assign()'s whole-value guard, is what leaves a member alone.
+    MovieSetInfo set;
+    if (movieSet != nullptr) {
+        set = memberSetInfo(*movieSet);
+    } else {
+        set.name = setName;
+    }
+    for (Movie* movie : movies) {
         if (movie->set().name == setName) {
             continue;
         }
-        // Name only: the movie joins a different collection, so its previous set's overview
-        // and id must not travel with it.  That is why the name check above, and not
-        // assign()'s whole-value guard, is what leaves an existing member alone.
-        MovieSetInfo set;
-        set.name = setName;
         setModel->assign(movie, set);
         if (!m_moviesToSave[setName].contains(movie)) {
             m_moviesToSave[setName].append(movie);
@@ -1081,13 +1217,13 @@ void SetsWidget::performMerge(
     const QString targetDisplayName = targetSet->displayName();
 
     const QVector<Movie*> members = origSet->movies();
+    // The target's values, not the ones the movies bring: they end up in a collection that is
+    // not the one their old overview and id describe, and the target's members all carry the
+    // target's text.
+    const MovieSetInfo targetInfo = memberSetInfo(*targetSet);
     for (Movie* movie : members) {
         m_moviesToSave[newName].append(movie);
-        // Name only: the movies end up in a collection that is not the one their old
-        // overview and id describe.
-        MovieSetInfo set;
-        set.name = targetSet->name();
-        setModel->assign(movie, set);
+        setModel->assign(movie, targetInfo);
     }
     carryQueuedMoviesOver(origSetName, newName);
 

@@ -11,6 +11,8 @@
 #include "network/DownloadManagerElement.h"
 #include "utils/Meta.h"
 
+#include <QVector>
+
 class MovieSet;
 
 class DownloadManager;
@@ -65,6 +67,11 @@ private slots:
     void onAddMovieSet();
     void onRemoveMovieSet();
     void onAddMovie();
+    /// \brief The whole of *Add Movie* below the dialog: puts \p movies into the selected set.
+    /// \details Split out of onAddMovie() so that it can be exercised without the modal, which
+    ///          is the first statement of the slot and the only part of it that needs a screen.
+    ///          A slot rather than a private method for the same reason onRemoveMovie() is one.
+    void addMoviesToSet(const QVector<Movie*>& movies);
     void onRemoveMovie();
     void chooseSetPoster();
     void chooseSetBackdrop();
@@ -76,6 +83,13 @@ private slots:
     void onJumpToMovie(QTableWidgetItem* item);
     void onShowOnlyEmptySets(bool onlyEmpty);
     void onSettingsSaved();
+    /// \brief Writes the panel's overview onto the selected set and into its movies.
+    void onSetOverviewChanged();
+    /// \brief Writes the panel's collection id onto the selected set and into its movies.
+    /// \details Whatever was typed, as MovieWidget does with the movie's own id: an id that is
+    ///          not a number is held but never written, since neither NFO writer writes an
+    ///          invalid one.
+    void onSetTmdbIdChanged(const QString& text);
 
 private:
     /// \brief Whether writeSet() writes a set's `set.nfo` even when nothing asks for it.
@@ -114,6 +128,23 @@ private:
     void applyDivergenceTooltip(QTableWidgetItem* item, const MovieSet* movieSet);
     void carryQueuedMoviesOver(const QString& oldName, const QString& newName);
     void carrySetArtworkOver(const QString& oldName, const QString& newName);
+
+    /// \brief The set the selected row names, or nullptr if there is no usable selection.
+    /// \details By the match key in Qt::UserRole; the cell's text is the display title, which
+    ///          the model is not keyed by.
+    ELCH_NODISCARD MovieSet* selectedSet() const;
+    /// \brief Pushes \p movieSet's overview and id into every member's NFO value, and queues them.
+    /// \details The mirror of docs/concepts/movie-sets.md.  Kodi 19 to 21 never read `set.nfo`,
+    ///          so the overview has to reach every member, with identical text because those
+    ///          versions disagree about which member wins.  The id reaches them for a different
+    ///          reason -- no Kodi reads one from a movie NFO at all -- namely that for a set with
+    ///          no record the members are the only place either value is kept; see
+    ///          memberSetInfo().  Done at edit time and not at save time, because assign()
+    ///          marking each movie changed is what makes the edit survive a Save issued from any
+    ///          other tab.
+    ///          A member whose own `<set><name>` points at another set is skipped, the same
+    ///          condition MovieSetModel::seedFromMembers() reads its members by.
+    void mirrorSetValuesToMembers(MovieSet* movieSet);
 
     Ui::SetsWidget* ui;
     QMap<QString, QVector<Movie*>> m_moviesToSave;
