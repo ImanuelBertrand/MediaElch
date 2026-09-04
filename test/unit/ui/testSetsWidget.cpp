@@ -11,6 +11,7 @@
 #include "settings/Settings.h"
 #include "test/helpers/message_capture.h"
 #include "test/helpers/movie_set_settings.h"
+#include "ui/main/MainWindow.h"
 #include "ui/movie_sets/SetsWidget.h"
 #include "ui/notifications/NotificationBox.h"
 
@@ -232,6 +233,47 @@ void removeMovieFromSet(SetsWidget& widget, const QString& title)
     REQUIRE(row >= 0);
     movies->setCurrentCell(row, 0);
     REQUIRE(QMetaObject::invokeMethod(&widget, "onRemoveMovie", Qt::DirectConnection));
+}
+
+/// \brief Puts a movie with a file of its own into the library and returns it.
+/// \details addLibraryMovie()'s movies have no files, which KodiXml refuses to write at all;
+///          a save that is measured on disk needs a movie it accepts.
+Movie* addLibraryMovieWithFile(const QDir& dir, const QString& title, const QString& setName)
+{
+    QFile file(dir.absoluteFilePath(title + ".mkv"));
+    REQUIRE(file.open(QIODevice::WriteOnly));
+    file.close();
+    auto* movie = new Movie(QStringList{file.fileName()}, nullptr);
+    movie->setTitle(title);
+    MovieSetInfo info;
+    info.name = setName;
+    movie->setSetInfo(info);
+    movie->setChanged(false);
+    Manager::instance()->movieModel()->addMovie(movie);
+    return movie;
+}
+
+/// \brief Types a sort title into the first movie of the set in row \p row.
+/// \details One of the edits that queue a movie for saving under its set's name, and the
+///          only one that leaves the movie in the set it is in.
+void queueSortTitleEdit(SetsWidget& widget, int row, const QString& sortTitle)
+{
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(row < sets->rowCount());
+    sets->setCurrentCell(row, 0);
+    auto* movies = widget.findChild<QTableWidget*>("movies");
+    REQUIRE(movies != nullptr);
+    REQUIRE(movies->rowCount() >= 1);
+    movies->item(0, 1)->setText(sortTitle);
+}
+
+/// \brief The contents of the file \p path.
+QString fileContents(const QString& path)
+{
+    QFile file(path);
+    REQUIRE(file.open(QIODevice::ReadOnly));
+    return QString::fromUtf8(file.readAll());
 }
 
 /// \brief Emits Settings::sigSettingsSaved without writing the user's real settings.
@@ -1347,4 +1389,122 @@ TEST_CASE("A rename keeps the movies queued for saving under the old name", "[ui
     Movie* alien = libraryMovie("Alien");
     REQUIRE(alien != nullptr);
     CHECK_FALSE(alien->hasChanged());
+}
+
+TEST_CASE("Save All writes the movies queued in every movie set", "[ui][movie][set]")
+{
+    // The point of Save All: the per-set Save reaches the selected row only.
+    MovieSetFolderGuard guard;
+    test::DataFileGuard dataFiles;
+    QTemporaryDir movieFiles;
+    REQUIRE(movieFiles.isValid());
+    const QDir movieDir(movieFiles.path());
+
+    addLibraryMovieWithFile(movieDir, "Alien", "Alien Collection");
+    addLibraryMovieWithFile(movieDir, "Predator", "Predator Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+    auto* sets = widget.findChild<QTableWidget*>("sets");
+    REQUIRE(sets != nullptr);
+    REQUIRE(sets->rowCount() == 2);
+
+    queueSortTitleEdit(widget, 0, "Alien 1");
+    queueSortTitleEdit(widget, 1, "Predator 1");
+
+    widget.saveAllSets();
+
+    // Both NFOs, and each naming its own set: the movie the selected row does not hold is
+    // exactly the one a single-set save leaves behind.
+    REQUIRE(QFileInfo::exists(movieDir.absoluteFilePath("Alien.nfo")));
+    CHECK_THAT(fileContents(movieDir.absoluteFilePath("Alien.nfo")), Contains("<name>Alien Collection</name>"));
+    REQUIRE(QFileInfo::exists(movieDir.absoluteFilePath("Predator.nfo")));
+    CHECK_THAT(fileContents(movieDir.absoluteFilePath("Predator.nfo")), Contains("<name>Predator Collection</name>"));
+}
+
+TEST_CASE("Save All does not give an untouched movie set a record", "[ui][movie][set]")
+{
+    // A set with a `set.nfo` is never dropped for having no members, so writing one for every
+    // set would make every name the library has ever grouped by permanent.  This is why Save
+    // All is deliberately not the sum of the per-set Saves.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    REQUIRE(setModel->recordsAreConfigured());
+    MovieSet* movieSet = setModel->set("Alien Collection");
+    REQUIRE(movieSet != nullptr);
+    REQUIRE_FALSE(movieSet->hasChanged());
+    REQUIRE_FALSE(movieSet->hasRecord());
+
+    widget.saveAllSets();
+
+    CHECK_FALSE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+    CHECK_FALSE(movieSet->hasRecord());
+}
+
+TEST_CASE("Save All writes the record of a movie set that was edited", "[ui][movie][set]")
+{
+    // The other half of the condition, and the half that has nowhere else to go: an edit to a
+    // set that has no `set.nfo` yet lives in the MovieSet object alone until one is written.
+    MovieSetFolderGuard guard;
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSet* movieSet = Manager::instance()->movieSetModel()->set("Alien Collection");
+    REQUIRE(movieSet != nullptr);
+    REQUIRE_FALSE(movieSet->hasRecord());
+    // Through the entity's own setter, which is what marks a set changed everywhere in the
+    // application; the flag itself is never written by hand.
+    movieSet->setOverview("Ellen Ripley versus the xenomorphs.");
+    REQUIRE(movieSet->hasChanged());
+
+    widget.saveAllSets();
+
+    REQUIRE(QFileInfo::exists(guard.dir().absoluteFilePath("Alien Collection/set.nfo")));
+    CHECK_THAT(fileContents(guard.dir().absoluteFilePath("Alien Collection/set.nfo")),
+        Contains("Ellen Ripley versus the xenomorphs."));
+    // The set and its file agree now, which is what makes the edit safe to forget.
+    CHECK(movieSet->hasRecord());
+    CHECK_FALSE(movieSet->hasChanged());
+}
+
+TEST_CASE("Save All rewrites the record a movie set already has", "[ui][movie][set]")
+{
+    // The other half of the rule: a set that is backed already has nothing left to lose by
+    // being written, and its overview and id must not be left behind by a Save All.
+    MovieSetFolderGuard guard;
+    writeRecord(guard.dir(), "Alien Collection");
+    addLibraryMovie("Alien", "Alien Collection");
+
+    SetsWidget widget;
+    widget.loadSets();
+
+    MovieSet* movieSet = Manager::instance()->movieSetModel()->set("Alien Collection");
+    REQUIRE(movieSet != nullptr);
+    REQUIRE(movieSet->hasRecord());
+    REQUIRE_FALSE(movieSet->hasChanged());
+
+    widget.saveAllSets();
+
+    // The seed record is a single hand-written line; only MovieSetXmlWriter writes the
+    // declaration, so its presence is the write having happened.
+    CHECK_THAT(fileContents(guard.dir().absoluteFilePath("Alien Collection/set.nfo")), Contains("<?xml"));
+}
+
+TEST_CASE("The sets tab is granted the Save All action", "[ui][movie][set]")
+{
+    // MainWindow cannot be built here -- instance() is null in this binary and the widgets
+    // dereference it -- so this pins the decision that onSetSaveEnabled() asks for and not
+    // the wiring around it.
+    CHECK(MainWindow::hasSaveAllAction(MainWidgets::MovieSets));
+    // The neighbours, so that "always true" would not pass: Certifications is the one tab
+    // whose Save All flag the same call withholds.
+    CHECK(MainWindow::hasSaveAllAction(MainWidgets::Movies));
+    CHECK_FALSE(MainWindow::hasSaveAllAction(MainWidgets::Certifications));
 }

@@ -35,6 +35,11 @@ public:
 public slots:
     void loadSets();
     void saveSet();
+    /// \brief Saves every movie set, which is not the same as saving each of them in turn.
+    /// \details The movies queued in every set and every set's pending artwork are written,
+    ///          but a set's `set.nfo` only where there is one already or something to write.
+    ///          See the comment in saveAllSets() for why.
+    void saveAllSets();
     QSplitter* splitter();
 
 public:
@@ -73,6 +78,24 @@ private slots:
     void onSettingsSaved();
 
 private:
+    /// \brief Whether writeSet() writes a set's `set.nfo` even when nothing asks for it.
+    enum class RecordWrite
+    {
+        /// Write it whatever the set's state, as the per-set *Save* has always done.
+        Always,
+        /// Write it only for a set that has a record already or that was edited.
+        OnlyIfChangedOrBacked
+    };
+    /// \brief Writes one set: the movies queued under \p setName, its artwork and its record.
+    /// \details The single place any of those three is written, so that *Save* and *Save All*
+    ///          cannot drift apart; \p recordWrite is the one thing they disagree on.  A set
+    ///          the model does not know has no record to write, which is not a failure.
+    /// \return Whether everything that was asked for was written.  False leaves a whole
+    ///         sentence naming the set in \p failureText, ready to be shown.
+    ELCH_NODISCARD bool writeSet(const QString& setName, RecordWrite recordWrite, QString& failureText);
+    /// \brief What to call the set \p setName in a message to the user.
+    ELCH_NODISCARD QString displayNameOfSet(const QString& setName) const;
+
     /// \brief The three renames, kept apart because they are three different operations.
     /// \details onSetNameChanged() decides which one a typed name means; each of these
     ///          performs exactly one of them.

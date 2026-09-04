@@ -55,6 +55,11 @@ public:
 
     static MainWindow* instance();
 
+    /// \brief Whether \p widget's navbar *Save All* button follows its Save action.
+    /// \details Static and public only so that it can be tested; MainWindow cannot be
+    ///          instantiated outside the application.
+    ELCH_NODISCARD static bool hasSaveAllAction(MainWidgets widget);
+
 public slots:
     /// \brief Sets or removes the new mark in the main menu on the left
     void setNewMarks();

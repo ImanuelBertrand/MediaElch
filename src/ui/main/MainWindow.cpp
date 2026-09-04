@@ -503,7 +503,7 @@ void MainWindow::onActionSaveAll()
     case MainWidgets::TvShows: ui->tvShowWidget->onSaveAll(); break;
     case MainWidgets::Concerts: ui->concertWidget->onSaveAll(); break;
     case MainWidgets::Music: ui->musicWidget->onSaveAll(); break;
-    case MainWidgets::MovieSets: break;      // not supported, yet
+    case MainWidgets::MovieSets: ui->setsWidget->saveAllSets(); break;
     case MainWidgets::Genres: break;         // not supported, yet
     case MainWidgets::Certifications: break; // not supported, yet
     case MainWidgets::Duplicates: break;     // not supported, yet
@@ -591,6 +591,25 @@ void MainWindow::onFilterChanged(QVector<Filter*> filters, QString text)
     }
 }
 
+bool MainWindow::hasSaveAllAction(MainWidgets widget)
+{
+    switch (widget) {
+    case MainWidgets::Movies:
+    case MainWidgets::TvShows:
+    case MainWidgets::Concerts:
+    case MainWidgets::Music:
+    // Newly true: onActionSaveAll() saves every movie set now.
+    case MainWidgets::MovieSets:
+    // Exactly what the condition this replaces answered for them, and not endorsed by being
+    // listed here: onActionSaveAll() does nothing at all for these three.
+    case MainWidgets::Genres:
+    case MainWidgets::Duplicates:
+    case MainWidgets::Downloads: return true;
+    case MainWidgets::Certifications: return false;
+    }
+    return false;
+}
+
 /**
  * \brief Sets the status of the save and save all action
  * \param enabled Status
@@ -600,11 +619,12 @@ void MainWindow::onSetSaveEnabled(bool enabled, MainWidgets widget)
 {
     m_actions[widget][MainActions::Save] = enabled;
 
-    if (widget != MainWidgets::MovieSets && widget != MainWidgets::Certifications) {
+    if (hasSaveAllAction(widget)) {
         m_actions[widget][MainActions::SaveAll] = enabled;
-        if (widget != MainWidgets::Music) {
-            m_actions[widget][MainActions::Rename] = enabled;
-        }
+    }
+    // Unchanged, only unnested: the sets tab has a Save All now and still has no Rename.
+    if (widget != MainWidgets::MovieSets && widget != MainWidgets::Certifications && widget != MainWidgets::Music) {
+        m_actions[widget][MainActions::Rename] = enabled;
     }
 
     if (widget != currentTab()) {
@@ -620,13 +640,15 @@ void MainWindow::onSetSaveEnabled(bool enabled, MainWidgets widget)
         ui->navbar->setActionRenameEnabled(enabled);
         break;
     }
+    // The sets tab shares Music's button set now -- Save and Save All, no Rename.  Left below
+    // it would reach the Save All button only at the next tab switch, in onMenu().
+    case MainWidgets::MovieSets:
     case MainWidgets::Music: {
         ui->navbar->setActionSaveEnabled(enabled);
         ui->navbar->setActionSaveAllEnabled(enabled);
         break;
     }
 
-    case MainWidgets::MovieSets:
     case MainWidgets::Genres:
     case MainWidgets::Certifications: {
         ui->navbar->setActionSaveEnabled(enabled);

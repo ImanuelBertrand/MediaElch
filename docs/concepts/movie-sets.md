@@ -109,6 +109,12 @@ members: one that outlived its set would bring it back at the next reload.
 A rename rewrites the record from the four elements above, so anything else the
 file carried is discarded — as an explicit save already discarded it.
 
+*Save All* is deliberately not the sum of the per-set saves.  It writes every
+set's queued movies and pending artwork, but a `set.nfo` only for a set that has
+one already or that was edited: writing one for every set would give every set a
+record, and a set with a record is never dropped for having no members, so every
+name the library ever grouped by would stay in the sets list for good.
+
 ### Two Names: Match Key and Display Title
 
 `MovieSet::name()` is the match key: byte-identical to `<set><name>` in every
@@ -232,8 +238,8 @@ writes; it reads `<movie base name>-set.poster.jpg` there, which we never write.
   its members — only the NFO reader and the scrapers write those values there.
 - Set scraping.  Nothing fetches a collection's overview, id or artwork into a
   `MovieSet`; the TMDB scraper only fills the *movie's* set value.
-- An editor for the overview and the id in the sets tab, and a scrape and
-  save-all workflow there.
+- An editor for the overview and the id in the sets tab, and a scrape workflow
+  there.
 - One type-keyed pair of artwork methods on the media center interface instead
   of the per-type virtuals, and with them somewhere to keep the downloaded
   bytes so that artwork is written verbatim rather than re-encoded.

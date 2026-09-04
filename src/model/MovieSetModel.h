@@ -86,6 +86,13 @@ public:
     ///          media center.
     ELCH_NODISCARD bool recordsAreConfigured() const;
 
+    /// \brief Whether \p movieSet has a `set.nfo` and records are configured.
+    /// \details The record flag is refreshed by reload() while records are configured and left
+    ///          alone otherwise, so switching the folder back on restores the answer at once.
+    ///          Public because it is the question "is this set permanent?", which dropEmptySets()
+    ///          and SetsWidget's Save All both have to ask of the same answer.
+    ELCH_NODISCARD bool isBacked(const MovieSet* movieSet) const;
+
     /// \brief What renaming a set does, once the settings have been read.
     enum class RenameMode
     {
@@ -139,10 +146,6 @@ private:
     void seedFromMembers(MovieSet* movieSet);
     /// \brief Drops every set that has no members left and no record of its own.
     void dropEmptySets();
-    /// \brief Whether \p movieSet has a `set.nfo` and records are configured.
-    /// \details The record flag is refreshed by reload() while records are configured and left
-    ///          alone otherwise, so switching the folder back on restores the answer at once.
-    ELCH_NODISCARD bool isBacked(const MovieSet* movieSet) const;
     /// \brief Logs a warning if dropping \p movieSet would discard an unsaved record.
     void warnIfRecordIsLost(const MovieSet* movieSet) const;
 

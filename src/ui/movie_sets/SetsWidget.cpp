@@ -530,77 +530,144 @@ void SetsWidget::saveSet()
 
     // The match key alone: all three of this widget's maps are keyed by it, and the cell's
     // text is the display title, a string they have never held.
-    const QStringList setNames{ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString()};
+    const QString setName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
 
+    QString failureText;
+    // Unconditional, as this Save has always been: the user pointed at this one set, so a
+    // record it did not have yet is one they asked for.  Save All cannot read a click that
+    // way; see saveAllSets().
+    if (!writeSet(setName, RecordWrite::Always, failureText)) {
+        NotificationBox::instance()->showError(failureText);
+        return;
+    }
+
+    NotificationBox::instance()->showSuccess(tr("<b>\"%1\"</b> Saved").arg(displayNameOfSet(setName)));
+}
+
+/**
+ * \brief Saves every movie set: the movies queued in each of them, their artwork and their records
+ */
+void SetsWidget::saveAllSets()
+{
+    // Deliberately not the sum of the per-set Saves, and the one difference is the record: a
+    // `set.nfo` is written only for a set that has one already or that was edited.  Writing
+    // one for every set would give every set a record, and a set with a record outlives its
+    // last member -- see MovieSetModel::dropEmptySets() -- so every name the library has ever
+    // grouped by would stay in this list, and in the movie tab's set box, for good.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    // The names, not the model's own vector: every set's write reaches the model through the
+    // movies it saves, and a set that is gone by the time its turn comes is simply not found.
+    QStringList setNames;
+    for (const MovieSet* movieSet : setModel->sets()) {
+        setNames.append(movieSet->name());
+    }
+
+    QStringList failures;
+    for (const QString& setName : asConst(setNames)) {
+        QString failureText;
+        if (!writeSet(setName, RecordWrite::OnlyIfChangedOrBacked, failureText)) {
+            failures.append(failureText);
+        }
+    }
+
+    if (!failures.isEmpty()) {
+        // One notification per failed set would push the others off the screen, and each
+        // sentence already names the set it is about.
+        NotificationBox::instance()->showError(failures.join("<br>"));
+        return;
+    }
+
+    NotificationBox::instance()->showSuccess(tr("All Movie Sets Saved"));
+}
+
+bool SetsWidget::writeSet(const QString& setName, RecordWrite recordWrite, QString& failureText)
+{
     // A set's poster and backdrop live nowhere but the two maps below until they are
     // written, so an entry is only cleared for a write that actually happened.
     bool artworkSaved = true;
     MediaCenterInterface* mediaCenter = Manager::instance()->mediaCenterInterface();
 
-    for (const QString& setName : asConst(setNames)) {
-        for (Movie* movie : asConst(m_moviesToSave[setName])) {
-            movie->controller()->saveData(mediaCenter);
-        }
-        m_moviesToSave[setName].clear();
+    // Read with value() and not operator[]: Save All reaches every set the model holds, and
+    // the *Show Only Empty Movie Sets* filter makes that a superset of the rows the three maps
+    // were filled for -- an inserting lookup would leave an entry behind for each of the rest.
+    const QVector<Movie*> queuedMovies = m_moviesToSave.value(setName);
+    for (Movie* movie : queuedMovies) {
+        movie->controller()->saveData(mediaCenter);
+    }
+    m_moviesToSave.remove(setName);
 
-        // A set without a name has no path of its own: movieSetFileName() collapses to the
-        // artwork directory itself, or to the first movie that has no set.
-        if (!setName.isEmpty() && !m_setPosters[setName].isNull()) {
-            if (mediaCenter->saveMovieSetPoster(setName, m_setPosters[setName])) {
-                m_setPosters[setName] = QImage();
-            } else {
-                artworkSaved = false;
-            }
+    // A set without a name has no path of its own: movieSetFileName() collapses to the
+    // artwork directory itself, or to the first movie that has no set.
+    const QImage poster = m_setPosters.value(setName);
+    if (!setName.isEmpty() && !poster.isNull()) {
+        if (mediaCenter->saveMovieSetPoster(setName, poster)) {
+            m_setPosters[setName] = QImage();
+        } else {
+            artworkSaved = false;
         }
-        if (!setName.isEmpty() && !m_setBackdrops[setName].isNull()) {
-            if (mediaCenter->saveMovieSetBackdrop(setName, m_setBackdrops[setName])) {
-                m_setBackdrops[setName] = QImage();
-            } else {
-                artworkSaved = false;
-            }
+    }
+    const QImage backdrop = m_setBackdrops.value(setName);
+    if (!setName.isEmpty() && !backdrop.isNull()) {
+        if (mediaCenter->saveMovieSetBackdrop(setName, backdrop)) {
+            m_setBackdrops[setName] = QImage();
+        } else {
+            artworkSaved = false;
         }
     }
 
     // `set.nfo` holds the authoritative overview and collection id, so saving a set writes it
-    // too.  The lookup goes through the match key: by the displayed title it would miss a renamed
-    // set, leaving movieSet null and short-circuiting recordSaved to true.
-    const QString currentName = ui->sets->item(ui->sets->currentRow(), 0)->data(Qt::UserRole).toString();
-    MovieSet* movieSet = Manager::instance()->movieSetModel()->set(currentName);
-    // The messages below name a set the user has to recognise, so they use the title.
-    const QString displayedName = movieSet != nullptr ? movieSet->displayName() : currentName;
+    // too.  The lookup goes through the match key: by the displayed title it would miss a
+    // renamed set, leaving movieSet null and short-circuiting recordSaved to true.
+    MovieSetModel* setModel = Manager::instance()->movieSetModel();
+    MovieSet* movieSet = setModel->set(setName);
     // saveMovieSet() answers false both for a failed write and for "there are no records
     // here", so without this every Save in the default layout would report an error.
-    const bool recordsEnabled = Manager::instance()->movieSetModel()->recordsAreConfigured();
-    const bool recordSaved = !recordsEnabled || movieSet == nullptr || mediaCenter->saveMovieSet(*movieSet);
+    const bool recordsEnabled = setModel->recordsAreConfigured();
+    bool recordIsWanted = recordsEnabled && movieSet != nullptr;
+    if (recordIsWanted && recordWrite == RecordWrite::OnlyIfChangedOrBacked) {
+        // isBacked() is the question dropEmptySets() asks before it drops a set: one that
+        // answers yes already outlives its last member, so rewriting its record makes nothing
+        // permanent that was not already.  Asked of the model, so that there is one answer.
+        recordIsWanted = movieSet->hasChanged() || setModel->isBacked(movieSet);
+    }
+    const bool recordSaved = !recordIsWanted || mediaCenter->saveMovieSet(*movieSet);
+
+    // The messages below name a set the user has to recognise, so they use the title.
+    const QString displayedName = displayNameOfSet(setName);
 
     // Three whole sentences rather than one assembled from fragments, for the translators.
     if (!recordSaved && !artworkSaved) {
-        qCWarning(generic) << "[SetsWidget] Movie set" << currentName
+        qCWarning(generic) << "[SetsWidget] Movie set" << setName
                            << "was saved only in part: its artwork could not be written, and neither could its"
                            << "movie set file.";
-        NotificationBox::instance()->showError(
+        failureText =
             tr("<b>\"%1\"</b>: the movies were saved, but the artwork and the movie set file could not be "
                "written.")
-                .arg(displayedName));
-        return;
+                .arg(displayedName);
+        return false;
     }
     if (!recordSaved) {
-        qCWarning(generic) << "[SetsWidget] Movie set" << currentName
+        qCWarning(generic) << "[SetsWidget] Movie set" << setName
                            << "was saved only in part: its movie set file could not be written.";
-        NotificationBox::instance()->showError(
-            tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.")
-                .arg(displayedName));
-        return;
+        failureText = tr("<b>\"%1\"</b>: the movies were saved, but the movie set file could not be written.")
+                          .arg(displayedName);
+        return false;
     }
     if (!artworkSaved) {
-        qCWarning(generic) << "[SetsWidget] Movie set" << currentName
+        qCWarning(generic) << "[SetsWidget] Movie set" << setName
                            << "was saved only in part: its artwork could not be written.";
-        NotificationBox::instance()->showError(
-            tr("<b>\"%1\"</b>: the movies were saved, but the artwork could not be written.").arg(displayedName));
-        return;
+        failureText =
+            tr("<b>\"%1\"</b>: the movies were saved, but the artwork could not be written.").arg(displayedName);
+        return false;
     }
 
-    NotificationBox::instance()->showSuccess(tr("<b>\"%1\"</b> Saved").arg(displayedName));
+    return true;
+}
+
+QString SetsWidget::displayNameOfSet(const QString& setName) const
+{
+    const MovieSet* movieSet = Manager::instance()->movieSetModel()->set(setName);
+    return movieSet != nullptr ? movieSet->displayName() : setName;
 }
 
 /**
